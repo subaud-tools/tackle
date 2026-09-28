@@ -289,3 +289,66 @@ func TestReachGoInit(t *testing.T) {
 		t.Errorf("reach() = %v", got)
 	}
 }
+
+// TypeScript: #private members are refs, and namespace members are
+// definitions (reached by name, and through the namespace).
+func TestTSReachPrivateAndNamespace(t *testing.T) {
+	if os.Getenv("CULL_TS") == "" {
+		t.Skip("CULL_TS not set")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH")
+	}
+	const src = `class Box {
+  #scale(x: number): number {
+    return x * 2;
+  }
+  run(x: number): number {
+    return this.#scale(x);
+  }
+}
+
+namespace Util {
+  export function inc(x: number): number {
+    return x + 1;
+  }
+  export namespace Deep {
+    export function dec(x: number): number {
+      return x - 1;
+    }
+  }
+}
+
+export function make(b: Box, x: number): number {
+  return b.run(Util.inc(x));
+}
+
+export function other(x: number): number {
+  return Util.Deep.dec(x);
+}
+`
+	defs, err := mutate.Defs("typescript", t.TempDir(), "calc.ts", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range defs {
+		t.Logf("%s %s %v", qualName(d), d.Kind, d.Refs)
+	}
+	for _, name := range []string{"Box.#scale", "Util", "inc", "Deep", "dec"} {
+		if !slices.ContainsFunc(defs, func(d mutate.Def) bool { return qualName(d) == name }) {
+			t.Errorf("no def %s", name)
+		}
+	}
+	if i := slices.IndexFunc(defs, func(d mutate.Def) bool { return qualName(d) == "Box.run" }); i < 0 || !slices.Contains(defs[i].Refs, "#scale") {
+		t.Errorf("Box.run does not ref #scale")
+	}
+	got := reachNames(defs, "make")
+	for _, name := range []string{"Box.#scale", "inc"} {
+		if !slices.Contains(got, name) {
+			t.Errorf("reach(make) = %v, missing %s", got, name)
+		}
+	}
+	if got := reachNames(defs, "other"); !slices.Contains(got, "dec") {
+		t.Errorf("reach(other) = %v, missing dec", got)
+	}
+}

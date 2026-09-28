@@ -99,10 +99,12 @@ function declsOf(p) {
   return declCache[p];
 }
 
-function identifiers(node) {
+// identifiers lists the identifier names in node (with priv, #private
+// names too).
+function identifiers(node, priv) {
   const out = new Set();
   (function walk(n) {
-    if (ts.isIdentifier(n)) out.add(n.text);
+    if (ts.isIdentifier(n) || (priv && ts.isPrivateIdentifier(n))) out.add(n.text);
     ts.forEachChild(n, walk);
   })(node);
   return out;
@@ -680,9 +682,10 @@ function sitesMain(args) {
 }
 
 // defsFor returns the definitions in src (one TypeScript file's full
-// text): top-level functions, classes, interfaces/type aliases, enums and
-// variables (owner ""), and each top-level class's methods, accessors,
-// constructor and initialized properties (owner: the class). start/end are
+// text): top-level functions, classes, interfaces/type aliases, enums,
+// namespaces and variables, and those inside namespaces (owner ""), and
+// each such class's methods, accessors, constructor and initialized
+// properties (owner: the class). start/end are
 // UTF-8 byte offsets (leading comments excluded); refs are every
 // identifier inside. Returns [] for a file that fails to parse.
 function defsFor(relpath, src) {
@@ -702,34 +705,47 @@ function defsFor(relpath, src) {
       kind,
       start: byteAt[node.getStart(sf)],
       end: byteAt[node.getEnd()],
-      refs: [...identifiers(node)].sort(),
+      refs: [...identifiers(node, true)].sort(),
     });
   };
-  for (const st of sf.statements) {
-    if (ts.isFunctionDeclaration(st) && st.name) {
-      add(st, st.name.text, "", "function");
-    } else if (ts.isClassDeclaration(st) && st.name) {
-      const cls = st.name.text;
-      add(st, cls, "", "class");
-      for (const m of st.members) {
-        if (ts.isConstructorDeclaration(m)) {
-          add(m, "constructor", cls, "method");
-        } else if (
-          (ts.isMethodDeclaration(m) || ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m) ||
-            (ts.isPropertyDeclaration(m) && m.initializer)) &&
-          m.name && (ts.isIdentifier(m.name) || ts.isPrivateIdentifier(m.name) || ts.isStringLiteral(m.name))
-        ) {
-          add(m, m.name.text, cls, "method");
+  const visit = (statements) => {
+    for (const st of statements) {
+      if (ts.isFunctionDeclaration(st) && st.name) {
+        add(st, st.name.text, "", "function");
+      } else if (ts.isClassDeclaration(st) && st.name) {
+        const cls = st.name.text;
+        add(st, cls, "", "class");
+        for (const m of st.members) {
+          if (ts.isConstructorDeclaration(m)) {
+            add(m, "constructor", cls, "method");
+          } else if (
+            (ts.isMethodDeclaration(m) || ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m) ||
+              (ts.isPropertyDeclaration(m) && m.initializer)) &&
+            m.name && (ts.isIdentifier(m.name) || ts.isPrivateIdentifier(m.name) || ts.isStringLiteral(m.name))
+          ) {
+            add(m, m.name.text, cls, "method");
+          }
         }
-      }
-    } else if ((ts.isInterfaceDeclaration(st) || ts.isTypeAliasDeclaration(st) || ts.isEnumDeclaration(st)) && st.name) {
-      add(st, st.name.text, "", "type");
-    } else if (ts.isVariableStatement(st)) {
-      for (const d of st.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) add(st, d.name.text, "", "var");
+      } else if ((ts.isInterfaceDeclaration(st) || ts.isTypeAliasDeclaration(st) || ts.isEnumDeclaration(st)) && st.name) {
+        add(st, st.name.text, "", "type");
+      } else if (ts.isVariableStatement(st)) {
+        for (const d of st.declarationList.declarations) {
+          if (ts.isIdentifier(d.name)) add(st, d.name.text, "", "var");
+        }
+      } else if (ts.isModuleDeclaration(st) && st.name) {
+        // A namespace is a def (refs: all it mentions), and so is each
+        // member, nested namespaces (A.B) included.
+        add(st, st.name.text, "", "type");
+        let body = st.body;
+        while (body && ts.isModuleDeclaration(body)) {
+          add(body, body.name.text, "", "type");
+          body = body.body;
+        }
+        if (body && ts.isModuleBlock(body)) visit(body.statements);
       }
     }
-  }
+  };
+  visit(sf.statements);
   return out;
 }
 
