@@ -79,13 +79,20 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 		out.InvalidReason = fmt.Sprintf("pytest exited %d (collection or import error)", res.ExitCode)
 	}
 
-	data, err := os.ReadFile(tmpPath)
+	readPyJUnit(dir, tmpPath, index, &out)
+	return out
+}
+
+// readPyJUnit adds the results of pytest's junitxml report at path to
+// out (nothing when it's missing or unreadable).
+func readPyJUnit(dir, path string, index map[string]string, out *Outcome) {
+	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {
-		return out
+		return
 	}
 	var suites junitTestSuites
 	if err := xml.Unmarshal(data, &suites); err != nil {
-		return out
+		return
 	}
 	for _, s := range suites.Suites {
 		for _, c := range s.Cases {
@@ -105,10 +112,9 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 			}
 			native := pythonNativeKey(dir, c.Classname, c.Name)
 			passed := c.Failure == nil
-			attributePython(index, native, passed, &out)
+			attributePython(index, native, passed, out)
 		}
 	}
-	return out
 }
 
 // pythonNativeKey builds the native lookup key pytest's junitxml classname

@@ -26,7 +26,8 @@ type goBlock struct {
 // test with its own coverprofile. A unit is a top-level test (its
 // subtests share its coverage). Code in no coverage block (package-level
 // declarations and var initializers, signatures) is global; init bodies
-// run in every test binary run, so every test covers them.
+// run in every test binary run, so every test covers them. A test
+// passed only if its run exited 0.
 func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -66,7 +67,7 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 		coverPkg = "./"
 	}
 	var all []goBlock // every block of the module (any count)
-	cov := &Coverage{}
+	cov := &Coverage{Passed: map[string]bool{}}
 	for i, sub := range subs {
 		bin := filepath.Join(tmp, fmt.Sprintf("p%d.test", i))
 		pkg := "./"
@@ -111,6 +112,11 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 				}
 			}
 			sort.Strings(u.IDs)
+			if res.ExitCode == 0 {
+				for _, id := range u.IDs {
+					cov.Passed[id] = true
+				}
+			}
 			cov.Units = append(cov.Units, u)
 		}
 	}

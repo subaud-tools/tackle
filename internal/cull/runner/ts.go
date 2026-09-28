@@ -176,18 +176,25 @@ func (r *tsRunner) runNode(ctx context.Context, dir string, testFiles []string, 
 		out.TimedOut = true
 		return out
 	}
+	readNodeJUnit(tmpPath, testFiles, index, &out)
+	return out
+}
 
-	data, err := os.ReadFile(tmpPath)
+// readNodeJUnit adds the results of node --test's junit report at path
+// to out (Invalid when it's missing or unreadable, or a file failed to
+// load).
+func readNodeJUnit(path string, testFiles []string, index map[string]string, out *Outcome) {
+	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {
 		out.Invalid = true
 		out.InvalidReason = "node --test exited without writing a report file"
-		return out
+		return
 	}
 	var suites nodeJUnitSuites
 	if err := xml.Unmarshal(data, &suites); err != nil {
 		out.Invalid = true
 		out.InvalidReason = "node --test report file was not valid XML: " + err.Error()
-		return out
+		return
 	}
 	for _, c := range suites.Cases {
 		if c.Skipped != nil {
@@ -203,10 +210,9 @@ func (r *tsRunner) runNode(ctx context.Context, dir string, testFiles []string, 
 			}
 			continue
 		}
-		attributeTS(index, c.Name, !failed, &out)
+		attributeTS(index, c.Name, !failed, out)
 	}
-	walkNodeSuites(suites.Suites, nil, index, &out)
-	return out
+	walkNodeSuites(suites.Suites, nil, index, out)
 }
 
 // fileCase reports which of testFiles a top-level testcase name is (node

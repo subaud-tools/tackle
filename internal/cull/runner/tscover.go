@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -66,7 +67,7 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 	defer os.RemoveAll(tmp)
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cov := &Coverage{global: func(int, int) bool { return false }}
+	cov := &Coverage{global: func(int, int) bool { return false }, Passed: map[string]bool{}}
 	loaded := false
 	for i, f := range sortedFiles(files) {
 		covDir := filepath.Join(tmp, fmt.Sprint(i))
@@ -74,10 +75,16 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 			return nil, err
 		}
 		env := append(verify.FilteredEnv(), "NODE_V8_COVERAGE="+covDir)
-		argv := append(strings.Fields(r.nodeCmd), f)
+		junit := filepath.Join(tmp, fmt.Sprintf("%d.xml", i))
+		argv := append(strings.Fields(r.nodeCmd), "--test-reporter=junit", "--test-reporter-destination="+junit, f)
 		res := runProcessEnv(dctx, dir, argv, env, timeout)
 		if err := procErr(ctx, res, ""); err != nil {
 			return nil, err
+		}
+		o := newOutcome()
+		readNodeJUnit(junit, []string{f}, files[f], &o)
+		if !o.Invalid {
+			maps.Copy(cov.Passed, o.Passed)
 		}
 		ranges, found, err := readV8Dir(covDir, real)
 		if err != nil {

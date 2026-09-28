@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,15 +22,26 @@ import (
 // {"error", "contexts": {context: [lines]}, "stmts", "tests"} to
 // $CULL_COV_OUT. It starts coverage when pytest loads it (before
 // collection imports anything) and refuses (error) if the target was
-// already imported. The ctrace core is forced: sys.monitoring stops
+// already imported, or if coverage's tracer (sys.gettrace() and
+// threading's, as set by start) was replaced or removed after
+// collection or any test phase. The ctrace core is forced: sys.monitoring stops
 // reporting a line after its first hit, which breaks per-test contexts.
-const pyCovPlugin = `import json, os, sys
+const pyCovPlugin = `import json, os, sys, threading
 
 _target = os.path.realpath(os.environ["CULL_COV_TARGET"])
 _out = os.environ["CULL_COV_OUT"]
 _err = None
 _cov = None
 _tests = set()
+_tracer = None
+_ttracer = None
+
+
+def _thread_trace():
+    g = getattr(threading, "gettrace", None)
+    return g() if g else None
+
+
 try:
     import coverage
 except Exception as e:
@@ -45,6 +57,8 @@ if _err is None:
         os.environ["COVERAGE_CORE"] = "ctrace"
         _cov = coverage.Coverage(data_file=None, config_file=False, include=[_target])
         _cov.start()
+        _tracer = sys.gettrace()
+        _ttracer = _thread_trace()
     except Exception as e:
         _err = "coverage.py failed to start (%s)" % e
         _cov = None
@@ -65,10 +79,23 @@ def _switch(ctx):
         _cov.switch_context(ctx)
 
 
+def _check(where):
+    global _err
+    if _cov is None or _err is not None:
+        return
+    if sys.gettrace() is not _tracer or _thread_trace() is not _ttracer:
+        _err = "coverage's tracer was replaced or removed during " + where
+
+
+def pytest_collection_finish(session):
+    _check("collection")
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_setup(item):
     _switch(_sel(item) + "|setup")
     yield
+    _check(_sel(item) + " setup")
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -76,12 +103,14 @@ def pytest_runtest_call(item):
     _tests.add(_sel(item))
     _switch(_sel(item) + "|call")
     yield
+    _check(_sel(item) + " call")
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
     _switch(_sel(item) + "|teardown")
     yield
+    _check(_sel(item) + " teardown")
     _switch("")
 
 
@@ -150,7 +179,8 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 		env = append(env, kv)
 	}
 	env = append(env, "CULL_COV_TARGET="+target, "CULL_COV_OUT="+outPath)
-	argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "cull_cov_plugin"}, sortedFiles(files)...)
+	junit := filepath.Join(tmp, "junit.xml")
+	argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "cull_cov_plugin", "--junitxml=" + junit}, sortedFiles(files)...)
 	res := runProcessEnv(ctx, dir, argv, env, timeout)
 	switch {
 	case res.StartErr != nil:
@@ -176,7 +206,15 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 	if len(d.Contexts) == 0 {
 		return nil, fmt.Errorf("no line of %s ran in the coverage run", module)
 	}
-	return pyCoverage(src, files, d), nil
+	cov := pyCoverage(src, files, d)
+	index := map[string]string{}
+	for _, idx := range files {
+		maps.Copy(index, idx)
+	}
+	o := newOutcome()
+	readPyJUnit(dir, junit, index, &o)
+	cov.Passed = o.Passed
+	return cov, nil
 }
 
 // pyCoverage builds a Coverage from the plugin's data.

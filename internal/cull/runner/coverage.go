@@ -18,6 +18,10 @@ type Coverage struct {
 	// whose execution can't be attributed to one test (module import,
 	// fixture setup/teardown, Go code outside any coverage block).
 	global func(start, end int) bool
+	// Passed holds the cull ids that passed in the coverage run. A test
+	// that failed there (or wasn't reported) may have stopped recording
+	// early: its coverage can't be trusted.
+	Passed map[string]bool
 }
 
 // Global reports whether [start, end) of the module runs for every test

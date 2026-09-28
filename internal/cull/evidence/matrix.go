@@ -918,7 +918,8 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 // coverage measures, per group, what each test executes of the module
 // (see runner.Coverer), after the canary, with the final measured set.
 // If any group holding measured tests can't be measured, or a measured
-// test is missing from its data, it logs why once and leaves the module
+// test is missing from its data or didn't pass in the coverage run, it
+// logs why once and leaves the module
 // running every test file on every mutant (p.selective false).
 func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duration, logf func(string, ...any)) {
 	fallback := func(why string) {
@@ -956,8 +957,15 @@ func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duratio
 			}
 		}
 		for _, id := range sortedValues(g.index) {
-			if p.measured[id] && !have[id] {
+			if !p.measured[id] {
+				continue
+			}
+			if !have[id] {
 				fallback("no coverage data for " + id)
+				return
+			}
+			if !cov.Passed[id] {
+				fallback(id + " did not pass in the coverage run")
 				return
 			}
 		}
