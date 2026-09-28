@@ -487,3 +487,67 @@ func (fw *fileWalk) walkSubtest(lit *ast.FuncLit, parentID, name, setup string, 
 		fw.walkSubtest(r.lit, id, childName, childSetup, res)
 	}
 }
+
+// Methods lists every method named name declared in the non-test .go
+// files directly in dir, in file then source order, as Callees: Symbol
+// "Recv.name", File root-relative, Source as extraction records it (doc
+// comment included). Extraction matches a method call by selector name
+// alone, so a test's callee may be any one of them.
+func Methods(root, dir, name string) []cases.Callee {
+	var out []cases.Callee
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, e := range ents {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		p := filepath.Join(dir, n)
+		src, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		fs := token.NewFileSet()
+		f, err := parser.ParseFile(fs, p, src, parser.ParseComments)
+		if err != nil {
+			continue
+		}
+		rel, _ := filepath.Rel(root, p)
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Name.Name != name {
+				continue
+			}
+			start := fn.Pos()
+			if fn.Doc != nil {
+				start = fn.Doc.Pos()
+			}
+			out = append(out, cases.Callee{
+				Symbol: recvName(fn.Recv.List[0].Type) + "." + name,
+				File:   filepath.ToSlash(rel),
+				Source: string(src[fs.Position(start).Offset:fs.Position(fn.End()).Offset]),
+			})
+		}
+	}
+	return out
+}
+
+// recvName is a receiver type's name: T for T, *T, T[K] or *T[K].
+func recvName(x ast.Expr) string {
+	for {
+		switch t := x.(type) {
+		case *ast.StarExpr:
+			x = t.X
+		case *ast.IndexExpr:
+			x = t.X
+		case *ast.IndexListExpr:
+			x = t.X
+		case *ast.Ident:
+			return t.Name
+		default:
+			return "?"
+		}
+	}
+}

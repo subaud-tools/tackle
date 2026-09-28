@@ -153,3 +153,32 @@ func TestTargetSitesSpans(t *testing.T) {
 		t.Errorf("log = %q", logged)
 	}
 }
+
+// A method name on several receivers (A.Get, B.Get) resolves to one of
+// them at extraction: evidence spans every same-named method in the
+// package, so TestA's unique catch in A.Get is planted.
+func TestGoAmbiguousMethodSpansAll(t *testing.T) {
+	needTools(t)
+	root := newRepo(t, map[string]string{
+		"go.mod": "module fixture\n\ngo 1.22\n",
+		"a.go":   "package calc\n\ntype A struct{}\n\nfunc (A) Get(x int) int { return x + 1 }\n",
+		"b.go":   "package calc\n\ntype B struct{}\n\nfunc (B) Get(x int) int { return x * 2 }\n",
+		"calc_test.go": "package calc\n\nimport \"testing\"\n\n" +
+			"func TestA(t *testing.T) {\n\tif (A{}).Get(1) != 2 {\n\t\tt.Fatal(\"a\")\n\t}\n}\n\n" +
+			"func TestB(t *testing.T) {\n\tif (B{}).Get(3) != 6 {\n\t\tt.Fatal(\"b\")\n\t}\n}\n",
+	})
+	writeLast(t, root, []string{"calc_test.go"}, map[string]verdict{"TestA": {"review", "review_band"}})
+	o := settleOpts()
+	var log bytes.Buffer
+	o.Stderr = &log
+	if _, err := Run(context.Background(), root, o); err != nil {
+		t.Fatal(err)
+	}
+	_, by := loadLast(t, root)
+	if tr := by["TestA"]; tr.Verdict != "keep" || tr.Rule != RuleSoleGuard {
+		t.Fatalf("TestA: %s/%s %v\n%s", tr.Verdict, tr.Rule, tr.Reasons, log.String())
+	}
+	if !strings.Contains(log.String(), "Get") || !strings.Contains(log.String(), "receivers") {
+		t.Errorf("ambiguity not logged:\n%s", log.String())
+	}
+}

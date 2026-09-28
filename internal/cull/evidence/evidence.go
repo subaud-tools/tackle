@@ -19,7 +19,7 @@ import (
 	"github.com/schuettc/tackle/internal/cull/check"
 	"github.com/schuettc/tackle/internal/cull/discover"
 	"github.com/schuettc/tackle/internal/cull/extract"
-	_ "github.com/schuettc/tackle/internal/cull/extract/golang"
+	"github.com/schuettc/tackle/internal/cull/extract/golang"
 	_ "github.com/schuettc/tackle/internal/cull/extract/python"
 	_ "github.com/schuettc/tackle/internal/cull/extract/ts"
 	"github.com/schuettc/tackle/internal/cull/mutate"
@@ -134,6 +134,7 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	spanSameNamedMethods(root, all, opt.Stderr)
 
 	byID := map[string]cases.TestCase{}
 	testsByFile := map[string][]string{}
@@ -285,6 +286,46 @@ func targetCallees(rel string, targets []int, tests []check.TestResult, byID map
 		}
 	}
 	return out
+}
+
+// spanSameNamedMethods replaces each Go method callee whose name is
+// declared on several receivers in its package with every one of them
+// (logged once per package and name): extraction matches a method call
+// by selector name alone, so it may have picked the wrong receiver's.
+func spanSameNamedMethods(root string, all []cases.TestCase, stderr io.Writer) {
+	type key struct{ dir, name string }
+	cache := map[key][]cases.Callee{}
+	for i := range all {
+		tc := &all[i]
+		if tc.Lang != "go" {
+			continue
+		}
+		var out []cases.Callee
+		for _, c := range tc.Callees {
+			k := key{path.Dir(c.File), c.Symbol}
+			ms, ok := cache[k]
+			if !ok {
+				ms = golang.Methods(root, filepath.Join(root, filepath.FromSlash(k.dir)), c.Symbol)
+				if len(ms) < 2 || !slices.ContainsFunc(ms, func(m cases.Callee) bool { return m.Source == c.Source }) {
+					ms = nil
+				} else {
+					var where []string
+					for _, m := range ms {
+						where = append(where, m.Symbol+" in "+m.File)
+					}
+					fmt.Fprintf(stderr, "cull evidence: method %s is declared on %d receivers in %s; mutating every one (%s)\n",
+						c.Symbol, len(ms), k.dir, strings.Join(where, ", "))
+				}
+				cache[k] = ms
+			}
+			if ms == nil {
+				out = append(out, c)
+			} else {
+				out = append(out, ms...)
+			}
+		}
+		tc.Callees = out
+	}
 }
 
 // measure computes id's evidence over the non-excluded mutants of those of
