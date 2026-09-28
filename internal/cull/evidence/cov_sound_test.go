@@ -218,6 +218,29 @@ func TestTSCoverageSubprocessCoversAll(t *testing.T) {
 	matrixMatchesFull(t, root, mod)
 }
 
+// TS: b.test.ts checks f in its own process and g in a node child
+// started by an imported helper (the child inherits NODE_V8_COVERAGE, so
+// its coverage file holds g=1, f=0 while b's holds f=1, g=0).
+func TestTSCoverageHelperSpawnMatchesFull(t *testing.T) {
+	needTools(t)
+	if os.Getenv("CULL_TS") == "" {
+		t.Skip("CULL_TS not set")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH")
+	}
+	src := "export function f(x: number): boolean {\n  return x > 3;\n}\n\nexport function g(x: number): number {\n  return x * 2;\n}\n"
+	a := "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { f, g } from './calc.ts';\n\ntest('a', () => {\n  assert.ok(f(10));\n  assert.ok(!f(3));\n  g(0);\n});\n"
+	h := "import * as cp from 'node:child_process';\n\nexport function runScript(code: string): void {\n  cp.execFileSync(process.execPath, ['--input-type=module', '-e', code], { env: { PATH: process.env.PATH } });\n}\n"
+	b := "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { runScript } from './helper.ts';\nimport { f } from './calc.ts';\n\ntest('b', () => {\n  assert.ok(f(10));\n  runScript(\"const m = await import('./calc.ts'); if (m.g(3) !== 6) process.exit(1);\");\n});\n"
+	root := newRepo(t, map[string]string{
+		"package.json": `{"type": "module", "scripts": {"test": "node --test"}}`,
+		"calc.ts":      src, "helper.ts": h, "a.test.ts": a, "b.test.ts": b,
+	})
+	mod := Module{Rel: "calc.ts", Lang: "typescript", TestFiles: []string{"a.test.ts", "b.test.ts"}, Tests: []string{"ts:a.test.ts:a", "ts:b.test.ts:b"}}
+	matrixMatchesFull(t, root, mod)
+}
+
 // matrixMatchesFull runs mod's matrix with coverage selection (which
 // must be used) and without, and fails t unless they're identical.
 func matrixMatchesFull(t *testing.T, root string, mod Module) {

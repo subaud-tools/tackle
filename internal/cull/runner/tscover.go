@@ -87,7 +87,7 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		if !o.Invalid {
 			maps.Copy(cov.Passed, o.Passed)
 		}
-		ranges, found, err := readV8Dir(covDir, real)
+		groups, found, err := readV8Dir(covDir, real)
 		if err != nil {
 			return nil, err
 		}
@@ -104,8 +104,8 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 			u.hit = func(int, int) bool { return true }
 		} else if found {
 			loaded = true
-			if !transformed && aligned(ranges, u16[len(src)], "file://"+real) {
-				u.hit = func(start, end int) bool { return v8SiteRan(ranges, u16, start, end) }
+			if !transformed && allAligned(groups, u16[len(src)], "file://"+real) {
+				u.hit = func(start, end int) bool { return v8GroupsSiteRan(groups, u16, start, end) }
 			} else {
 				u.hit = func(int, int) bool { return true }
 			}
@@ -154,9 +154,12 @@ func (r *tsRunner) transforms() bool {
 	return false
 }
 
-// readV8Dir collects every function range V8 reported for the script at
-// real (a resolved path) in the coverage files in dir.
-func readV8Dir(dir, real string) ([]v8Range, bool, error) {
+// readV8Dir collects the function ranges V8 reported for the script at
+// real (a resolved path) in the coverage files in dir, one group per
+// (coverage file, script entry): each process (the test's, a node child
+// inheriting NODE_V8_COVERAGE) and each copy of the script reports its
+// own counts, which can't be merged range by range.
+func readV8Dir(dir, real string) ([][]v8Range, bool, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, false, err
@@ -164,7 +167,7 @@ func readV8Dir(dir, real string) ([]v8Range, bool, error) {
 	if len(ents) == 0 {
 		return nil, false, fmt.Errorf("node wrote no V8 coverage")
 	}
-	var out []v8Range
+	var out [][]v8Range
 	found := false
 	for _, e := range ents {
 		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
@@ -185,9 +188,11 @@ func readV8Dir(dir, real string) ([]v8Range, bool, error) {
 				continue
 			}
 			found = true
+			var g []v8Range
 			for _, fn := range s.Functions {
-				out = append(out, fn.Ranges...)
+				g = append(g, fn.Ranges...)
 			}
+			out = append(out, g)
 		}
 	}
 	return out, found, nil
@@ -205,6 +210,27 @@ func aligned(ranges []v8Range, n int, url string) bool {
 	extra := end - n
 	tail := len("//# sourceURL=" + url)
 	return extra == 0 || (extra >= tail && extra <= tail+2)
+}
+
+// allAligned reports whether every group is aligned (see aligned).
+func allAligned(groups [][]v8Range, n int, url string) bool {
+	for _, g := range groups {
+		if !aligned(g, n, url) {
+			return false
+		}
+	}
+	return true
+}
+
+// v8GroupsSiteRan reports whether the site ran (see v8SiteRan) in any
+// group.
+func v8GroupsSiteRan(groups [][]v8Range, u16 []int, start, end int) bool {
+	for _, g := range groups {
+		if v8SiteRan(g, u16, start, end) {
+			return true
+		}
+	}
+	return false
 }
 
 // v8SiteRan reports whether any byte of [start, end) of the module (its
