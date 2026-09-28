@@ -140,7 +140,7 @@ func rows(m Matrix) []row {
 func TestExactMatrix(t *testing.T) {
 	needTools(t)
 	root := calcRepo(t)
-	m, err := Run(context.Background(), root, []Module{calcModule()}, opts(2))
+	m, err := RunMatrix(context.Background(), root, []Module{calcModule()}, opts(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestWorkingTreeUntouched(t *testing.T) {
 	needTools(t)
 	root := calcRepo(t)
 	before := hashTree(t, root)
-	if _, err := Run(context.Background(), root, []Module{calcModule()}, opts(3)); err != nil {
+	if _, err := RunMatrix(context.Background(), root, []Module{calcModule()}, opts(3)); err != nil {
 		t.Fatal(err)
 	}
 	if after := hashTree(t, root); !reflect.DeepEqual(before, after) {
@@ -211,11 +211,11 @@ func TestWorkingTreeUntouched(t *testing.T) {
 func TestParallelMatchesSerial(t *testing.T) {
 	needTools(t)
 	root := calcRepo(t)
-	serial, err := Run(context.Background(), root, []Module{calcModule()}, opts(1))
+	serial, err := RunMatrix(context.Background(), root, []Module{calcModule()}, opts(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	par, err := Run(context.Background(), root, []Module{calcModule()}, opts(4))
+	par, err := RunMatrix(context.Background(), root, []Module{calcModule()}, opts(4))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestFlaky(t *testing.T) {
 	mod := calcModule()
 	mod.TestFiles = append(mod.TestFiles, "flaky_test.go")
 	mod.Tests = append(mod.Tests, "go:flaky_test.go:TestFlaky")
-	m, err := Run(context.Background(), root, []Module{mod}, opts(2))
+	m, err := RunMatrix(context.Background(), root, []Module{mod}, opts(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestHalve(t *testing.T) {
 	o := opts(2)
 	o.RunTimeout = 8 * time.Second
 	start := time.Now()
-	m, err := Run(context.Background(), root, []Module{mod}, o)
+	m, err := RunMatrix(context.Background(), root, []Module{mod}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestSymlinkedDepsNotCopied(t *testing.T) {
 	}
 
 	// Mutants never target symlinked content.
-	m, err := Run(context.Background(), root, []Module{{Rel: "vendor/dep/dep.py", Lang: "python", TestFiles: []string{"app.py"}}}, opts(1))
+	m, err := RunMatrix(context.Background(), root, []Module{{Rel: "vendor/dep/dep.py", Lang: "python", TestFiles: []string{"app.py"}}}, opts(1))
 	if err != nil {
 		t.Fatal(err)
 	}

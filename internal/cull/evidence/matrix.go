@@ -52,14 +52,13 @@ type Matrix struct {
 	Unmapped int             `json:"unmapped"`
 }
 
-// Options tunes Run. Zero values take defaults: Workers = runtime.NumCPU(),
-// MaxMutants = 30, RunTimeout = 60s, Stderr = discard. TestCommand is
-// accepted for interface stability but ignored: evidence always runs the
-// runner package's detected per-test command, never a project override.
+// Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
+// MaxMutants = 30, RunTimeout = 60s, Stderr = discard.
+// Evidence always runs the runner package's detected per-test command,
+// never a project's test_command override.
 type Options struct {
 	Workers, MaxMutants int
 	RunTimeout          time.Duration
-	TestCommand         string
 	Stderr              io.Writer
 }
 
@@ -92,7 +91,7 @@ var dupIDRe = regexp.MustCompile(` #\d+$`)
 
 var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts:"}
 
-// Run measures mods in sandbox copies of root (see Prepare) and returns
+// RunMatrix measures mods in sandbox copies of root (see Prepare) and returns
 // their kill matrix. Per module: the test files run twice unmutated (the
 // baseline); then each sampled mutant (at most MaxMutants, seeded by the
 // module's bytes) is written into a free sandbox, the tests are run, and
@@ -100,7 +99,7 @@ var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts
 // The working tree is never written. Run holds an exclusive lock on the
 // project's sandbox root (<base>/.lock) throughout; a concurrent Run or
 // Prepare on the same project fails fast with an error naming it.
-func Run(ctx context.Context, root string, mods []Module, opt Options) (Matrix, error) {
+func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Matrix, error) {
 	if opt.Workers <= 0 {
 		opt.Workers = runtime.NumCPU()
 	}

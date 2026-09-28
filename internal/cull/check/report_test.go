@@ -2,6 +2,9 @@ package check
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/schuettc/tackle/internal/cull/cases"
@@ -45,5 +48,33 @@ func TestWriteTableFormat(t *testing.T) {
 	WriteTable(&buf, Report{})
 	if buf.String() != "" {
 		t.Errorf("empty report table = %q, want empty", buf.String())
+	}
+}
+
+// Evidence round-trips through last.json; absent evidence is omitted.
+func TestEvidenceRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	ev := &Evidence{Measured: true, Planted: 3, Caught: 1, Sole: 1, CaughtBy: []string{"a.go line 1: flip +"}, SoleFor: []string{"a.go line 1: flip +"}}
+	r := Report{Tests: []TestResult{
+		{TestCase: cases.TestCase{ID: "go:a_test.go:TestA"}, Verdict: "keep", Evidence: ev},
+		{TestCase: cases.TestCase{ID: "go:a_test.go:TestB"}, Verdict: "cut"},
+	}}
+	r.Recount()
+	if r.Summary["keep"] != 1 || r.Summary["cut"] != 1 {
+		t.Fatalf("summary %v", r.Summary)
+	}
+	if err := WriteReport(root, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadReport(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Tests[0].Evidence, ev) || got.Tests[1].Evidence != nil {
+		t.Errorf("evidence = %+v, %+v", got.Tests[0].Evidence, got.Tests[1].Evidence)
+	}
+	data, _ := os.ReadFile(filepath.Join(root, ".cull", "last.json"))
+	if bytes.Count(data, []byte(`"evidence"`)) != 1 {
+		t.Errorf("last.json:\n%s", data)
 	}
 }

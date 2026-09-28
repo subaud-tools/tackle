@@ -18,11 +18,28 @@ import (
 // those are large and check/apply never needs them back.
 type TestResult struct {
 	cases.TestCase
-	Verdict string   `json:"verdict,omitempty"`
-	Rule    string   `json:"rule,omitempty"`
-	Reasons []string `json:"reasons,omitempty"`
-	Model   string   `json:"model,omitempty"`
-	Err     string   `json:"err,omitempty"`
+	Verdict  string    `json:"verdict,omitempty"`
+	Rule     string    `json:"rule,omitempty"`
+	Reasons  []string  `json:"reasons,omitempty"`
+	Model    string    `json:"model,omitempty"`
+	Err      string    `json:"err,omitempty"`
+	Evidence *Evidence `json:"evidence,omitempty"`
+}
+
+// Evidence is what `cull evidence` measured for one review-band test: the
+// planted bugs in the non-test code it exercises, how many it caught, and
+// how many only it caught. Measured is false when no usable measurement
+// exists; Reason then says why. check never computes it (evidence does);
+// it lives here so last.json can carry it.
+type Evidence struct {
+	Measured   bool     `json:"measured"`
+	Planted    int      `json:"planted"`
+	Caught     int      `json:"caught"`
+	Sole       int      `json:"sole"`
+	CaughtBy   []string `json:"caught_by,omitempty"`
+	SoleFor    []string `json:"sole_for,omitempty"`
+	OtherTests []string `json:"other_tests,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 // MarshalJSON embeds the case's fields except Body, Context and Callees.
@@ -43,11 +60,12 @@ func (r TestResult) MarshalJSON() ([]byte, error) {
 		Reasons   []string   `json:"reasons,omitempty"`
 		Model     string     `json:"model,omitempty"`
 		Err       string     `json:"err,omitempty"`
+		Evidence  *Evidence  `json:"evidence,omitempty"`
 	}
 	return json.Marshal(out{
 		ID: r.ID, Hash: r.Hash, Lang: r.Lang, Framework: r.Framework, File: r.File,
 		Name: r.Name, Parent: r.Parent, Repo: r.Repo, Span: r.Span, Truncated: r.Truncated,
-		Verdict: r.Verdict, Rule: r.Rule, Reasons: r.Reasons, Model: r.Model, Err: r.Err,
+		Verdict: r.Verdict, Rule: r.Rule, Reasons: r.Reasons, Model: r.Model, Err: r.Err, Evidence: r.Evidence,
 	})
 }
 
@@ -201,4 +219,16 @@ func writeLastJSON(root string, r Report) error {
 		return err
 	}
 	return tools.WriteFileAtomic(filepath.Join(dir, "last.json"), data, 0o600)
+}
+
+// Recount recomputes r.Summary from its tests, groups and skipped files,
+// e.g. after `cull evidence` settled some tests.
+func (r *Report) Recount() {
+	r.Summary = summarize(r.Tests, r.Groups, r.Skipped)
+}
+
+// WriteReport writes r to <root>/.cull/last.json atomically (dir 0700,
+// file 0600), exactly as check does.
+func WriteReport(root string, r Report) error {
+	return writeLastJSON(root, r)
 }

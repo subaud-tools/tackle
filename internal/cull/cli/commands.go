@@ -19,6 +19,11 @@ func commands(stdin io.Reader) []tools.Command {
 			NewFlags: applyFlags, Run: runApply,
 		},
 		{
+			Name: "evidence", Group: "check", Synopsis: "[--workers 8] [--max-mutants 30]",
+			Summary:  "settle review-band tests by planted bugs; update .cull/last.json",
+			NewFlags: evidenceFlags, Run: runEvidence,
+		},
+		{
 			Name: "judge", Group: "judge", Synopsis: "[file|-]",
 			Summary:  "judge tests or duplicate groups with Jev (plumbing; JSONL in, JSONL out)",
 			NewFlags: judgeFlags, Run: runJudge(stdin),

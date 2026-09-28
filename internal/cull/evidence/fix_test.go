@@ -35,7 +35,7 @@ func TestNoStaleBytecode(t *testing.T) {
 	defer func() { plantHook = nil }()
 	mod := Module{Rel: "calc.py", Lang: "python", TestFiles: []string{"test_calc.py"},
 		Tests: []string{"py:test_calc.py:test_add", "py:test_calc.py:test_lt"}}
-	m, err := Run(context.Background(), root, []Module{mod}, opts(1))
+	m, err := RunMatrix(context.Background(), root, []Module{mod}, opts(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestShared(t *testing.T) {
 		{Rel: "a.go", Lang: "go", TestFiles: []string{"shared_test.go"}, Tests: []string{id}},
 		{Rel: "b.go", Lang: "go", TestFiles: []string{"shared_test.go"}, Tests: []string{id}},
 	}
-	m, err := Run(context.Background(), root, mods, opts(1))
+	m, err := RunMatrix(context.Background(), root, mods, opts(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestReadOnlyModuleMutable(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, "calc.go"), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	m, err := Run(context.Background(), root, []Module{calcModule()}, opts(1))
+	m, err := RunMatrix(context.Background(), root, []Module{calcModule()}, opts(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestConcurrentRunLocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	_, err = Run(context.Background(), root, []Module{calcModule()}, opts(1))
+	_, err = RunMatrix(context.Background(), root, []Module{calcModule()}, opts(1))
 	if err == nil || !strings.Contains(err.Error(), lockPath) {
 		t.Fatalf("Run err = %v, want lock error naming %s", err, lockPath)
 	}
@@ -208,7 +208,7 @@ func TestConcurrentRunLocked(t *testing.T) {
 		t.Fatalf("lock failure took %v", el)
 	}
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	if _, err := Run(context.Background(), root, []Module{calcModule()}, opts(1)); err != nil {
+	if _, err := RunMatrix(context.Background(), root, []Module{calcModule()}, opts(1)); err != nil {
 		t.Fatalf("after unlock: %v", err)
 	}
 }
