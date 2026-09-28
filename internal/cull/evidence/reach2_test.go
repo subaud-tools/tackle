@@ -126,3 +126,47 @@ def build(s):
 			"def test_compat():\n    assert build(\"a\").endswith(\"!\")\n",
 	}, "test_compat")
 }
+
+// Go: every init in the file is reached whenever anything in it is:
+// the second init fills the table Make reads, and holds TestTable's
+// unique catch.
+func TestGoInitReached(t *testing.T) {
+	needTools(t)
+	const src = `package calc
+
+var table map[string]int
+
+func init() {
+	_ = 0
+}
+
+func Make(k string) int {
+	if k == "" {
+		return -1
+	}
+	return table[k]
+}
+
+func init() {
+	table = map[string]int{"a": 1 + 1}
+}
+`
+	root := newRepo(t, map[string]string{
+		"go.mod":  "module fixture\n\ngo 1.22\n",
+		"calc.go": src,
+		"calc_test.go": "package calc\n\nimport \"testing\"\n\n" +
+			"func TestNeg(t *testing.T) {\n\tif Make(\"\") != -1 || Make(\"a\") == -1 {\n\t\tt.Fatal(\"neg\")\n\t}\n}\n\n" +
+			"func TestTable(t *testing.T) {\n\tif Make(\"a\") != 2 {\n\t\tt.Fatal(\"table\")\n\t}\n}\n",
+	})
+	writeLast(t, root, []string{"calc_test.go"}, map[string]verdict{"TestTable": {"review", "review_band"}})
+	o := settleOpts()
+	var log bytes.Buffer
+	o.Stderr = &log
+	if _, err := Run(context.Background(), root, o); err != nil {
+		t.Fatal(err)
+	}
+	_, by := loadLast(t, root)
+	if tr := by["TestTable"]; tr.Verdict != "keep" || tr.Rule != RuleSoleGuard {
+		t.Errorf("TestTable: %s/%s %v\n%s", tr.Verdict, tr.Rule, tr.Reasons, log.String())
+	}
+}

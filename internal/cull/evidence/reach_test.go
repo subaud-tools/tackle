@@ -272,3 +272,20 @@ export function unrelated(x: number): number {
 		t.Errorf("helper span = %q", src[d.Start:d.End])
 	}
 }
+
+// Go init funcs are reached whenever anything in the file is.
+func TestReachGoInit(t *testing.T) {
+	defs := []mutate.Def{
+		{Name: "f", Kind: "function"},
+		{Name: "init", Kind: "init", Refs: []string{"g"}},
+		{Name: "g", Kind: "function"},
+		{Name: "init", Kind: "init"},
+		{Name: "h", Kind: "function"},
+	}
+	if got := reach(defs, []int{0}); !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Errorf("reach(f) = %v", got)
+	}
+	if got := reach(defs, nil); len(got) != 0 {
+		t.Errorf("reach() = %v", got)
+	}
+}

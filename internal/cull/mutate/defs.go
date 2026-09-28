@@ -13,8 +13,8 @@ import (
 
 // Def is one definition in a source file: a module-level function, type,
 // class or variable (Owner ""), or a method (Owner: its class, or its Go
-// receiver's type). Kind is "function", "class", "type", "var" or
-// "method". Start and End are UTF-8 byte offsets of its span; Refs lists
+// receiver's type). Kind is "function", "class", "type", "var",
+// "method" or "init" (a Go init func: run, never called by name). Start and End are UTF-8 byte offsets of its span; Refs lists
 // (sorted, deduplicated) the names used anywhere inside it.
 type Def struct {
 	Name, Owner, Kind string
@@ -85,6 +85,8 @@ func goDefs(relpath string, src []byte) ([]Def, error) {
 			def := Def{Name: d.Name.Name, Kind: "function", Start: off(d.Pos()), End: off(d.End())}
 			if d.Recv != nil && len(d.Recv.List) > 0 {
 				def.Owner, def.Kind = recvType(d.Recv.List[0].Type), "method"
+			} else if d.Name.Name == "init" {
+				def.Kind = "init"
 			}
 			var body ast.Node
 			if d.Body != nil {

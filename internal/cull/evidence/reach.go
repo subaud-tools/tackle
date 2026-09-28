@@ -12,7 +12,8 @@ import (
 // any owner by name alone), and for each class or type so reached, all of
 // its methods (dunders, constructors, Go methods on it). A reached method
 // reaches its owner class too (cls(...), type(self)(...), replace(self)
-// construct it unnamed). Resolution is by
+// construct it unnamed). Every "init" def (Go) is reached whenever
+// anything is: defs are one file's. Resolution is by
 // name only: over-inclusion is accepted, dynamic dispatch may be missed.
 func reach(defs []mutate.Def, seeds []int) []int {
 	byName := map[string][]int{}
@@ -33,6 +34,13 @@ func reach(defs []mutate.Def, seeds []int) []int {
 	}
 	for _, i := range seeds {
 		visit(i)
+	}
+	if len(queue) > 0 {
+		for i, d := range defs {
+			if d.Kind == "init" {
+				visit(i)
+			}
+		}
 	}
 	for len(queue) > 0 {
 		d := defs[queue[0]]
