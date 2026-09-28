@@ -1,0 +1,156 @@
+package runner
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func requirePython3(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not found")
+	}
+}
+
+func writePyFixture(t *testing.T) (dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	p := filepath.Join(dir, "test_a.py")
+	content := `import os
+
+
+def test_plain():
+    assert True
+
+
+def test_fail():
+    assert False
+
+
+class TestThing:
+    def test_method(self):
+        assert True
+
+    def test_method_fail(self):
+        assert False
+
+
+def test_env_clean():
+    assert os.environ.get("TYPESAFE_API_KEY") is None
+`
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func writePyHangFixture(t *testing.T) (dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	p := filepath.Join(dir, "test_hang.py")
+	content := `import time
+
+
+def test_hang():
+    time.sleep(30)
+`
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestPythonRunPassFailClassAndUnmapped(t *testing.T) {
+	requirePython3(t)
+	dir := writePyFixture(t)
+	r, err := For(dir, "python", "test_a.py", "")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{
+		"test_plain":                  "py:test_a.py:test_plain",
+		"test_fail":                   "py:test_a.py:test_fail",
+		"TestThing::test_method":      "py:test_a.py:TestThing::test_method",
+		"TestThing::test_method_fail": "py:test_a.py:TestThing::test_method_fail",
+		"test_env_clean":              "py:test_a.py:test_env_clean",
+		// no parametrize case in this fixture, but Unmapped is still
+		// exercised: nothing left out here, so add a bogus expectation
+		// below by omitting nothing (0 unmapped).
+	}
+	out := r.Run(context.Background(), dir, []string{"test_a.py"}, index, 30*time.Second)
+	if out.TimedOut {
+		t.Fatalf("TimedOut = true, want false: %+v", out)
+	}
+	wantPassed := []string{"py:test_a.py:test_plain", "py:test_a.py:TestThing::test_method", "py:test_a.py:test_env_clean"}
+	for _, id := range wantPassed {
+		if !out.Passed[id] {
+			t.Errorf("Passed[%q] = false, want true; out=%+v", id, out)
+		}
+	}
+	wantFailed := []string{"py:test_a.py:test_fail", "py:test_a.py:TestThing::test_method_fail"}
+	for _, id := range wantFailed {
+		if !out.Failed[id] {
+			t.Errorf("Failed[%q] = false, want true; out=%+v", id, out)
+		}
+	}
+}
+
+func TestPythonRunParametrizeMapsToFunctionUnit(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "test_p.py")
+	content := `import pytest
+
+
+@pytest.mark.parametrize("x", [1, 2])
+def test_param(x):
+    assert x > 0
+
+
+def test_other():
+    assert True
+`
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := For(dir, "python", "test_p.py", "")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	// index only has the function-level unit, not the "[1]"/"[2]" native
+	// pytest node ids: both parametrize instances must attribute there.
+	index := map[string]string{
+		"test_param": "py:test_p.py:test_param",
+		// test_other deliberately omitted -> Unmapped.
+	}
+	out := r.Run(context.Background(), dir, []string{"test_p.py"}, index, 30*time.Second)
+	if !out.Passed["py:test_p.py:test_param"] {
+		t.Errorf("Passed[test_param] = false, want true (both parametrize cases pass): out=%+v", out)
+	}
+	if out.Unmapped != 1 {
+		t.Errorf("Unmapped = %d, want 1 (test_other not in index): out=%+v", out.Unmapped, out)
+	}
+}
+
+func TestPythonRunTimeout(t *testing.T) {
+	requirePython3(t)
+	dir := writePyHangFixture(t)
+	r, err := For(dir, "python", "test_hang.py", "")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{"test_hang": "py:test_hang.py:test_hang"}
+	start := time.Now()
+	out := r.Run(context.Background(), dir, []string{"test_hang.py"}, index, 300*time.Millisecond)
+	elapsed := time.Since(start)
+	if !out.TimedOut {
+		t.Errorf("TimedOut = false, want true: %+v", out)
+	}
+	if elapsed > 6*time.Second {
+		t.Errorf("elapsed = %v, want well under 6s (killGrace-bounded)", elapsed)
+	}
+}

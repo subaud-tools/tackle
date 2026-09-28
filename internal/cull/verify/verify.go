@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -250,6 +251,46 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// PythonInterpreter exports pythonInterpreter for cull's runner package
+// (which runs pytest against files verify's Plan already routed here, and
+// must use the same interpreter selection).
+func PythonInterpreter(absDir string) string {
+	return pythonInterpreter(absDir)
+}
+
+// NearestPythonProjectDir exports nearestMarkerDir's Python-marker walk for
+// cull's runner package.
+func NearestPythonProjectDir(root, startRel string) string {
+	return nearestMarkerDir(root, startRel, hasPythonMarker)
+}
+
+// NearestTSTestDir exports nearestTSTestDir for cull's runner package: the
+// nearest directory (at or above startRel, bounded by root) with a
+// package.json that has a non-empty scripts.test.
+func NearestTSTestDir(root, startRel string) (dir string, ok bool) {
+	return nearestTSTestDir(root, startRel)
+}
+
+// PackageJSONTestScript reads dir/package.json's scripts.test. ok is false
+// if the file is missing, unparsable, or has no test script. Unlike
+// hasTestScript (which only needs a yes/no for Plan's `npm test`), cull's
+// runner package needs the script's actual text to tell a vitest project
+// from a node:test one.
+func PackageJSONTestScript(dir string) (script string, ok bool) {
+	b, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return "", false
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(b, &pkg); err != nil {
+		return "", false
+	}
+	s := pkg.Scripts["test"]
+	return s, s != ""
+}
+
 func mapKeys(m map[string]map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -306,7 +347,7 @@ var killGrace = 5 * time.Second
 // runs in its own process group so `sh -c` / `go test` children are killed
 // too on timeout.
 func Run(ctx context.Context, cmds []Command, timeout time.Duration) []Result {
-	env := filteredEnv()
+	env := FilteredEnv()
 	var results []Result
 	for _, c := range cmds {
 		r := runOne(ctx, c, timeout, env)
@@ -319,24 +360,61 @@ func Run(ctx context.Context, cmds []Command, timeout time.Duration) []Result {
 }
 
 func runOne(ctx context.Context, c Command, timeout time.Duration, env []string) Result {
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	label := c.Shell
 	if label == "" {
 		label = strings.Join(c.Argv, " ")
 	}
 
-	cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
-	cmd.Dir = c.Dir
+	buf := &syncBuffer{}
+	raw := RunProcess(ctx, c.Dir, c.Argv, env, timeout, buf, buf)
+	if raw.StartErr != nil {
+		return Result{Command: label, ExitCode: -1, OK: false, OutputTail: raw.StartErr.Error()}
+	}
+	return Result{
+		Command:    label,
+		ExitCode:   raw.ExitCode,
+		OK:         !raw.TimedOut && raw.ExitCode == 0,
+		TimedOut:   raw.TimedOut,
+		OutputTail: tail(buf.String(), tailLines),
+	}
+}
+
+// RawResult is the outcome of running one process via RunProcess: an exit
+// code (-1 if it never completed, whether from a Start failure or a
+// timeout), whether it was killed for running past its timeout, and a
+// Start failure if the process never started.
+type RawResult struct {
+	ExitCode int
+	TimedOut bool
+	StartErr error
+}
+
+// RunProcess is the shared core of verify's per-command runner: it starts
+// argv in dir with env, in its own process group so `sh -c` / `go test`
+// children are killed too, writing stdout/stderr to the given writers
+// (which may be the same writer). If ctx (bounded by timeout) is done
+// before the process exits, RunProcess kills the process group and waits
+// at most killGrace for cmd.Wait() to return (a detached grandchild that
+// keeps holding a pipe open, e.g. one started via setsid, can otherwise
+// block Wait() indefinitely even though the timed-out command's own
+// process group is dead), then reports TimedOut regardless.
+//
+// cull's runner package (which needs untruncated, separated stdout/stderr
+// to parse `go test -json` / JUnit XML / vitest JSON reports) and verify's
+// own Run/runOne (which tails a single combined buffer) both build on this.
+func RunProcess(ctx context.Context, dir string, argv []string, env []string, timeout time.Duration, stdout, stderr io.Writer) RawResult {
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = dir
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	buf := &syncBuffer{}
-	cmd.Stdout = buf
-	cmd.Stderr = buf
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
-		return Result{Command: label, ExitCode: -1, OK: false, OutputTail: err.Error()}
+		return RawResult{ExitCode: -1, StartErr: err}
 	}
 
 	done := make(chan error, 1)
@@ -359,13 +437,7 @@ func runOne(ctx context.Context, c Command, timeout time.Duration, env []string)
 		case <-done:
 		case <-time.After(killGrace):
 		}
-		return Result{
-			Command:    label,
-			ExitCode:   -1,
-			OK:         false,
-			TimedOut:   true,
-			OutputTail: tail(buf.String(), tailLines),
-		}
+		return RawResult{ExitCode: -1, TimedOut: true}
 	case err := <-done:
 		exitCode := 0
 		if err != nil {
@@ -375,12 +447,7 @@ func runOne(ctx context.Context, c Command, timeout time.Duration, env []string)
 				exitCode = -1
 			}
 		}
-		return Result{
-			Command:    label,
-			ExitCode:   exitCode,
-			OK:         err == nil,
-			OutputTail: tail(buf.String(), tailLines),
-		}
+		return RawResult{ExitCode: exitCode}
 	}
 }
 
@@ -397,8 +464,10 @@ func tail(s string, n int) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// filteredEnv is the current environment minus TYPESAFE_API_KEY.
-func filteredEnv() []string {
+// FilteredEnv is the current environment minus TYPESAFE_API_KEY (test
+// commands may run third-party build tooling that must not see it). Shared
+// by verify.Run and cull's runner package.
+func FilteredEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		if strings.HasPrefix(kv, "TYPESAFE_API_KEY=") {
