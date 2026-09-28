@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -257,5 +258,46 @@ func TestGolangRunTimeout(t *testing.T) {
 	}
 	if elapsed > 6*time.Second {
 		t.Errorf("elapsed = %v, want well under 6s (killGrace-bounded)", elapsed)
+	}
+}
+
+func TestGoFileSpawns(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]bool{
+		"import \"os/exec\"\n\nvar _ = exec.Command":                                      true,
+		"import \"os\"\n\nvar _ = os.StartProcess":                                        true,
+		"import sc \"syscall\"\n\nvar _ = sc.ForkExec":                                    true,
+		"import \"golang.org/x/sys/unix\"\n\nfunc f() { _ = unix.Exec(\"\", nil, nil) }":  true,
+		"import . \"os\"\n\nfunc f() { _, _ = StartProcess(\"\", nil, nil) }":             true,
+		"import . \"syscall\"\n\nfunc f() { _ = Exec(\"\", nil, nil) }":                   true,
+		"import \"os\"\n\nvar _ = os.Getenv":                                              false,
+		"import . \"strings\"\n\nfunc Exec() {}\n\nfunc f() { Exec(); _ = Fields(\"\") }": false,
+	}
+	i := 0
+	for body, want := range cases {
+		p := filepath.Join(dir, fmt.Sprintf("f%d.go", i))
+		i++
+		if err := os.WriteFile(p, []byte("package p\n\n"+body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := goFileSpawns(p)
+		if err != nil || got != want {
+			t.Errorf("%q: got %v, %v; want %v", body, got, err, want)
+		}
+	}
+}
+
+// go list failing (an import that can't be resolved) is an error, not
+// "doesn't spawn": the module then runs every test.
+func TestGoTestsSpawnListFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fx\n\ngo 1.22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fx_test.go"), []byte("package fx\n\nimport _ \"fx/nope\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := goTestsSpawn(context.Background(), dir, "./", time.Minute); err == nil || !strings.Contains(err.Error(), "go list") {
+		t.Errorf("err = %v, want a go list failure", err)
 	}
 }

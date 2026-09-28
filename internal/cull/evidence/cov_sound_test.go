@@ -181,6 +181,19 @@ func TestHelper(t *testing.T) {
 	matrixMatchesFull(t, root, mod)
 }
 
+// C1 (Go): as above, but the re-run lives in a helper package the test
+// imports: its os/exec import (in the test's dependency graph) makes
+// every test of the package cover the whole module.
+func TestGoCoverageHelperSpawnCoversAll(t *testing.T) {
+	needTools(t)
+	src := "package calc\n\nfunc F(x int) bool { return x > 3 }\n\nfunc G(x int) int { return x * 2 }\n"
+	helper := "package testutil\n\nimport (\n\t\"os\"\n\t\"os/exec\"\n)\n\nfunc ReRun(name string) error {\n\tcmd := exec.Command(os.Args[0], \"-test.run=^\"+name+\"$\")\n\tcmd.Env = append(os.Environ(), \"CALC_HELPER=1\")\n\treturn cmd.Run()\n}\n"
+	test := "package calc\n\nimport (\n\t\"os\"\n\t\"testing\"\n\n\t\"fixture/testutil\"\n)\n\nfunc TestA(t *testing.T) {\n\tif !F(10) || F(3) {\n\t\tt.Fatal(\"f\")\n\t}\n\tG(0)\n}\n\nfunc TestB(t *testing.T) {\n\tif !F(10) {\n\t\tt.Fatal(\"f\")\n\t}\n\tif err := testutil.ReRun(\"TestHelper\"); err != nil {\n\t\tt.Fatal(err)\n\t}\n}\n\nfunc TestHelper(t *testing.T) {\n\tif os.Getenv(\"CALC_HELPER\") == \"\" {\n\t\treturn\n\t}\n\tif G(3) != 6 {\n\t\tos.Exit(1)\n\t}\n}\n"
+	root := newRepo(t, map[string]string{"go.mod": "module fixture\n\ngo 1.22\n", "calc.go": src, "calc_test.go": test, "testutil/testutil.go": helper})
+	mod := Module{Rel: "calc.go", Lang: "go", TestFiles: []string{"calc_test.go"}, Tests: []string{"go:calc_test.go:TestA", "go:calc_test.go:TestB", "go:calc_test.go:TestHelper"}}
+	matrixMatchesFull(t, root, mod)
+}
+
 // C1 (TS): b.test.ts alone checks g, in a node child with an empty env
 // (NODE_V8_COVERAGE not inherited): a test file mentioning
 // child_process covers the whole module.

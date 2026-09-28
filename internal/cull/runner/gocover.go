@@ -33,8 +33,9 @@ type goBlock struct {
 // declarations and var initializers, signatures) is global; init bodies
 // run in every test binary run, so every test covers them. A test
 // passed only if its run exited 0. Every test of a package whose test
-// files can start a process (see goTestsSpawn) covers every line: the
-// child's work isn't in the test's profile.
+// binary can start a process (see goTestsSpawn) covers every line: the
+// child's work isn't in the test's profile. When that can't be told
+// (go list fails), Cover fails: the module runs every test.
 func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -76,14 +77,14 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 	var all []goBlock // every block of the module (any count)
 	cov := &Coverage{Passed: map[string]bool{}}
 	for i, sub := range subs {
-		spawns, err := goTestsSpawn(filepath.Join(dir, filepath.FromSlash(sub)))
-		if err != nil {
-			return nil, err
-		}
 		bin := filepath.Join(tmp, fmt.Sprintf("p%d.test", i))
 		pkg := "./"
 		if sub != "." {
 			pkg = "./" + sub
+		}
+		spawns, err := goTestsSpawn(dctx, dir, pkg, timeout)
+		if err != nil {
+			return nil, err
 		}
 		res := runProcess(dctx, dir, []string{"go", "test", "-c", "-o", bin, "-covermode=count", "-coverpkg=" + coverPkg, pkg}, timeout)
 		if err := procErr(ctx, res, "go test -c"); err != nil {
@@ -148,50 +149,98 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 	return cov, nil
 }
 
-// goTestsSpawn reports whether the _test.go files in dir can start a
-// process: one imports os/exec, or calls os.StartProcess or syscall's
-// Exec, ForkExec or StartProcess.
-func goTestsSpawn(dir string) (bool, error) {
-	names, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
-	if err != nil {
+// goTestsSpawn reports whether the test binary of package directory pkg
+// (./-relative, in the module at dir) can start a process: a
+// non-standard package in its test dependency graph (go list -deps
+// -test) imports os/exec, or a file of a package of this module in that
+// graph calls os.StartProcess, syscall's Exec, ForkExec or StartProcess,
+// or golang.org/x/sys/unix's Exec or ForkExec (qualified or through a
+// dot import). An error (go list failed) means it can't be told.
+func goTestsSpawn(ctx context.Context, dir, pkg string, timeout time.Duration) (bool, error) {
+	res := runProcess(ctx, dir, []string{"go", "list", "-deps", "-test", "-f",
+		"{{if not .Standard}}{{.Dir}}\t{{with .Module}}{{.Main}}{{end}}\t{{join .Imports \" \"}}\t{{join .GoFiles \" \"}} {{join .CgoFiles \" \"}}{{end}}", pkg}, timeout)
+	if err := procErr(ctx, res, "go list -deps -test "+pkg); err != nil {
 		return false, err
 	}
-	calls := map[string][]string{"os": {"StartProcess"}, "syscall": {"Exec", "ForkExec", "StartProcess"}}
-	for _, name := range names {
-		f, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return false, err
+	scanned := map[string]bool{}
+	for ln := range strings.SplitSeq(string(res.Stdout), "\n") {
+		f := strings.Split(ln, "\t")
+		if len(f) != 4 {
+			continue
 		}
-		local := map[string]string{} // local package name -> import path
-		for _, im := range f.Imports {
-			p, _ := strconv.Unquote(im.Path.Value)
-			if p == "os/exec" {
-				return true, nil
-			}
-			if _, ok := calls[p]; ok {
-				n := p
-				if im.Name != nil {
-					n = im.Name.Name
-				}
-				local[n] = p
-			}
-		}
-		found := false
-		ast.Inspect(f, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok || found {
-				return !found
-			}
-			if x, ok := sel.X.(*ast.Ident); ok && slices.Contains(calls[local[x.Name]], sel.Sel.Name) {
-				found = true
-			}
-			return !found
-		})
-		if found {
+		if slices.Contains(strings.Fields(f[2]), "os/exec") {
 			return true, nil
+		}
+		if f[1] != "true" {
+			continue
+		}
+		for _, name := range strings.Fields(f[3]) {
+			if filepath.IsAbs(name) {
+				continue // generated (the test main)
+			}
+			p := filepath.Join(f[0], name)
+			if scanned[p] {
+				continue
+			}
+			scanned[p] = true
+			spawns, err := goFileSpawns(p)
+			if err != nil || spawns {
+				return spawns, err
+			}
 		}
 	}
 	return false, nil
+}
+
+// goSpawnCalls are the functions (per import path) that start a process.
+var goSpawnCalls = map[string][]string{
+	"os":                    {"StartProcess"},
+	"syscall":               {"Exec", "ForkExec", "StartProcess"},
+	"golang.org/x/sys/unix": {"Exec", "ForkExec"},
+}
+
+// goFileSpawns reports whether the Go file at name imports os/exec or
+// calls one of goSpawnCalls.
+func goFileSpawns(name string) (bool, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return false, err
+	}
+	local := map[string]string{} // local package name -> import path
+	var dot []string             // functions reachable unqualified
+	for _, im := range f.Imports {
+		p, _ := strconv.Unquote(im.Path.Value)
+		if p == "os/exec" {
+			return true, nil
+		}
+		if _, ok := goSpawnCalls[p]; !ok {
+			continue
+		}
+		n := path.Base(p)
+		if im.Name != nil {
+			n = im.Name.Name
+		}
+		if n == "." {
+			dot = append(dot, goSpawnCalls[p]...)
+		} else {
+			local[n] = p
+		}
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.SelectorExpr:
+			if x, ok := n.X.(*ast.Ident); ok && slices.Contains(goSpawnCalls[local[x.Name]], n.Sel.Name) {
+				found = true
+			}
+		case *ast.CallExpr:
+			if id, ok := n.Fun.(*ast.Ident); ok && slices.Contains(dot, id.Name) {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found, nil
 }
 
 // procErr explains why a coverage subprocess can't be used, or is nil.
