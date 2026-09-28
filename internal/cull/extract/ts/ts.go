@@ -321,3 +321,60 @@ func Sites(root, relpath string, src []byte) ([]MutationSite, error) {
 	}
 	return result.Sites, nil
 }
+
+// Definition is one definition the helper's --defs mode reports: a
+// top-level function, class, type or variable (Owner ""), or a member of
+// a top-level class (Owner: the class; a constructor is named
+// "constructor"). Start/End are UTF-8 byte offsets; Refs are the
+// identifiers used anywhere inside it.
+type Definition struct {
+	Name  string   `json:"name"`
+	Owner string   `json:"owner"`
+	Kind  string   `json:"kind"`
+	Start int      `json:"start"`
+	End   int      `json:"end"`
+	Refs  []string `json:"refs"`
+}
+
+// Defs returns the definitions in src, a TypeScript file at relpath, by
+// running `node tsext.cjs --defs <typescript-dir> <relpath>` with src on
+// stdin. With no node or typescript package (see Sites) it returns none
+// and no error.
+func Defs(root, relpath string, src []byte) ([]Definition, error) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		return nil, nil
+	}
+	tsDir, ok := findTypescript(root)
+	if !ok {
+		return nil, nil
+	}
+	tmpDir, err := os.MkdirTemp("", "cull-tsext-defs-*")
+	if err != nil {
+		return nil, fmt.Errorf("extract/ts: temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		return nil, fmt.Errorf("extract/ts: chmod temp dir: %w", err)
+	}
+	helperPath := filepath.Join(tmpDir, "tsext.cjs")
+	if err := os.WriteFile(helperPath, helperSrc, 0o600); err != nil {
+		return nil, fmt.Errorf("extract/ts: write helper: %w", err)
+	}
+	cmd := exec.Command(nodePath, helperPath, "--defs", tsDir, filepath.ToSlash(relpath))
+	cmd.Env = extract.HelperEnv(defaultMaxContext)
+	cmd.Stdin = bytes.NewReader(src)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("extract/ts: run helper --defs: %w (stderr: %s)", err, stderr.String())
+	}
+	var result struct {
+		Defs []Definition `json:"defs"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return nil, fmt.Errorf("extract/ts: decode helper --defs output %q: %w", stdout.Bytes(), err)
+	}
+	return result.Defs, nil
+}

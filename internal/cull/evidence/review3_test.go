@@ -134,21 +134,21 @@ func TestTargetedSamplingCRLF(t *testing.T) {
 func TestTargetSitesSpans(t *testing.T) {
 	src := []byte("def f():\r\n    return 1\r\nx = 2\r\n")
 	sites := []mutate.Site{{Start: 21, End: 22, Desc: "in f"}, {Start: 28, End: 29, Desc: "x"}}
-	got := targetSites("m.py", src, sites, []cases.Callee{{Symbol: "f", Source: "def f():\n    return 1\n"}}, nolog)
+	got := targetSites("m.py", src, sites, []cases.Callee{{Symbol: "f", Source: "def f():\n    return 1\n"}}, nil, nolog)
 	if len(got) != 1 || got[0].Desc != "in f" {
 		t.Errorf("crlf: %v", got)
 	}
 
 	dup := []byte("def g():\n    return 1\n\n\ndef g():\n    return 1\n")
 	sites = []mutate.Site{{Start: 20, End: 21, Desc: "first"}, {Start: 44, End: 45, Desc: "second"}}
-	got = targetSites("m.py", dup, sites, []cases.Callee{{Symbol: "g", Source: "def g():\n    return 1\n"}}, nolog)
+	got = targetSites("m.py", dup, sites, []cases.Callee{{Symbol: "g", Source: "def g():\n    return 1\n"}}, nil, nolog)
 	if len(got) != 2 {
 		t.Errorf("duplicate: %v", got)
 	}
 
 	var logged []string
 	logf := func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) }
-	targetSites("m.py", dup, sites, []cases.Callee{{Symbol: "h", Source: "def h(): pass\n"}}, logf)
+	targetSites("m.py", dup, sites, []cases.Callee{{Symbol: "h", Source: "def h(): pass\n"}}, nil, logf)
 	if len(logged) != 1 || !strings.Contains(logged[0], "m.py") || !strings.Contains(logged[0], "h") ||
 		!strings.Contains(logged[0], "whole module") {
 		t.Errorf("log = %q", logged)

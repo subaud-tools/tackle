@@ -679,6 +679,77 @@ function sitesMain(args) {
   });
 }
 
+// defsFor returns the definitions in src (one TypeScript file's full
+// text): top-level functions, classes, interfaces/type aliases, enums and
+// variables (owner ""), and each top-level class's methods, accessors,
+// constructor and initialized properties (owner: the class). start/end are
+// UTF-8 byte offsets (leading comments excluded); refs are every
+// identifier inside. Returns [] for a file that fails to parse.
+function defsFor(relpath, src) {
+  let sf;
+  try {
+    sf = ts.createSourceFile(relpath || "input.ts", src, ts.ScriptTarget.Latest, true, scriptKindFor(relpath || ""));
+  } catch (e) {
+    return [];
+  }
+  if (sf.parseDiagnostics && sf.parseDiagnostics.length > 0) return [];
+  const byteAt = utf16ToByteMap(src);
+  const out = [];
+  const add = (node, name, owner, kind) => {
+    out.push({
+      name,
+      owner,
+      kind,
+      start: byteAt[node.getStart(sf)],
+      end: byteAt[node.getEnd()],
+      refs: [...identifiers(node)].sort(),
+    });
+  };
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name) {
+      add(st, st.name.text, "", "function");
+    } else if (ts.isClassDeclaration(st) && st.name) {
+      const cls = st.name.text;
+      add(st, cls, "", "class");
+      for (const m of st.members) {
+        if (ts.isConstructorDeclaration(m)) {
+          add(m, "constructor", cls, "method");
+        } else if (
+          (ts.isMethodDeclaration(m) || ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m) ||
+            (ts.isPropertyDeclaration(m) && m.initializer)) &&
+          m.name && (ts.isIdentifier(m.name) || ts.isPrivateIdentifier(m.name) || ts.isStringLiteral(m.name))
+        ) {
+          add(m, m.name.text, cls, "method");
+        }
+      }
+    } else if ((ts.isInterfaceDeclaration(st) || ts.isTypeAliasDeclaration(st) || ts.isEnumDeclaration(st)) && st.name) {
+      add(st, st.name.text, "", "type");
+    } else if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) add(st, d.name.text, "", "var");
+      }
+    }
+  }
+  return out;
+}
+
+function defsMain(args) {
+  const [tsDir, relpath] = args;
+  ts = require(tsDir);
+
+  const chunks = [];
+  process.stdin.on("data", (c) => chunks.push(c));
+  process.stdin.on("end", () => {
+    const buf = Buffer.concat(chunks);
+    const src = buf.toString("utf8");
+    if (!Buffer.from(src, "utf8").equals(buf)) {
+      console.log(JSON.stringify({ defs: [] }));
+      return;
+    }
+    console.log(JSON.stringify({ defs: defsFor(relpath, src) }));
+  });
+}
+
 function tidyMain(args) {
   const [tsDir, relpath, beforePath] = args;
   ts = require(tsDir);
@@ -709,6 +780,8 @@ if (cliArgs[0] === "--tidy") {
   tidyMain(cliArgs.slice(1));
 } else if (cliArgs[0] === "--sites") {
   sitesMain(cliArgs.slice(1));
+} else if (cliArgs[0] === "--defs") {
+  defsMain(cliArgs.slice(1));
 } else {
   extractMain(cliArgs);
 }

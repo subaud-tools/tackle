@@ -26,7 +26,8 @@ import (
 // it. Rel is root-relative and '/'-separated; it must never be a test file
 // (the Python and TypeScript mutators don't skip test files themselves).
 // Callees are the definitions in Rel that the targets call: when set,
-// mutants are planted only inside them (see targetSites).
+// mutants are planted only inside them and the definitions they reach in
+// Rel (see targetSites).
 type Module struct {
 	Rel, Lang string
 	TestFiles []string
@@ -405,7 +406,11 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 		return nil, false
 	}
 	if len(mod.Callees) > 0 {
-		sites = targetSites(mod.Rel, src, sites, mod.Callees, logf)
+		defs, err := mutate.Defs(mod.Lang, root, mod.Rel, src)
+		if err != nil {
+			logf("%s: definitions unavailable (%v); mutating the callees only", mod.Rel, err)
+		}
+		sites = targetSites(mod.Rel, src, sites, mod.Callees, defs, logf)
 	} else {
 		seed := sha256.Sum256(src)
 		sites = mutate.Sample(sites, max, seed[:])
@@ -463,8 +468,10 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 // endings read as LF and mapped back to src's bytes; the whole module,
 // logged, when it isn't found), samples up to perCallee per callee
 // (seeded by src and the callee's symbol), and returns their union sorted
-// by Start.
-func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Callee, logf func(string, ...any)) []mutate.Site {
+// by Start. It also samples up to perCallee sites (seeded by src and the
+// definition's name) in each of defs reached (see reach) from the defs
+// inside a located callee's definition, except that callee's own def.
+func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Callee, defs []mutate.Def, logf func(string, ...any)) []mutate.Site {
 	type key struct {
 		start, end int
 		repl       string
@@ -472,12 +479,7 @@ func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Ca
 	norm, orig := lfOffsets(src)
 	seen := map[key]bool{}
 	var out []mutate.Site
-	for _, c := range callees {
-		spans := sourceSpans(norm, orig, c.Source)
-		if len(spans) == 0 {
-			logf("%s: definition of %s not found; sampling the whole module", rel, c.Symbol)
-			spans = [][2]int{{0, len(src)}}
-		}
+	sample := func(spans [][2]int, name string) {
 		var in []mutate.Site
 		for _, s := range sites {
 			for _, sp := range spans {
@@ -487,13 +489,41 @@ func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Ca
 				}
 			}
 		}
-		seed := sha256.Sum256(append(append([]byte(nil), src...), c.Symbol...))
+		seed := sha256.Sum256(append(append([]byte(nil), src...), name...))
 		for _, s := range mutate.Sample(in, perCallee, seed[:]) {
 			k := key{s.Start, s.End, s.Replacement}
 			if !seen[k] {
 				seen[k] = true
 				out = append(out, s)
 			}
+		}
+	}
+	var seeds []int
+	own := map[int]bool{} // a callee's own def: already sampled as the callee
+	for _, c := range callees {
+		spans := sourceSpans(norm, orig, c.Source)
+		if len(spans) == 0 {
+			logf("%s: definition of %s not found; sampling the whole module", rel, c.Symbol)
+			sample([][2]int{{0, len(src)}}, c.Symbol)
+			continue
+		}
+		sample(spans, c.Symbol)
+		bare := c.Symbol[strings.LastIndex(c.Symbol, ".")+1:]
+		for i, d := range defs {
+			for _, sp := range spans {
+				if d.Start >= sp[0] && d.End <= sp[1] {
+					seeds = append(seeds, i)
+					if d.Name == bare {
+						own[i] = true
+					}
+					break
+				}
+			}
+		}
+	}
+	for _, i := range reach(defs, seeds) {
+		if !own[i] {
+			sample([][2]int{{defs[i].Start, defs[i].End}}, qualName(defs[i]))
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })

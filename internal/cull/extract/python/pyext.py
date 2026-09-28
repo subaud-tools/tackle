@@ -481,6 +481,52 @@ def sites_for(data):
     return sites
 
 
+def defs_for(data):
+    """Definitions in data (one Python source file's raw bytes): a list of
+    {"name","owner","kind","start","end","refs"} dicts. Top-level
+    functions, classes and assignments (owner ""), and the methods of
+    top-level classes (owner: the class name). start/end are the UTF-8 byte
+    offsets of the definition's whole source lines (decorators through its
+    last line); refs are the names (ast.Name ids and attribute names) used
+    anywhere inside it. Returns [] for a file that fails to parse.
+    """
+    try:
+        tree = ast.parse(data.decode("utf-8"))
+    except Exception:
+        return []
+    starts = line_starts(data)
+    out = []
+
+    def add(node, name, owner, kind):
+        first = node.lineno
+        if getattr(node, "decorator_list", None):
+            first = min(d.lineno for d in node.decorator_list)
+        start = starts[first - 1]
+        end = starts[node.end_lineno] if node.end_lineno < len(starts) else len(data)
+        refs = set()
+        for x in ast.walk(node):
+            if isinstance(x, ast.Name):
+                refs.add(x.id)
+            elif isinstance(x, ast.Attribute):
+                refs.add(x.attr)
+        out.append({"name": name, "owner": owner, "kind": kind, "start": start, "end": end, "refs": sorted(refs)})
+
+    for n in tree.body:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            add(n, n.name, "", "function")
+        elif isinstance(n, ast.ClassDef):
+            add(n, n.name, "", "class")
+            for m in n.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    add(m, m.name, n.name, "method")
+        elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    add(n, t.id, "", "var")
+    return out
+
+
 if len(sys.argv) > 1 and sys.argv[1] == "--tidy":
     data = sys.stdin.buffer.read()
     before = b""
@@ -494,6 +540,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "--tidy":
 if len(sys.argv) > 1 and sys.argv[1] == "--sites":
     data = sys.stdin.buffer.read()
     print(json.dumps({"sites": sites_for(data)}))
+    sys.exit(0)
+
+if len(sys.argv) > 1 and sys.argv[1] == "--defs":
+    data = sys.stdin.buffer.read()
+    print(json.dumps({"defs": defs_for(data)}))
     sys.exit(0)
 
 root = sys.argv[1]

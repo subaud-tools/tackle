@@ -278,3 +278,56 @@ func Tidy(root, relpath string, before, src []byte) ([]byte, []string, error) {
 	}
 	return []byte(*result.Source), result.Removed, nil
 }
+
+// Definition is one definition the helper's --defs mode reports: a
+// top-level function, class or assignment (Owner ""), or a method of a
+// top-level class (Owner: the class). Start/End are the UTF-8 byte
+// offsets of its whole source lines (decorators included); Refs are the
+// names used anywhere inside it.
+type Definition struct {
+	Name  string   `json:"name"`
+	Owner string   `json:"owner"`
+	Kind  string   `json:"kind"`
+	Start int      `json:"start"`
+	End   int      `json:"end"`
+	Refs  []string `json:"refs"`
+}
+
+// Defs returns the definitions in src, a Python file at relpath, by
+// running `python3 pyext.py --defs <relpath>` with src on stdin. If
+// python3 is not on PATH it returns none and no error.
+func Defs(root, relpath string, src []byte) ([]Definition, error) {
+	_ = root
+	pyPath, err := exec.LookPath("python3")
+	if err != nil {
+		return nil, nil
+	}
+	tmpDir, err := os.MkdirTemp("", "cull-pyext-defs-*")
+	if err != nil {
+		return nil, fmt.Errorf("extract/python: temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		return nil, fmt.Errorf("extract/python: chmod temp dir: %w", err)
+	}
+	helperPath := filepath.Join(tmpDir, "pyext.py")
+	if err := os.WriteFile(helperPath, helperSrc, 0o600); err != nil {
+		return nil, fmt.Errorf("extract/python: write helper: %w", err)
+	}
+	cmd := exec.Command(pyPath, helperPath, "--defs", filepath.ToSlash(relpath))
+	cmd.Env = helperEnvFunc(defaultMaxContext)
+	cmd.Stdin = bytes.NewReader(src)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("extract/python: run helper --defs: %w (stderr: %s)", err, stderr.String())
+	}
+	var result struct {
+		Defs []Definition `json:"defs"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return nil, fmt.Errorf("extract/python: decode helper --defs output %q: %w", stdout.Bytes(), err)
+	}
+	return result.Defs, nil
+}
