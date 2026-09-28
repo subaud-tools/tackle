@@ -541,28 +541,30 @@ func (p *modPlan) combinedBaseline(ctx context.Context, sb Sandbox, timeout time
 }
 
 // runGroups runs every group twice unmutated in sb, adding every failure
-// to p.failed. ok is false when a run was unusable. passes counts each
+// to p.failed. It stops at the first unusable run (ok false: its results
+// aren't used, so a second pass would only cost time). passes counts each
 // test's passing runs; slowest is the slower run (summed over groups);
 // unmapped is the first run's unmapped results.
 func (p *modPlan) runGroups(ctx context.Context, sb Sandbox, timeout time.Duration) (ok bool, passes map[string]int, slowest time.Duration, unmapped int) {
 	ok = true
 	passes = map[string]int{}
-	for run := 0; run < 2; run++ {
+	for run := 0; run < 2 && ok; run++ {
 		start := time.Now()
 		for _, g := range p.groups {
 			p.clearBytecode(sb)
 			o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
+			for id := range o.Failed {
+				p.failed[id] = true
+			}
 			if badRun(o) != "" {
 				ok = false
+				break
 			}
 			if run == 0 {
 				unmapped += o.Unmapped
 			}
 			for id := range o.Passed {
 				passes[id]++
-			}
-			for id := range o.Failed {
-				p.failed[id] = true
 			}
 		}
 		slowest = max(slowest, time.Since(start))
@@ -587,11 +589,12 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 			idx := nativeIndex(p.mod.Lang, f, p.mod.Tests)
 			fp, ff := map[string]int{}, map[string]bool{}
 			bad := false
+			var fdur [2]time.Duration
 			for run := 0; run < 2 && !bad; run++ {
 				p.clearBytecode(sb)
 				start := time.Now()
 				o := g.r.Run(ctx, sb.Dir, []string{f}, idx, timeout)
-				dur[run] += time.Since(start)
+				fdur[run] = time.Since(start)
 				if badRun(o) != "" {
 					bad = true
 				}
@@ -618,6 +621,8 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 				continue
 			}
 			kept.files = append(kept.files, f)
+			dur[0] += fdur[0]
+			dur[1] += fdur[1]
 			maps.Copy(kept.index, idx)
 			for id, n := range fp {
 				passes[id] += n
