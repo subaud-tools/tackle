@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/schuettc/tackle/internal/cull/cases"
 	"github.com/schuettc/tackle/internal/cull/mutate"
 	"github.com/schuettc/tackle/internal/cull/runner"
 )
@@ -22,11 +24,17 @@ import (
 // exercise it, and the cull ids of the tests in those files that exercise
 // it. Rel is root-relative and '/'-separated; it must never be a test file
 // (the Python and TypeScript mutators don't skip test files themselves).
+// Callees are the definitions in Rel that the targets call: when set,
+// mutants are planted only inside them (see targetSites).
 type Module struct {
 	Rel, Lang string
 	TestFiles []string
 	Tests     []string // cull ids of tests exercising it
+	Callees   []cases.Callee
 }
+
+// perCallee is how many mutants targeted sampling plants per callee.
+const perCallee = 15
 
 // Mutant is one planted bug and the measured tests that failed with it in
 // place. KilledBy is nil when the mutant is excluded (its run timed out,
@@ -61,7 +69,7 @@ type Matrix struct {
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
-// MaxMutants = 30, RunTimeout = 60s, Stderr = discard.
+// MaxMutants = 30 (for a module without Callees), RunTimeout = 60s, Stderr = discard.
 // Evidence always runs the runner package's detected per-test command,
 // never a project's test_command override.
 type Options struct {
@@ -104,8 +112,8 @@ var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts
 // their kill matrix. Per module: the test files run twice unmutated (the
 // baseline); then a canary (see canarySource) is planted and the tests run
 // once, and a module whose canary no measured test notices is shadowed
-// (see Matrix.Shadowed); then each sampled mutant (at most MaxMutants, seeded by the
-// module's bytes) is written into a free sandbox, the tests are run, and
+// (see Matrix.Shadowed); then each sampled mutant (see targetSites; for a module
+// without Callees, at most MaxMutants seeded by the module's bytes) is written into a free sandbox, the tests are run, and
 // the module's original bytes are restored before the sandbox is reused.
 // The working tree is never written. Run holds an exclusive lock on the
 // project's sandbox root (<base>/.lock) throughout; a concurrent Run or
@@ -339,8 +347,12 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 		logf("%s: %v; skipped", mod.Rel, err)
 		return nil
 	}
-	seed := sha256.Sum256(src)
-	sites = mutate.Sample(sites, max, seed[:])
+	if len(mod.Callees) > 0 {
+		sites = targetSites(src, sites, mod.Callees)
+	} else {
+		seed := sha256.Sum256(src)
+		sites = mutate.Sample(sites, max, seed[:])
+	}
 	if len(sites) == 0 {
 		logf("%s: no mutation sites; skipped", mod.Rel)
 		return nil
@@ -387,6 +399,43 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 		return nil
 	}
 	return p
+}
+
+// targetSites keeps the sites fully inside each callee's definition (its
+// Source text's first occurrence in src; the whole module when it isn't
+// found), samples up to perCallee per callee (seeded by src and the
+// callee's symbol), and returns their union sorted by Start.
+func targetSites(src []byte, sites []mutate.Site, callees []cases.Callee) []mutate.Site {
+	type key struct {
+		start, end int
+		repl       string
+	}
+	seen := map[key]bool{}
+	var out []mutate.Site
+	for _, c := range callees {
+		lo, hi := 0, len(src)
+		if c.Source != "" {
+			if i := bytes.Index(src, []byte(c.Source)); i >= 0 {
+				lo, hi = i, i+len(c.Source)
+			}
+		}
+		var in []mutate.Site
+		for _, s := range sites {
+			if s.Start >= lo && s.End <= hi {
+				in = append(in, s)
+			}
+		}
+		seed := sha256.Sum256(append(append([]byte(nil), src...), c.Symbol...))
+		for _, s := range mutate.Sample(in, perCallee, seed[:]) {
+			k := key{s.Start, s.End, s.Replacement}
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, s)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
+	return out
 }
 
 // nativeIndex maps runner-native names to the ids in tests that belong to

@@ -72,7 +72,8 @@ var afterMatrixHook func()
 // It refuses (an error, nothing written) if a target's file changed since
 // cull check, or if a target file, a mutated module or one of its test
 // files changed while the matrix ran. It mutates only non-test source
-// files the targets call (their extracted callees), runs every test in
+// files the targets call (their extracted callees), only inside the
+// definitions they call (at most 15 mutants each), runs every test in
 // those modules' test files against each mutant, and settles each target:
 // sole guard of any bug → keep; measured with no sole guard → cut;
 // unmeasured → stays review (rule evidence_unmeasured). No other test is
@@ -175,6 +176,7 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 			inputs[tf] = true
 		}
 		sort.Strings(mod.Tests)
+		mod.Callees = targetCallees(rel, targets, rep.Tests, byID)
 		inputs[rel] = true
 		mods = append(mods, mod)
 	}
@@ -262,6 +264,22 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	}
 	res.Duration = time.Since(start)
 	return res, nil
+}
+
+// targetCallees lists (deduplicated) the callees in rel of the targets as
+// extracted again now: the definitions evidence plants mutants in.
+func targetCallees(rel string, targets []int, tests []check.TestResult, byID map[string]cases.TestCase) []cases.Callee {
+	seen := map[cases.Callee]bool{}
+	var out []cases.Callee
+	for _, i := range targets {
+		for _, c := range byID[tests[i].ID].Callees {
+			if c.File == rel && !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	return out
 }
 
 // measure computes id's evidence over the non-excluded mutants of those of
