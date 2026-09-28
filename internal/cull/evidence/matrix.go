@@ -385,7 +385,7 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 		return nil
 	}
 	if len(mod.Callees) > 0 {
-		sites = targetSites(src, sites, mod.Callees)
+		sites = targetSites(mod.Rel, src, sites, mod.Callees, logf)
 	} else {
 		seed := sha256.Sum256(src)
 		sites = mutate.Sample(sites, max, seed[:])
@@ -438,28 +438,33 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 	return p
 }
 
-// targetSites keeps the sites fully inside each callee's definition (its
-// Source text's first occurrence in src; the whole module when it isn't
-// found), samples up to perCallee per callee (seeded by src and the
-// callee's symbol), and returns their union sorted by Start.
-func targetSites(src []byte, sites []mutate.Site, callees []cases.Callee) []mutate.Site {
+// targetSites keeps the sites fully inside each callee's definition
+// (every occurrence of its Source text in src, matched with CRLF line
+// endings read as LF and mapped back to src's bytes; the whole module,
+// logged, when it isn't found), samples up to perCallee per callee
+// (seeded by src and the callee's symbol), and returns their union sorted
+// by Start.
+func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Callee, logf func(string, ...any)) []mutate.Site {
 	type key struct {
 		start, end int
 		repl       string
 	}
+	norm, orig := lfOffsets(src)
 	seen := map[key]bool{}
 	var out []mutate.Site
 	for _, c := range callees {
-		lo, hi := 0, len(src)
-		if c.Source != "" {
-			if i := bytes.Index(src, []byte(c.Source)); i >= 0 {
-				lo, hi = i, i+len(c.Source)
-			}
+		spans := sourceSpans(norm, orig, c.Source)
+		if len(spans) == 0 {
+			logf("%s: definition of %s not found; sampling the whole module", rel, c.Symbol)
+			spans = [][2]int{{0, len(src)}}
 		}
 		var in []mutate.Site
 		for _, s := range sites {
-			if s.Start >= lo && s.End <= hi {
-				in = append(in, s)
+			for _, sp := range spans {
+				if s.Start >= sp[0] && s.End <= sp[1] {
+					in = append(in, s)
+					break
+				}
 			}
 		}
 		seed := sha256.Sum256(append(append([]byte(nil), src...), c.Symbol...))
@@ -473,6 +478,44 @@ func targetSites(src []byte, sites []mutate.Site, callees []cases.Callee) []muta
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
 	return out
+}
+
+// lfOffsets returns src with each CRLF read as LF, and for each offset in
+// it (and its end) the matching offset in src.
+func lfOffsets(src []byte) (norm []byte, orig []int) {
+	norm = make([]byte, 0, len(src))
+	orig = make([]int, 0, len(src)+1)
+	for i := 0; i < len(src); i++ {
+		if src[i] == '\r' && i+1 < len(src) && src[i+1] == '\n' {
+			continue
+		}
+		norm = append(norm, src[i])
+		orig = append(orig, i)
+	}
+	orig = append(orig, len(src))
+	return norm, orig
+}
+
+// sourceSpans lists the [start, end) offsets in the original bytes of
+// every non-overlapping occurrence of source (CRLF read as LF) in norm.
+func sourceSpans(norm []byte, orig []int, source string) [][2]int {
+	pat := []byte(strings.ReplaceAll(source, "\r\n", "\n"))
+	if len(pat) == 0 {
+		return nil
+	}
+	var spans [][2]int
+	for off := 0; ; {
+		i := bytes.Index(norm[off:], pat)
+		if i < 0 {
+			return spans
+		}
+		lo := off + i
+		hi := lo + len(pat)
+		// The span ends after the last source byte in src (a matched
+		// trailing LF covers its CR).
+		spans = append(spans, [2]int{orig[lo], orig[hi-1] + 1})
+		off = hi
+	}
 }
 
 // nativeIndex maps runner-native names to the ids in tests that belong to

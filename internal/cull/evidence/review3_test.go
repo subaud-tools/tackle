@@ -1,12 +1,18 @@
 package evidence
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/schuettc/tackle/internal/cull/cases"
+	"github.com/schuettc/tackle/internal/cull/mutate"
 )
 
 // After isolation the kept files run together as the real baseline: a
@@ -90,5 +96,60 @@ func TestCombinedBaselineStopsAtFirstBadRun(t *testing.T) {
 	// One combined run, then one isolated run (which stops at its bad run).
 	if b, _ := os.ReadFile(counter); len(b) != 2 {
 		t.Errorf("test_bad.py ran %d times, want 2", len(b))
+	}
+}
+
+func nolog(string, ...any) {}
+
+// A module with CRLF line endings: the extractor's LF Source still finds
+// its span (offsets in the CRLF bytes), so the target's sole catch in a
+// small function next to a big one is planted.
+func TestTargetedSamplingCRLF(t *testing.T) {
+	needPython(t)
+	crlf := func(s string) string { return strings.ReplaceAll(s, "\n", "\r\n") }
+	root := newRepo(t, map[string]string{
+		"calc.py": crlf(bigPy() + "\n\ndef ident(x):\n    return x\n"),
+		"test_calc.py": "from calc import big, ident\n\n\ndef test_big():\n    assert big(5) == 10\n\n\n" +
+			"def test_ident():\n    assert ident(3) == 3\n",
+	})
+	writeLast(t, root, []string{"test_calc.py"}, map[string]verdict{"test_ident": {"review", "review_band"}})
+	o := settleOpts()
+	var log bytes.Buffer
+	o.Stderr = &log
+	if _, err := Run(context.Background(), root, o); err != nil {
+		t.Fatal(err)
+	}
+	_, by := loadLast(t, root)
+	if tr := by["test_ident"]; tr.Verdict != "keep" || tr.Rule != RuleSoleGuard {
+		t.Fatalf("test_ident: %s/%s %v\n%s", tr.Verdict, tr.Rule, tr.Reasons, log.String())
+	}
+	if strings.Contains(log.String(), "whole module") {
+		t.Errorf("fell back:\n%s", log.String())
+	}
+}
+
+// Spans: CRLF offsets map back to the original bytes; every occurrence
+// of a duplicated definition is included; a fallback is logged.
+func TestTargetSitesSpans(t *testing.T) {
+	src := []byte("def f():\r\n    return 1\r\nx = 2\r\n")
+	sites := []mutate.Site{{Start: 21, End: 22, Desc: "in f"}, {Start: 28, End: 29, Desc: "x"}}
+	got := targetSites("m.py", src, sites, []cases.Callee{{Symbol: "f", Source: "def f():\n    return 1\n"}}, nolog)
+	if len(got) != 1 || got[0].Desc != "in f" {
+		t.Errorf("crlf: %v", got)
+	}
+
+	dup := []byte("def g():\n    return 1\n\n\ndef g():\n    return 1\n")
+	sites = []mutate.Site{{Start: 20, End: 21, Desc: "first"}, {Start: 44, End: 45, Desc: "second"}}
+	got = targetSites("m.py", dup, sites, []cases.Callee{{Symbol: "g", Source: "def g():\n    return 1\n"}}, nolog)
+	if len(got) != 2 {
+		t.Errorf("duplicate: %v", got)
+	}
+
+	var logged []string
+	logf := func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) }
+	targetSites("m.py", dup, sites, []cases.Callee{{Symbol: "h", Source: "def h(): pass\n"}}, logf)
+	if len(logged) != 1 || !strings.Contains(logged[0], "m.py") || !strings.Contains(logged[0], "h") ||
+		!strings.Contains(logged[0], "whole module") {
+		t.Errorf("log = %q", logged)
 	}
 }

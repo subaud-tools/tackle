@@ -48,11 +48,11 @@ func TestTargetedSampling(t *testing.T) {
 func TestTargetSitesFallbackDedupe(t *testing.T) {
 	src := []byte("aaaa bbbb")
 	sites := []mutate.Site{{Start: 0, End: 1, Desc: "a"}, {Start: 5, End: 6, Desc: "b"}}
-	got := targetSites(src, sites, []cases.Callee{{Symbol: "b", Source: "bbbb"}, {Symbol: "b2", Source: "bbbb"}})
+	got := targetSites("m.py", src, sites, []cases.Callee{{Symbol: "b", Source: "bbbb"}, {Symbol: "b2", Source: "bbbb"}}, nolog)
 	if len(got) != 1 || got[0].Desc != "b" {
 		t.Errorf("span: %v", got)
 	}
-	got = targetSites(src, sites, []cases.Callee{{Symbol: "x", Source: "zzz"}, {Symbol: "b", Source: "bbbb"}})
+	got = targetSites("m.py", src, sites, []cases.Callee{{Symbol: "x", Source: "zzz"}, {Symbol: "b", Source: "bbbb"}}, nolog)
 	if len(got) != 2 || got[0].Desc != "a" || got[1].Desc != "b" {
 		t.Errorf("fallback: %v", got)
 	}
