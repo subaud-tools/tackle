@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,6 +59,8 @@ type Mutant struct {
 // for that module's mutants. Shadowed lists (sorted) the modules whose
 // canary no measured test noticed: the tests load another copy of them,
 // so none of their mutants run and none of their tests are measured.
+// Dropped maps a module to the test files (sorted) left out of it because
+// they did not run cleanly on their own (see modPlan.isolate).
 type Matrix struct {
 	Mutants  []Mutant        `json:"mutants"`
 	Baseline map[string]bool `json:"baseline"`
@@ -66,6 +69,7 @@ type Matrix struct {
 
 	MeasuredByModule map[string]map[string]bool `json:"measured_by_module"`
 	Shadowed         []string                   `json:"shadowed"`
+	Dropped          map[string][]string        `json:"dropped"`
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
@@ -100,6 +104,7 @@ type modPlan struct {
 	shadowed bool            // canary unnoticed: tests load another copy
 	measured map[string]bool // passed both baseline runs
 	failed   map[string]bool // failed at least one baseline run
+	dropped  []string        // test files that did not run cleanly alone
 	unmapped int
 	slowest  time.Duration // the slower baseline run (all groups)
 }
@@ -181,6 +186,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	for _, p := range plans {
 		jobs = append(jobs, func(sb Sandbox) error {
 			p.baseline(ctx, sb, opt.BaselineTimeout)
+			if len(p.dropped) > 0 {
+				logf("%s: dropped test files that did not run cleanly alone: %s", p.mod.Rel, strings.Join(p.dropped, ", "))
+			}
 			logf("baseline %s: %d measured, %d failing", p.mod.Rel, len(p.measured), len(p.failed))
 			if !p.ok || len(p.measured) == 0 {
 				return nil
@@ -236,7 +244,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		return Matrix{}, err
 	}
 
-	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}}
+	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}, Dropped: map[string][]string{}}
 	flaky := map[string]bool{}
 	for _, p := range plans {
 		m.Unmapped += p.unmapped
@@ -247,6 +255,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	for _, p := range plans {
 		if p.shadowed {
 			m.Shadowed = append(m.Shadowed, p.mod.Rel)
+		}
+		if len(p.dropped) > 0 {
+			m.Dropped[p.mod.Rel] = p.dropped
 		}
 		if !p.ok || p.shadowed || len(p.sites) == 0 {
 			continue
@@ -490,8 +501,18 @@ func badRun(o runner.Outcome) string {
 	return ""
 }
 
-// baseline runs every group twice unmutated in sb.
+// baseline runs every group twice unmutated in sb. If a run is unusable
+// (Invalid, timed out, failed to start), it isolates the module's test
+// files (see isolate).
 func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duration) {
+	p.combinedBaseline(ctx, sb, timeout)
+	if !p.ok {
+		p.isolate(ctx, sb, timeout)
+	}
+}
+
+// combinedBaseline runs every group twice unmutated in sb.
+func (p *modPlan) combinedBaseline(ctx context.Context, sb Sandbox, timeout time.Duration) {
 	p.ok = true
 	p.failed = map[string]bool{}
 	passes := map[string]int{}
@@ -515,6 +536,84 @@ func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duratio
 		}
 		p.slowest = max(p.slowest, time.Since(start))
 	}
+	p.measured = map[string]bool{}
+	if !p.ok {
+		return
+	}
+	for id, n := range passes {
+		if n == 2 && !p.failed[id] {
+			p.measured[id] = true
+		}
+	}
+}
+
+// isolate runs each test file alone, twice, unmutated in sb, and drops
+// (into p.dropped) the files with an unusable run or a test that passed
+// one run and failed the other. The kept files form the module's groups
+// and their two runs its baseline; p.ok is false when none is kept.
+// Failures seen in the combined baseline stay in p.failed.
+func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration) {
+	passes := map[string]int{}
+	var dur [2]time.Duration
+	p.unmapped = 0
+	var groups []*group
+	for _, g := range p.groups {
+		kept := &group{r: g.r, index: map[string]string{}}
+		for _, f := range g.files {
+			idx := nativeIndex(p.mod.Lang, f, p.mod.Tests)
+			fp, ff := map[string]int{}, map[string]bool{}
+			bad, unmapped := false, 0
+			for run := 0; run < 2 && !bad; run++ {
+				p.clearBytecode(sb)
+				start := time.Now()
+				o := g.r.Run(ctx, sb.Dir, []string{f}, idx, timeout)
+				dur[run] += time.Since(start)
+				if badRun(o) != "" {
+					bad = true
+				}
+				if run == 0 {
+					unmapped = o.Unmapped
+				}
+				for id := range o.Passed {
+					fp[id]++
+				}
+				for id := range o.Failed {
+					ff[id] = true
+				}
+			}
+			flaky := false
+			for id := range ff {
+				if fp[id] > 0 {
+					flaky = true
+				}
+			}
+			if bad || flaky {
+				p.dropped = append(p.dropped, f)
+				if flaky {
+					for id := range ff {
+						p.failed[id] = true
+					}
+				}
+				continue
+			}
+			kept.files = append(kept.files, f)
+			maps.Copy(kept.index, idx)
+			p.unmapped += unmapped
+			for id, n := range fp {
+				passes[id] += n
+			}
+			for id := range ff {
+				p.failed[id] = true
+			}
+		}
+		if len(kept.files) > 0 {
+			groups = append(groups, kept)
+		}
+	}
+	sort.Strings(p.dropped)
+	p.groups = groups
+	p.slowest = max(dur[0], dur[1])
+	p.ok = len(groups) > 0
 	p.measured = map[string]bool{}
 	if !p.ok {
 		return

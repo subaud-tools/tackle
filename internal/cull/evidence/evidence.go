@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,7 @@ const (
 	reasonExcluded   = "every planted bug was excluded (timed out or did not build)"
 	reasonDupName    = "no runner-reportable name (duplicate test name)"
 	reasonNotFound   = "not found when the suite was extracted again"
+	reasonDropped    = "their test file did not run cleanly"
 )
 
 // extractContext is large enough that extraction never drops a callee for
@@ -235,7 +237,7 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 		t := &rep.Tests[i]
 		ev := measure(t.ID, testMods[t.ID], byModule, m.MeasuredByModule, m.Baseline)
 		if !ev.Measured {
-			ev.Reason = unmeasuredReason(root, t.ID, byID, testMods[t.ID], byModule, m.Baseline, flaky, shadowed, hasSites)
+			ev.Reason = unmeasuredReason(root, t.ID, byID, testMods[t.ID], byModule, m.Baseline, flaky, shadowed, m.Dropped, hasSites)
 		}
 		t.Verdict, t.Rule = settle(ev)
 		t.Reasons = dropEvidenceReasons(t.Reasons)
@@ -368,7 +370,8 @@ func testSupport(rel string) bool {
 
 // unmeasuredReason says why id has no usable measurement.
 func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []string,
-	byModule map[string][]Mutant, baseline, flaky, shadowed map[string]bool, hasSites func(string) bool) string {
+	byModule map[string][]Mutant, baseline, flaky, shadowed map[string]bool, dropped map[string][]string,
+	hasSites func(string) bool) string {
 	tc, ok := byID[id]
 	if !ok {
 		return reasonNotFound
@@ -381,6 +384,11 @@ func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []st
 	}
 	if _, err := runner.For(root, tc.Lang, tc.File); err != nil {
 		return err.Error()
+	}
+	for _, rel := range mods {
+		if slices.Contains(dropped[rel], tc.File) {
+			return reasonDropped
+		}
 	}
 	if flaky[id] {
 		return reasonFlaky
@@ -452,12 +460,13 @@ func extractSuite(root string, files []string, stderr io.Writer) ([]cases.TestCa
 // evidenceFile is .cull/evidence.json: the modules measured and their
 // full kill matrix.
 type evidenceFile struct {
-	Modules  []moduleJSON    `json:"modules"`
-	Mutants  []Mutant        `json:"mutants"`
-	Baseline map[string]bool `json:"baseline"`
-	Flaky    []string        `json:"flaky"`
-	Unmapped int             `json:"unmapped"`
-	Shadowed []string        `json:"shadowed"`
+	Modules  []moduleJSON        `json:"modules"`
+	Mutants  []Mutant            `json:"mutants"`
+	Baseline map[string]bool     `json:"baseline"`
+	Flaky    []string            `json:"flaky"`
+	Unmapped int                 `json:"unmapped"`
+	Shadowed []string            `json:"shadowed"`
+	Dropped  map[string][]string `json:"dropped"`
 }
 
 type moduleJSON struct {
@@ -468,7 +477,7 @@ type moduleJSON struct {
 }
 
 func writeEvidenceJSON(root string, mods []Module, m Matrix) error {
-	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed}
+	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Dropped: m.Dropped}
 	for _, mod := range mods {
 		f.Modules = append(f.Modules, moduleJSON{mod.Rel, mod.Lang, mod.TestFiles, mod.Tests})
 	}
