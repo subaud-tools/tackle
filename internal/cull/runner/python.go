@@ -56,7 +56,7 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	interp := verify.PythonInterpreter(dir)
 	argv := append([]string{interp, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=" + tmpPath}, files...)
 
-	res := runProcessEnv(ctx, dir, argv, pythonEnv(), timeout)
+	res := runProcessEnv(ctx, dir, argv, pythonEnv(dir), timeout)
 	if res.StartErr != nil {
 		out.Err = res.StartErr.Error()
 		return out
@@ -176,13 +176,30 @@ func stripParam(s string) string {
 // so a same-size mutant planted within a second of an earlier version
 // could otherwise run that version's bytecode. PYTHONPYCACHEPREFIX is
 // dropped so no shared out-of-tree cache is consulted either.
-func pythonEnv() []string {
-	var env []string
+// PYTHONPATH starts with <dir>/src (when it exists) and <dir>, ahead of
+// any inherited entries, so the run imports dir's copy of the project
+// rather than an installed one (e.g. an editable install of another
+// checkout).
+func pythonEnv(dir string) []string {
+	var env, path []string
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "src")); err == nil && fi.IsDir() {
+		path = append(path, filepath.Join(dir, "src"))
+	}
+	path = append(path, dir)
 	for _, kv := range verify.FilteredEnv() {
 		if strings.HasPrefix(kv, "PYTHONDONTWRITEBYTECODE=") || strings.HasPrefix(kv, "PYTHONPYCACHEPREFIX=") {
 			continue
 		}
+		if old, ok := strings.CutPrefix(kv, "PYTHONPATH="); ok {
+			if old != "" {
+				path = append(path, old)
+			}
+			continue
+		}
 		env = append(env, kv)
 	}
-	return append(env, "PYTHONDONTWRITEBYTECODE=1")
+	return append(env, "PYTHONDONTWRITEBYTECODE=1", "PYTHONPATH="+strings.Join(path, string(os.PathListSeparator)))
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,5 +219,23 @@ func TestPythonRunTimeout(t *testing.T) {
 	}
 	if elapsed > 6*time.Second {
 		t.Errorf("elapsed = %v, want well under 6s (killGrace-bounded)", elapsed)
+	}
+}
+
+func TestPythonEnvSandboxFirst(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PYTHONPATH", "/elsewhere")
+	var got []string
+	for _, kv := range pythonEnv(dir) {
+		if strings.HasPrefix(kv, "PYTHONPATH=") {
+			got = append(got, kv)
+		}
+	}
+	want := "PYTHONPATH=" + filepath.Join(dir, "src") + string(os.PathListSeparator) + dir + string(os.PathListSeparator) + "/elsewhere"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %v, want %s", got, want)
 	}
 }

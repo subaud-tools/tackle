@@ -32,7 +32,9 @@ var heavyDirs = map[string]bool{"node_modules": true, "venv": true, ".venv": tru
 // tools.CacheDir("cull")/evidence/<sha256(root)[:12]>/w<N>. Each holds a
 // copy of every file `git ls-files -co --exclude-standard` lists, with
 // heavy dependency directories (node_modules, venv, .venv, and vendor when
-// untracked) symlinked to root's instead. Existing sandboxes are
+// untracked) symlinked to root's instead; one that is itself a symlink in
+// root is linked to the same target (a relative target resolved against
+// root). Existing sandboxes are
 // refreshed: changed files are rewritten, and anything not in the listing
 // (stale files, build output) is removed.
 //
@@ -107,11 +109,11 @@ func prepare(abs, base string, n int, logf func(string, ...any)) ([]Sandbox, err
 }
 
 // copyPlan is the set of root-relative ('/'-separated) paths a sandbox
-// holds: files copied, heavy directories symlinked, and every directory
-// that is an ancestor of one of them.
+// holds: files copied, heavy directories symlinked (heavy maps each to its
+// link target), and every directory that is an ancestor of one of them.
 type copyPlan struct {
 	files map[string]bool
-	heavy map[string]bool
+	heavy map[string]string
 	dirs  map[string]bool
 }
 
@@ -171,17 +173,30 @@ func planCopy(root string, logf func(string, ...any)) (*copyPlan, error) {
 		return ""
 	}
 
-	plan := &copyPlan{files: map[string]bool{}, heavy: map[string]bool{}, dirs: map[string]bool{}}
+	plan := &copyPlan{files: map[string]bool{}, heavy: map[string]string{}, dirs: map[string]bool{}}
 	addDirs := func(p string) {
 		for d := path.Dir(p); d != "."; d = path.Dir(d) {
 			plan.dirs[d] = true
 		}
 	}
 	addHeavy := func(d string) {
-		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(d))); err != nil {
+		src := filepath.Join(root, filepath.FromSlash(d))
+		fi, err := os.Lstat(src)
+		if err != nil {
 			return
 		}
-		plan.heavy[d] = true
+		target := src
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			t, err := os.Readlink(src)
+			if err != nil {
+				return
+			}
+			if !filepath.IsAbs(t) {
+				t = filepath.Join(filepath.Dir(src), t)
+			}
+			target = t
+		}
+		plan.heavy[d] = target
 		addDirs(d)
 	}
 	for _, p := range listed {
@@ -209,7 +224,12 @@ func planCopy(root string, logf func(string, ...any)) (*copyPlan, error) {
 	}
 	for _, p := range ignoredDirs {
 		if !strings.HasSuffix(p, "/") {
-			continue
+			// An ignored symlink is listed as a file: keep it only if it
+			// is a heavy directory itself.
+			if fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p))); err != nil ||
+				fi.Mode()&fs.ModeSymlink == 0 || heavyPrefix(p) != p {
+				continue
+			}
 		}
 		if h := heavyPrefix(p); h != "" {
 			addHeavy(h)
@@ -235,7 +255,7 @@ func (p *copyPlan) sync(root, dir string) error {
 		rel = filepath.ToSlash(rel)
 		keep := false
 		switch {
-		case p.heavy[rel]:
+		case p.heavy[rel] != "":
 			keep = d.Type()&fs.ModeSymlink != 0
 		case p.files[rel]:
 			keep = !d.IsDir()
@@ -262,8 +282,7 @@ func (p *copyPlan) sync(root, dir string) error {
 			return err
 		}
 	}
-	for rel := range p.heavy {
-		src := filepath.Join(root, filepath.FromSlash(rel))
+	for rel, src := range p.heavy {
 		dst := filepath.Join(dir, filepath.FromSlash(rel))
 		if t, err := os.Readlink(dst); err == nil && t == src {
 			continue

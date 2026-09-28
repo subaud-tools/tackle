@@ -47,7 +47,9 @@ type Mutant struct {
 // first baseline run's unmapped native results over all modules.
 // MeasuredByModule holds, per module, the Baseline tests that passed both
 // of THAT module's baseline runs: only those are credited (or charged)
-// for that module's mutants.
+// for that module's mutants. Shadowed lists (sorted) the modules whose
+// canary no measured test noticed: the tests load another copy of them,
+// so none of their mutants run and none of their tests are measured.
 type Matrix struct {
 	Mutants  []Mutant        `json:"mutants"`
 	Baseline map[string]bool `json:"baseline"`
@@ -55,6 +57,7 @@ type Matrix struct {
 	Unmapped int             `json:"unmapped"`
 
 	MeasuredByModule map[string]map[string]bool `json:"measured_by_module"`
+	Shadowed         []string                   `json:"shadowed"`
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
@@ -83,6 +86,7 @@ type modPlan struct {
 	groups []*group
 
 	ok       bool            // baseline valid
+	shadowed bool            // canary unnoticed: tests load another copy
 	measured map[string]bool // passed both baseline runs
 	failed   map[string]bool // failed at least one baseline run
 	unmapped int
@@ -98,7 +102,9 @@ var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts
 
 // RunMatrix measures mods in sandbox copies of root (see Prepare) and returns
 // their kill matrix. Per module: the test files run twice unmutated (the
-// baseline); then each sampled mutant (at most MaxMutants, seeded by the
+// baseline); then a canary (see canarySource) is planted and the tests run
+// once, and a module whose canary no measured test notices is shadowed
+// (see Matrix.Shadowed); then each sampled mutant (at most MaxMutants, seeded by the
 // module's bytes) is written into a free sandbox, the tests are run, and
 // the module's original bytes are restored before the sandbox is reused.
 // The working tree is never written. Run holds an exclusive lock on the
@@ -155,6 +161,19 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		jobs = append(jobs, func(sb Sandbox) error {
 			p.baseline(ctx, sb, opt.RunTimeout)
 			logf("baseline %s: %d measured, %d failing", p.mod.Rel, len(p.measured), len(p.failed))
+			if !p.ok || len(p.measured) == 0 {
+				return nil
+			}
+			loaded, why, err := p.canary(ctx, sb, opt.RunTimeout)
+			if err != nil {
+				return err
+			}
+			p.shadowed = !loaded
+			if loaded {
+				logf("canary %s: loaded (%s)", p.mod.Rel, why)
+			} else {
+				logf("canary %s: not loaded; %s", p.mod.Rel, reasonShadowed)
+			}
 			return nil
 		})
 	}
@@ -170,7 +189,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			logf("%s: baseline invalid; its tests are unmeasurable", p.mod.Rel)
 			continue
 		}
-		if len(p.measured) == 0 {
+		if len(p.measured) == 0 || p.shadowed {
 			continue
 		}
 		for i, s := range p.sites {
@@ -205,7 +224,10 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		}
 	}
 	for _, p := range plans {
-		if !p.ok || len(p.sites) == 0 {
+		if p.shadowed {
+			m.Shadowed = append(m.Shadowed, p.mod.Rel)
+		}
+		if !p.ok || p.shadowed || len(p.sites) == 0 {
 			continue
 		}
 		for id := range p.measured {
@@ -222,6 +244,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		m.Flaky = append(m.Flaky, id)
 	}
 	sort.Strings(m.Flaky)
+	sort.Strings(m.Shadowed)
 	// measured is per module, flakiness global: a test stable in one
 	// module's baselines may have failed in another's. Only tests in the
 	// final Baseline are credited.
@@ -480,6 +503,48 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 	}
 	sort.Strings(killed)
 	return killed, "", nil
+}
+
+// canary plants a module-breaking change (see canarySource) in sb, runs
+// the groups holding measured tests once, and restores the module. loaded
+// is false only when every run was valid (not Invalid, timed out or
+// failed to start) and no measured test failed: the tests then load some
+// other copy of the module. An Invalid run (a Go build failure, a pytest
+// collection error) counts as loaded. why says what showed it loaded. An
+// error means the sandbox couldn't be written or restored.
+func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration) (loaded bool, why string, err error) {
+	broken, ok := canarySource(p.mod.Lang, p.src)
+	if !ok {
+		return true, "no canary for " + p.mod.Lang, nil
+	}
+	file := filepath.Join(sb.Dir, filepath.FromSlash(p.mod.Rel))
+	if err := os.WriteFile(file, broken, 0o644); err != nil {
+		return false, "", fmt.Errorf("evidence: plant canary in %s: %w", file, err)
+	}
+	for _, g := range p.groups {
+		if !holdsMeasured(g, p.measured) {
+			continue
+		}
+		p.clearBytecode(sb)
+		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
+		if why = badRun(o); why != "" {
+			loaded = true
+			break
+		}
+		for id := range o.Failed {
+			if p.measured[id] {
+				loaded, why = true, id+" failed"
+				break
+			}
+		}
+		if loaded {
+			break
+		}
+	}
+	if err := os.WriteFile(file, p.src, 0o644); err != nil {
+		return false, "", fmt.Errorf("evidence: restore %s: %w", file, err)
+	}
+	return loaded, why, nil
 }
 
 func holdsMeasured(g *group, measured map[string]bool) bool {

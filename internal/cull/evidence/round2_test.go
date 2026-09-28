@@ -161,7 +161,7 @@ func TestMeasureTable(t *testing.T) {
 			ev := measure(id, mods, byModule, c.measuredBy, c.baseline)
 			if !ev.Measured {
 				ev.Reason = unmeasuredReason(root, id, byID, mods, byModule, c.baseline,
-					map[string]bool{id: c.flaky}, func(string) bool { return true })
+					map[string]bool{id: c.flaky}, nil, func(string) bool { return true })
 			}
 			v, r := settle(ev)
 			if v != c.verdict || r != c.rule || ev.Reason != c.reason {

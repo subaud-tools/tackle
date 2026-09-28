@@ -209,6 +209,10 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	for _, id := range m.Flaky {
 		flaky[id] = true
 	}
+	shadowed := map[string]bool{}
+	for _, rel := range m.Shadowed {
+		shadowed[rel] = true
+	}
 	sites := map[string]bool{} // module → has mutation sites (computed lazily)
 	hasSites := func(rel string) bool {
 		if v, ok := sites[rel]; ok {
@@ -229,7 +233,7 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 		t := &rep.Tests[i]
 		ev := measure(t.ID, testMods[t.ID], byModule, m.MeasuredByModule, m.Baseline)
 		if !ev.Measured {
-			ev.Reason = unmeasuredReason(root, t.ID, byID, testMods[t.ID], byModule, m.Baseline, flaky, hasSites)
+			ev.Reason = unmeasuredReason(root, t.ID, byID, testMods[t.ID], byModule, m.Baseline, flaky, shadowed, hasSites)
 		}
 		t.Verdict, t.Rule = settle(ev)
 		t.Reasons = dropEvidenceReasons(t.Reasons)
@@ -346,7 +350,7 @@ func testSupport(rel string) bool {
 
 // unmeasuredReason says why id has no usable measurement.
 func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []string,
-	byModule map[string][]Mutant, baseline, flaky map[string]bool, hasSites func(string) bool) string {
+	byModule map[string][]Mutant, baseline, flaky, shadowed map[string]bool, hasSites func(string) bool) string {
 	tc, ok := byID[id]
 	if !ok {
 		return reasonNotFound
@@ -368,6 +372,11 @@ func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []st
 		total += len(byModule[rel])
 	}
 	if total == 0 {
+		for _, rel := range mods {
+			if shadowed[rel] {
+				return reasonShadowed
+			}
+		}
 		for _, rel := range mods {
 			if hasSites(rel) {
 				return reasonNoBaseline
@@ -430,6 +439,7 @@ type evidenceFile struct {
 	Baseline map[string]bool `json:"baseline"`
 	Flaky    []string        `json:"flaky"`
 	Unmapped int             `json:"unmapped"`
+	Shadowed []string        `json:"shadowed"`
 }
 
 type moduleJSON struct {
@@ -440,7 +450,7 @@ type moduleJSON struct {
 }
 
 func writeEvidenceJSON(root string, mods []Module, m Matrix) error {
-	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped}
+	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed}
 	for _, mod := range mods {
 		f.Modules = append(f.Modules, moduleJSON{mod.Rel, mod.Lang, mod.TestFiles, mod.Tests})
 	}
