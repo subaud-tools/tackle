@@ -374,16 +374,21 @@ func TestRunEnvHasNoKey(t *testing.T) {
 	}
 }
 
-// KillAll kills every running process group at once.
+// KillAll kills every running process group at once (a grandchild
+// too).
 func TestKillAll(t *testing.T) {
+	dir := t.TempDir()
 	done := make(chan RawResult, 1)
 	go func() {
-		done <- RunProcess(context.Background(), t.TempDir(), []string{"sh", "-c", "sleep 30 & sleep 30"}, os.Environ(), time.Minute, io.Discard, io.Discard)
+		done <- RunProcess(context.Background(), dir, []string{"sh", "-c", "sleep 30 & echo up > started; wait"}, os.Environ(), time.Minute, io.Discard, io.Discard)
 	}()
 	deadline := time.Now().Add(10 * time.Second)
-	for liveCount() == 0 {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "started")); err == nil && liveCount() > 0 {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("process never registered")
+			t.Fatal("process never started")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
