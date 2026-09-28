@@ -955,8 +955,8 @@ func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duratio
 				have[id] = true
 			}
 		}
-		for _, id := range sortedKeys(p.measured) {
-			if slices.Contains(sortedValues(g.index), id) && !have[id] {
+		for _, id := range sortedValues(g.index) {
+			if p.measured[id] && !have[id] {
 				fallback("no coverage data for " + id)
 				return
 			}
