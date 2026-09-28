@@ -67,7 +67,7 @@ def test_hang():
 func TestPythonRunPassFailClassAndUnmapped(t *testing.T) {
 	requirePython3(t)
 	dir := writePyFixture(t)
-	r, err := For(dir, "python", "test_a.py", "")
+	r, err := For(dir, "python", "test_a.py")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
@@ -117,7 +117,7 @@ def test_other():
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r, err := For(dir, "python", "test_p.py", "")
+	r, err := For(dir, "python", "test_p.py")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
@@ -136,10 +136,76 @@ def test_other():
 	}
 }
 
+func TestPythonRunNestedDirNoInitMapsPlainFuncAndClassMethod(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sub", "dir", "test_b.py")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `def test_plain():
+    assert True
+
+
+class TestC:
+    def test_method(self):
+        assert True
+`
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No __init__.py anywhere: pytest's junitxml classname for the plain
+	// function is the whole dotted module path ("sub.dir.test_b"), not
+	// "test_b" treated as a class.
+	r, err := For(dir, "python", "sub/dir/test_b.py")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{
+		"test_plain":         "py:sub/dir/test_b.py:test_plain",
+		"TestC::test_method": "py:sub/dir/test_b.py:TestC::test_method",
+	}
+	out := r.Run(context.Background(), dir, []string{"sub/dir/test_b.py"}, index, 30*time.Second)
+	if out.Invalid {
+		t.Fatalf("Invalid = true, want false: out=%+v", out)
+	}
+	if !out.Passed["py:sub/dir/test_b.py:test_plain"] {
+		t.Errorf("Passed[test_plain] = false, want true (module path misread as a class): out=%+v", out)
+	}
+	if !out.Passed["py:sub/dir/test_b.py:TestC::test_method"] {
+		t.Errorf("Passed[TestC::test_method] = false, want true: out=%+v", out)
+	}
+	if out.Unmapped != 0 {
+		t.Errorf("Unmapped = %d, want 0: out=%+v", out.Unmapped, out)
+	}
+}
+
+func TestPythonRunImportErrorIsInvalid(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "test_bad.py")
+	content := "import nonexistent_module_xyz\n\n\ndef test_a():\n    assert True\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := For(dir, "python", "test_bad.py")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{"test_a": "py:test_bad.py:test_a"}
+	out := r.Run(context.Background(), dir, []string{"test_bad.py"}, index, 30*time.Second)
+	if !out.Invalid {
+		t.Fatalf("Invalid = false, want true (collection/import error): out=%+v", out)
+	}
+	if out.InvalidReason == "" {
+		t.Errorf("InvalidReason = %q, want a non-empty reason", out.InvalidReason)
+	}
+}
+
 func TestPythonRunTimeout(t *testing.T) {
 	requirePython3(t)
 	dir := writePyHangFixture(t)
-	r, err := For(dir, "python", "test_hang.py", "")
+	r, err := For(dir, "python", "test_hang.py")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}

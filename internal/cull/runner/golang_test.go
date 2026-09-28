@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,7 +104,7 @@ func TestHang(t *testing.T) {
 
 func TestGolangRunPassFailSubtestAndTableUnit(t *testing.T) {
 	dir := writeGoFixture(t)
-	r, err := For(dir, "go", "fx_test.go", "")
+	r, err := For(dir, "go", "fx_test.go")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
@@ -143,9 +144,107 @@ func TestGolangRunPassFailSubtestAndTableUnit(t *testing.T) {
 	}
 }
 
+func writeGoCompileErrorFixture(t *testing.T) (dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	p := filepath.Join(dir, "bad_test.go")
+	content := `package bad
+
+import "testing"
+
+func TestBad(t *testing.T) {
+	undefinedFunc()
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/bad\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestGolangRunCompileErrorIsInvalid(t *testing.T) {
+	dir := writeGoCompileErrorFixture(t)
+	r, err := For(dir, "go", "bad_test.go")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{"TestBad": "go:bad_test.go:TestBad"}
+	out := r.Run(context.Background(), dir, []string{"bad_test.go"}, index, 30*time.Second)
+	if !out.Invalid {
+		t.Fatalf("Invalid = false, want true (build failure): out=%+v", out)
+	}
+	if out.InvalidReason == "" {
+		t.Errorf("InvalidReason = %q, want a non-empty reason", out.InvalidReason)
+	}
+	if len(out.Passed) != 0 || len(out.Failed) != 0 {
+		t.Errorf("Passed/Failed should be empty on a build failure: out=%+v", out)
+	}
+}
+
+func TestGolangRunTimeoutStopsAtFirstPackageOneDeadline(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.com/two\n\ngo 1.22\n")
+	write("a/a_test.go", `package a
+
+import (
+	"testing"
+	"time"
+)
+
+func TestHangA(t *testing.T) {
+	time.Sleep(30 * time.Second)
+}
+`)
+	marker := filepath.Join(dir, "ran_b.marker")
+	write("b/b_test.go", fmt.Sprintf(`package b
+
+import (
+	"os"
+	"testing"
+)
+
+func TestB(t *testing.T) {
+	os.WriteFile(%q, []byte("ran"), 0o644)
+}
+`, marker))
+
+	r, err := For(dir, "go", "a/a_test.go")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{
+		"TestHangA": "go:a/a_test.go:TestHangA",
+		"TestB":     "go:b/b_test.go:TestB",
+	}
+	start := time.Now()
+	out := r.Run(context.Background(), dir, []string{"a/a_test.go", "b/b_test.go"}, index, 300*time.Millisecond)
+	elapsed := time.Since(start)
+	if !out.TimedOut {
+		t.Errorf("TimedOut = false, want true: out=%+v", out)
+	}
+	if elapsed > 6*time.Second {
+		t.Errorf("elapsed = %v, want well under 6s: one shared deadline across both packages, not one timeout per package", elapsed)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("package b ran after package a's timeout: one Run should stop, not continue to the next package")
+	}
+}
+
 func TestGolangRunTimeout(t *testing.T) {
 	dir := writeGoHangFixture(t)
-	r, err := For(dir, "go", "hang_test.go", "")
+	r, err := For(dir, "go", "hang_test.go")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}

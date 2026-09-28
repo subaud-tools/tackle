@@ -3,7 +3,9 @@ package runner
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -63,6 +65,15 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 		out.TimedOut = true
 		return out
 	}
+	// pytest exits 2 (usage/collection error), 3 (internal error), or 4
+	// (command-line usage error) when it didn't run the requested tests
+	// as a whole 	most commonly a collection/import error, which also
+	// shows up as <error> testcases below, but the exit code alone is
+	// enough even if junitxml still wrote a (partial or empty) report.
+	if res.ExitCode == 2 || res.ExitCode == 3 || res.ExitCode == 4 {
+		out.Invalid = true
+		out.InvalidReason = fmt.Sprintf("pytest exited %d (collection or import error)", res.ExitCode)
+	}
 
 	data, err := os.ReadFile(tmpPath)
 	if err != nil || len(data) == 0 {
@@ -74,11 +85,22 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	}
 	for _, s := range suites.Suites {
 		for _, c := range s.Cases {
+			if c.Error != nil {
+				// A collection/import error is reported as an <error>
+				// testcase, not a real test result: it doesn't belong in
+				// Passed/Failed/Unmapped, and it means the run as a whole
+				// didn't execute the requested tests.
+				out.Invalid = true
+				if out.InvalidReason == "" {
+					out.InvalidReason = "pytest collection error: " + c.Classname + c.Name
+				}
+				continue
+			}
 			if c.Skipped != nil {
 				continue
 			}
-			native := pythonNativeKey(c.Classname, c.Name)
-			passed := c.Failure == nil && c.Error == nil
+			native := pythonNativeKey(dir, c.Classname, c.Name)
+			passed := c.Failure == nil
 			attributePython(index, native, passed, &out)
 		}
 	}
@@ -86,11 +108,34 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 }
 
 // pythonNativeKey builds the native lookup key pytest's junitxml classname
-// (a dotted module.Class path, or just the module for a bare function) and
-// name (the function name, plus "[params]" for a parametrized case) imply:
-// "Class::func" for a class method, else "func".
-func pythonNativeKey(classname, name string) string {
+// and name imply. classname is the dotted path from the run dir to the
+// test: some number of leading segments are the module's file path (e.g.
+// "sub.dir.test_b" for sub/dir/test_b.py, whether or not there's an
+// __init__.py 	 pytest's junitxml classname is always dir-dotted, not
+// package-dotted), and any segments after that are enclosing class names.
+// Naively treating the last dotted segment as a class (as if classname
+// were always "module.Class") misreads a plain function in a nested
+// directory as Class::func. Instead, find the longest prefix of segments
+// that resolves to an actual .py file under dir; whatever's left is the
+// class chain.
+func pythonNativeKey(dir, classname, name string) string {
+	if classname == "" {
+		return name
+	}
 	parts := strings.Split(classname, ".")
+	for k := len(parts); k >= 1; k-- {
+		candidate := filepath.Join(append([]string{dir}, parts[:k]...)...) + ".py"
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			remaining := parts[k:]
+			if len(remaining) == 0 {
+				return name
+			}
+			return strings.Join(remaining, ".") + "::" + name
+		}
+	}
+	// No segment prefix resolved to a file under dir (e.g. dir isn't the
+	// actual pytest rootdir for some reason): fall back to the old
+	// last-segment-is-a-class heuristic rather than mapping nothing.
 	if len(parts) >= 2 {
 		return parts[len(parts)-1] + "::" + name
 	}

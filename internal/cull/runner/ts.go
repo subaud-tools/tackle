@@ -104,10 +104,14 @@ func (r *tsRunner) runVitest(ctx context.Context, dir string, testFiles []string
 
 	data, err := os.ReadFile(tmpPath)
 	if err != nil || len(data) == 0 {
+		out.Invalid = true
+		out.InvalidReason = "vitest exited without writing a report file"
 		return out
 	}
 	var report vitestReport
 	if err := json.Unmarshal(data, &report); err != nil {
+		out.Invalid = true
+		out.InvalidReason = "vitest report file was not valid JSON: " + err.Error()
 		return out
 	}
 	for _, tr := range report.TestResults {
@@ -171,10 +175,14 @@ func (r *tsRunner) runNode(ctx context.Context, dir string, testFiles []string, 
 
 	data, err := os.ReadFile(tmpPath)
 	if err != nil || len(data) == 0 {
+		out.Invalid = true
+		out.InvalidReason = "node --test exited without writing a report file"
 		return out
 	}
 	var suites nodeJUnitSuites
 	if err := xml.Unmarshal(data, &suites); err != nil {
+		out.Invalid = true
+		out.InvalidReason = "node --test report file was not valid XML: " + err.Error()
 		return out
 	}
 	for _, c := range suites.Cases {

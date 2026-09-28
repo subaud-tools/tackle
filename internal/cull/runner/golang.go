@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -24,10 +25,16 @@ type golangRunner struct{}
 var goTestFuncRe = regexp.MustCompile(`(?m)^func\s+(Test[A-Za-z0-9_]*)\s*\(`)
 
 // goTestEvent is one line of `go test -json` output (the fields this
-// package needs; others are ignored by encoding/json).
+// package needs; others are ignored by encoding/json). FailedBuild is set
+// on the package-level "fail" event when the package didn't build at all
+// (no Test events follow); Output is scanned as a fallback for older Go
+// versions that only print "[build failed]" rather than setting
+// FailedBuild.
 type goTestEvent struct {
-	Action string
-	Test   string
+	Action      string
+	Test        string
+	Output      string
+	FailedBuild string
 }
 
 func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, index map[string]string, timeout time.Duration) Outcome {
@@ -55,6 +62,17 @@ func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	}
 	sort.Strings(subs)
 
+	// One deadline for the whole Run, shared across every package group:
+	// otherwise a hang in an early package would let each later package
+	// consume its own full timeout too (N x timeout for N packages).
+	// verify.RunProcess derives its own per-call context.WithTimeout(ctx,
+	// timeout), which takes the earlier of that and deadlineCtx's already-
+	// running deadline, so passing the unmodified timeout on every call
+	// here is correct: deadlineCtx's absolute deadline is what actually
+	// cuts a later call off early.
+	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	for _, sub := range subs {
 		names := make([]string, 0, len(groups[sub]))
 		for n := range groups[sub] {
@@ -72,16 +90,24 @@ func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 		runRe := "^(" + strings.Join(names, "|") + ")$"
 		argv := []string{"go", "test", "-json", "-run", runRe, pkgSpec}
 
-		res := runProcess(ctx, dir, argv, timeout)
+		res := runProcess(deadlineCtx, dir, argv, timeout)
 		if res.StartErr != nil {
 			out.Err = res.StartErr.Error()
 			continue
 		}
 		if res.TimedOut {
 			out.TimedOut = true
-			continue
+			// One shared deadline: stop entirely rather than letting the
+			// next package group start a fresh timeout window of its own.
+			break
 		}
-		parseGoEvents(res.Stdout, index, &out)
+		sawTest, buildFailed := parseGoEvents(res.Stdout, index, &out)
+		if buildFailed || (!sawTest && res.ExitCode != 0) {
+			out.Invalid = true
+			if out.InvalidReason == "" {
+				out.InvalidReason = fmt.Sprintf("go: package %s failed to build", pkgSpec)
+			}
+		}
 	}
 	return out
 }
@@ -112,7 +138,13 @@ func goTopLevelTestNames(file string) ([]string, error) {
 // extraction); a container's own event is skipped rather than counted in
 // Unmapped when it doesn't map directly, since its real leaves are
 // reported (and attributed) separately.
-func parseGoEvents(stdout []byte, index map[string]string, out *Outcome) {
+//
+// It returns sawTest (whether any Test event was reported at all — false
+// means the package never got as far as running tests) and buildFailed
+// (a package-level build failure was reported: FailedBuild set, a
+// "build-fail" action, or "[build failed]" in package output — the
+// several shapes go test -json has used across Go versions).
+func parseGoEvents(stdout []byte, index map[string]string, out *Outcome) (sawTest, buildFailed bool) {
 	type result struct {
 		test   string
 		passed bool
@@ -131,9 +163,13 @@ func parseGoEvents(stdout []byte, index map[string]string, out *Outcome) {
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue
 		}
+		if ev.Action == "build-fail" || ev.FailedBuild != "" || strings.Contains(ev.Output, "[build failed]") {
+			buildFailed = true
+		}
 		if ev.Test == "" {
 			continue
 		}
+		sawTest = true
 		names[ev.Test] = true
 		switch ev.Action {
 		case "pass":
@@ -155,6 +191,7 @@ func parseGoEvents(stdout []byte, index map[string]string, out *Outcome) {
 	for _, r := range results {
 		attributeGo(index, r.test, r.passed, isContainer, out)
 	}
+	return sawTest, buildFailed
 }
 
 // attributeGo maps a go test -json Test path (e.g. "TestTable/one") to a

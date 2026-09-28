@@ -23,6 +23,15 @@ type Outcome struct {
 	Unmapped int  // reported native results that matched nothing, even after the leaf-rule parent fallback
 	TimedOut bool // the whole run was killed for exceeding its timeout; Passed/Failed reflect only what was reported before then
 	Err      string
+
+	// Invalid is true when the run did not execute the requested tests as
+	// a whole, so Passed/Failed/Unmapped (whatever exists) are not a
+	// reliable signal: a Go package failed to build, pytest hit a
+	// collection/import error, or a TypeScript runner exited without a
+	// parseable report file. Callers must treat an Invalid Outcome as
+	// unusable, not as "nothing selected".
+	Invalid       bool
+	InvalidReason string
 }
 
 // Runner runs testFiles (paths relative to dir) once in dir and reports
@@ -41,13 +50,11 @@ type Runner interface {
 // rooted at root. For TypeScript, it inspects the package.json owning
 // testFile (root-relative, '/'-separated) to decide vitest vs node:test
 // vs "no per-test reporter" (an error, since the tests are then
-// unmeasurable per-test). testCommand is accepted for parity with
-// verify.Plan's signature but is not otherwise used here: a project-level
-// test_command override means per-test attribution isn't available
-// regardless of language, and callers (the evidence engine) decide that
-// before calling For, not For itself.
-func For(root, lang, testFile, testCommand string) (Runner, error) {
-	_ = testCommand
+// unmeasurable per-test). Evidence always runs its own detected test
+// command (go test / pytest / the reporter-augmented TS script), never a
+// project's custom test_command override, so For takes no testCommand
+// parameter.
+func For(root, lang, testFile string) (Runner, error) {
 	switch lang {
 	case "go":
 		return golangRunner{}, nil

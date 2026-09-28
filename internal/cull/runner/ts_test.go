@@ -13,7 +13,7 @@ func TestForTSNoPerTestReporterError(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "web/package.json", `{"scripts": {"test": "jest"}}`)
 	write(t, root, "web/foo.test.ts", "// placeholder\n")
-	_, err := For(root, "typescript", "web/foo.test.ts", "")
+	_, err := For(root, "typescript", "web/foo.test.ts")
 	if err == nil {
 		t.Fatal("For: want error for a TS project with no per-test reporter script")
 	}
@@ -23,7 +23,7 @@ func TestForTSNoPerTestReporterError(t *testing.T) {
 }
 
 func TestForUnknownLangErrors(t *testing.T) {
-	if _, err := For(t.TempDir(), "ruby", "x_test.rb", ""); err == nil {
+	if _, err := For(t.TempDir(), "ruby", "x_test.rb"); err == nil {
 		t.Fatal("For: want error for unknown language")
 	}
 }
@@ -75,7 +75,7 @@ test('env clean', () => {
   }
 });
 `)
-	r, err := For(root, "typescript", "a.test.js", "")
+	r, err := For(root, "typescript", "a.test.js")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
@@ -100,6 +100,27 @@ test('env clean', () => {
 	}
 	if !out.Passed["ts:a.test.js:env clean"] {
 		t.Errorf("Passed[env clean] = false, want true (TYPESAFE_API_KEY must not leak); out=%+v", out)
+	}
+}
+
+func TestTSRunNodeTestScriptErrorsBeforeReportingIsInvalid(t *testing.T) {
+	requireCullTS(t)
+	root := t.TempDir()
+	write(t, root, "package.json", `{"scripts": {"test": "node --test"}}`)
+	// a.test.js is intentionally never created: node exits ("Could not
+	// find 'a.test.js'") before its test harness ever opens the
+	// --test-reporter-destination file, so no report exists to parse.
+	r, err := For(root, "typescript", "a.test.js")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	index := map[string]string{}
+	out := r.Run(context.Background(), root, []string{"a.test.js"}, index, 30*time.Second)
+	if !out.Invalid {
+		t.Fatalf("Invalid = false, want true (script errored before reporting): out=%+v", out)
+	}
+	if out.InvalidReason == "" {
+		t.Errorf("InvalidReason = %q, want a non-empty reason", out.InvalidReason)
 	}
 }
 
@@ -130,7 +151,7 @@ it('top level', () => {
   expect(true).toBe(true);
 });
 `)
-	r, err := For(root, "typescript", "a.test.ts", "")
+	r, err := For(root, "typescript", "a.test.ts")
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
