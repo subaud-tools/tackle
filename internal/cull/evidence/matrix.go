@@ -45,11 +45,16 @@ type Mutant struct {
 // failed no baseline run anywhere. Flaky lists (sorted) the tests that
 // failed at least one baseline run: never measured. Unmapped sums the
 // first baseline run's unmapped native results over all modules.
+// MeasuredByModule holds, per module, the Baseline tests that passed both
+// of THAT module's baseline runs: only those are credited (or charged)
+// for that module's mutants.
 type Matrix struct {
 	Mutants  []Mutant        `json:"mutants"`
 	Baseline map[string]bool `json:"baseline"`
 	Flaky    []string        `json:"flaky"`
 	Unmapped int             `json:"unmapped"`
+
+	MeasuredByModule map[string]map[string]bool `json:"measured_by_module"`
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
@@ -191,7 +196,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		return Matrix{}, err
 	}
 
-	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}}
+	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}}
 	flaky := map[string]bool{}
 	for _, p := range plans {
 		m.Unmapped += p.unmapped
@@ -206,6 +211,10 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		for id := range p.measured {
 			if !flaky[id] {
 				m.Baseline[id] = true
+				if m.MeasuredByModule[p.mod.Rel] == nil {
+					m.MeasuredByModule[p.mod.Rel] = map[string]bool{}
+				}
+				m.MeasuredByModule[p.mod.Rel][id] = true
 			}
 		}
 	}

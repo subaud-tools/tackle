@@ -67,7 +67,8 @@ const extractContext = 1 << 24
 var afterMatrixHook func()
 
 // Run settles the review-band tests of root's .cull/last.json by planted
-// bugs. Targets are tests with verdict "review" and rule "review_band".
+// bugs. Targets are tests with verdict "review" and rule "review_band" or
+// "evidence_unmeasured" (so a re-run retries unmeasured ones).
 // It refuses (an error, nothing written) if a target's file changed since
 // cull check, or if a target file, a mutated module or one of its test
 // files changed while the matrix ran. It mutates only non-test source
@@ -75,7 +76,8 @@ var afterMatrixHook func()
 // those modules' test files against each mutant, and settles each target:
 // sole guard of any bug → keep; measured with no sole guard → cut;
 // unmeasured → stays review (rule evidence_unmeasured). No other test is
-// touched. It writes .cull/evidence.json (the matrix) and rewrites
+// touched. It refuses if .cull/last.json itself changed since it was
+// loaded. It writes .cull/evidence.json (the matrix) and rewrites
 // .cull/last.json, both atomically and 0600. No target: nothing is run or
 // written.
 func Run(ctx context.Context, root string, opt Options) (Result, error) {
@@ -84,13 +86,15 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	if opt.Stderr == nil {
 		opt.Stderr = io.Discard
 	}
+	lastRel := ".cull/last.json"
+	lastHash, _ := hashFile(root, lastRel) // before loading: a change in between only causes a refusal
 	rep, err := check.LoadReport(root)
 	if err != nil {
 		return res, err
 	}
 	var targets []int
 	for i, t := range rep.Tests {
-		if t.Err == "" && t.Verdict == "review" && t.Rule == "review_band" {
+		if t.Err == "" && t.Verdict == "review" && (t.Rule == "review_band" || t.Rule == RuleUnmeasured) {
 			targets = append(targets, i)
 		}
 	}
@@ -223,20 +227,12 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 
 	for _, i := range targets {
 		t := &rep.Tests[i]
-		ev := measure(t.ID, testMods[t.ID], byModule, m.Baseline)
+		ev := measure(t.ID, testMods[t.ID], byModule, m.MeasuredByModule, m.Baseline)
 		if !ev.Measured {
 			ev.Reason = unmeasuredReason(root, t.ID, byID, testMods[t.ID], byModule, m.Baseline, flaky, hasSites)
 		}
-		switch {
-		case ev.Measured && ev.Sole > 0:
-			t.Verdict, t.Rule = "keep", RuleSoleGuard
-		case ev.Measured && ev.Caught > 0:
-			t.Verdict, t.Rule = "cut", RuleRedundant
-		case ev.Measured:
-			t.Verdict, t.Rule = "cut", RuleCatchesNothing
-		default:
-			t.Rule = RuleUnmeasured
-		}
+		t.Verdict, t.Rule = settle(ev)
+		t.Reasons = dropEvidenceReasons(t.Reasons)
 		if ev.Measured {
 			res.Settled[t.ID] = t.Verdict
 			t.Reasons = append(t.Reasons, fmt.Sprintf("evidence: caught %d/%d, sole %d", ev.Caught, ev.Planted, ev.Sole))
@@ -251,6 +247,9 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	sort.Strings(res.Unmeasured)
 	rep.Recount()
 
+	if h, err := hashFile(root, lastRel); err != nil || h != lastHash {
+		return res, fmt.Errorf("refused: .cull/last.json changed while cull evidence ran; nothing written, run cull evidence again")
+	}
 	if err := writeEvidenceJSON(root, mods, m); err != nil {
 		return res, err
 	}
@@ -261,12 +260,17 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	return res, nil
 }
 
-// measure computes id's evidence over the non-excluded mutants of mods.
-// Measured needs id in the baseline and at least one such mutant.
-func measure(id string, mods []string, byModule map[string][]Mutant, baseline map[string]bool) Evidence {
+// measure computes id's evidence over the non-excluded mutants of those of
+// mods where id was measured (measuredBy[module][id]): a module whose
+// baseline didn't measure id says nothing about it. Measured needs id in
+// the baseline and at least one such mutant.
+func measure(id string, mods []string, byModule map[string][]Mutant, measuredBy map[string]map[string]bool, baseline map[string]bool) Evidence {
 	var ev Evidence
 	others := map[string]bool{}
 	for _, rel := range mods {
+		if !measuredBy[rel][id] {
+			continue
+		}
 		for _, mu := range byModule[rel] {
 			if mu.KilledBy == nil {
 				continue
@@ -294,6 +298,50 @@ func measure(id string, mods []string, byModule map[string][]Mutant, baseline ma
 	ev.OtherTests = sortedKeys(others)
 	ev.Measured = baseline[id] && ev.Planted > 0
 	return ev
+}
+
+// dropEvidenceReasons removes a previous run's "evidence: " reasons, so a
+// retried target carries only the latest one.
+func dropEvidenceReasons(rs []string) []string {
+	out := rs[:0:0]
+	for _, r := range rs {
+		if !strings.HasPrefix(r, "evidence: ") {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// settle maps a measurement to a verdict and rule: sole guard of any bug
+// → keep; measured, caught some but sole for none → cut (redundant);
+// measured, caught none → cut (catches nothing); unmeasured → review.
+func settle(ev Evidence) (verdict, rule string) {
+	switch {
+	case ev.Measured && ev.Sole > 0:
+		return "keep", RuleSoleGuard
+	case ev.Measured && ev.Caught > 0:
+		return "cut", RuleRedundant
+	case ev.Measured:
+		return "cut", RuleCatchesNothing
+	}
+	return "review", RuleUnmeasured
+}
+
+// testSupport reports whether rel is test support code that must never be
+// mutated: a conftest.py, or any file under a directory named tests, test,
+// __tests__, testdata or spec.
+func testSupport(rel string) bool {
+	segs := strings.Split(rel, "/")
+	if segs[len(segs)-1] == "conftest.py" {
+		return true
+	}
+	for _, d := range segs[:len(segs)-1] {
+		switch d {
+		case "tests", "test", "__tests__", "testdata", "spec":
+			return true
+		}
+	}
+	return false
 }
 
 // unmeasuredReason says why id has no usable measurement.
@@ -335,13 +383,13 @@ func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []st
 
 // projectSource reports whether a callee file is non-test source inside
 // the project: a clean relative path to a regular file that no extractor
-// claims as a test file.
+// claims as a test file and that is not test support (see testSupport).
 func projectSource(root, rel string) bool {
 	if rel == "" || path.IsAbs(rel) || filepath.IsAbs(rel) || path.Clean(rel) != rel ||
 		rel == ".." || strings.HasPrefix(rel, "../") {
 		return false
 	}
-	if extract.ForFile(rel) != nil {
+	if extract.ForFile(rel) != nil || testSupport(rel) {
 		return false
 	}
 	fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))

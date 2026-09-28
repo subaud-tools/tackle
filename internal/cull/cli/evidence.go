@@ -81,7 +81,7 @@ func runEvidence(args []string, out, errw io.Writer) error {
 // reasons, and what ran.
 func writeEvidence(w io.Writer, r evidence.Result) {
 	if len(r.Rules) == 0 {
-		fmt.Fprintln(w, "nothing to measure: no review-band tests in .cull/last.json")
+		fmt.Fprintln(w, "nothing to measure: no review-band or unmeasured tests in .cull/last.json")
 		return
 	}
 	n := map[string]int{}
