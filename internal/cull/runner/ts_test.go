@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -172,5 +173,23 @@ it('top level', () => {
 	}
 	if out.Unmapped != 1 {
 		t.Errorf("Unmapped = %d, want 1 (top level not in index): out=%+v", out.Unmapped, out)
+	}
+}
+
+// A node:test file that throws while loading is reported as one failed
+// testcase named after the file: the run didn't execute its tests, so
+// it is Invalid (like a pytest collection error).
+func TestTSRunNodeFileLoadErrorIsInvalid(t *testing.T) {
+	requireCullTS(t)
+	root := t.TempDir()
+	write(t, root, "package.json", `{"scripts": {"test": "node --test"}}`)
+	write(t, root, "a.test.js", "throw new Error('boom');\nrequire('node:test').test('t', () => {});\n")
+	r, err := For(root, "typescript", "a.test.js")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	out := r.Run(context.Background(), root, []string{"a.test.js"}, map[string]string{"t": "ts:a.test.js:t"}, 30*time.Second)
+	if !out.Invalid || !strings.Contains(out.InvalidReason, "a.test.js") {
+		t.Fatalf("out = %+v", out)
 	}
 }

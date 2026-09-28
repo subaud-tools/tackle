@@ -193,10 +193,31 @@ func (r *tsRunner) runNode(ctx context.Context, dir string, testFiles []string, 
 		if c.Skipped != nil {
 			continue
 		}
-		attributeTS(index, c.Name, c.Failure == nil && c.Error == nil, &out)
+		failed := c.Failure != nil || c.Error != nil
+		if f, ok := fileCase(c.Name, testFiles); ok && failed {
+			// node reports a file that failed to load (or crashed
+			// outside any test) as one failed testcase named after it.
+			out.Invalid = true
+			if out.InvalidReason == "" {
+				out.InvalidReason = "node --test: " + f + " failed outside its tests (load error)"
+			}
+			continue
+		}
+		attributeTS(index, c.Name, !failed, &out)
 	}
 	walkNodeSuites(suites.Suites, nil, index, &out)
 	return out
+}
+
+// fileCase reports which of testFiles a top-level testcase name is (node
+// names a file-level result by the path it was given).
+func fileCase(name string, testFiles []string) (string, bool) {
+	for _, f := range testFiles {
+		if name == f || strings.HasSuffix(filepath.ToSlash(name), "/"+filepath.ToSlash(f)) {
+			return f, true
+		}
+	}
+	return "", false
 }
 
 func walkNodeSuites(suites []nodeJUnitSuite, ancestors []string, index map[string]string, out *Outcome) {
