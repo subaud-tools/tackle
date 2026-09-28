@@ -607,9 +607,13 @@ def node_span(starts, data_len, node):
 
 
 def seg(src, node):
-    """Text of node's source lines (decorators through end_lineno): used for
-    context/callee snippets, not for the emitted case's own span/body."""
-    lines = src.splitlines(keepends=True)
+    r"""Text of node's source lines (decorators through end_lineno): used for
+    context/callee snippets, not for the emitted case's own span/body.
+    Lines end at "\n" only (a CRLF line keeps its "\r\n"), as ast and
+    line_starts count them: str.splitlines also breaks on \f, \v, \x1c,
+    \u2028 and the like, which would shift every later line."""
+    lines = [line + "\n" for line in src.split("\n")]
+    lines[-1] = lines[-1][:-1]
     start, end = node_lines(node)
     return "".join(lines[start - 1 : end])
 

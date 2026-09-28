@@ -521,3 +521,26 @@ func TestPyTidyEditsImportsInPlace(t *testing.T) {
 		})
 	}
 }
+
+// A form feed (or other str.splitlines break that ast doesn't count) in
+// a module leaves callee and context snippets on the right lines.
+func TestSnippetsIgnoreFormFeed(t *testing.T) {
+	requirePython3(t)
+	root := t.TempDir()
+	const calc = "import os\n\f\n\ndef build(s):\n    return s + \"\\x0b\"\n\n\n\x0cdef other():\n    return 1\n"
+	if err := os.WriteFile(filepath.Join(root, "calc.py"), []byte(calc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const tests = "from calc import build\n\f\n\ndef helper():\n    return 2\n\n\ndef test_build():\n    assert build(\"a\") == \"a\\x0b\"\n    assert helper() == 2\n"
+	if err := os.WriteFile(filepath.Join(root, "test_calc.py"), []byte(tests), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tc := caseByID(t, extractAll(t, root, 24000), "py:test_calc.py:test_build")
+	want := "def build(s):\n    return s + \"\\x0b\"\n"
+	if len(tc.Callees) != 1 || tc.Callees[0].Source != want {
+		t.Errorf("Callees = %+v, want source %q", tc.Callees, want)
+	}
+	if tc.Context != "def helper():\n    return 2\n" {
+		t.Errorf("Context = %q", tc.Context)
+	}
+}
