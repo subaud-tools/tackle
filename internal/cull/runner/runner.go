@@ -105,8 +105,13 @@ type procResult struct {
 // TYPESAFE_API_KEY, and the whole process group is killed (with a bounded
 // post-kill wait) if timeout is exceeded.
 func runProcess(ctx context.Context, dir string, argv []string, timeout time.Duration) procResult {
+	return runProcessEnv(ctx, dir, argv, verify.FilteredEnv(), timeout)
+}
+
+// runProcessEnv is runProcess with an explicit environment.
+func runProcessEnv(ctx context.Context, dir string, argv, env []string, timeout time.Duration) procResult {
 	var stdout, stderr bytes.Buffer
-	raw := verify.RunProcess(ctx, dir, argv, verify.FilteredEnv(), timeout, &stdout, &stderr)
+	raw := verify.RunProcess(ctx, dir, argv, env, timeout, &stdout, &stderr)
 	return procResult{
 		Stdout:   stdout.Bytes(),
 		Stderr:   stderr.Bytes(),

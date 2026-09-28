@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	tools "github.com/schuettc/tools-common"
 )
@@ -34,21 +35,61 @@ var heavyDirs = map[string]bool{"node_modules": true, "venv": true, ".venv": tru
 // untracked) symlinked to root's instead. Existing sandboxes are
 // refreshed: changed files are rewritten, and anything not in the listing
 // (stale files, build output) is removed.
+//
+// Unreadable untracked files are skipped (logged to os.Stderr). Prepare
+// holds the project's sandbox lock (see Run) while it works and fails
+// fast if another Prepare or Run holds it.
 func Prepare(root string, n int) ([]Sandbox, error) {
-	if n < 1 {
-		n = 1
-	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := planCopy(abs)
+	base, unlock, err := lockBase(abs)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
+	return prepare(abs, base, n, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "cull evidence: "+format+"\n", args...)
+	})
+}
+
+// sandboxBase is the directory holding abs's sandboxes.
+func sandboxBase(abs string) string {
 	sum := sha256.Sum256([]byte(abs))
-	base := filepath.Join(tools.CacheDir("cull"), "evidence", hex.EncodeToString(sum[:])[:12])
+	return filepath.Join(tools.CacheDir("cull"), "evidence", hex.EncodeToString(sum[:])[:12])
+}
+
+// lockBase takes an exclusive, non-blocking lock on <base>/.lock for the
+// project at abs, so two runs never share w0..wN. It returns the base
+// directory and the unlock function.
+func lockBase(abs string) (string, func(), error) {
+	base := sandboxBase(abs)
 	if err := tools.EnsureDir(base); err != nil {
+		return "", nil, err
+	}
+	lockPath := filepath.Join(base, ".lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", nil, fmt.Errorf("evidence: open lock %s: %w", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return "", nil, fmt.Errorf("evidence: another cull evidence run on %s holds the lock %s: %w", abs, lockPath, err)
+	}
+	return base, func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
+// prepare is Prepare for an absolute root whose lock the caller holds.
+func prepare(abs, base string, n int, logf func(string, ...any)) ([]Sandbox, error) {
+	if n < 1 {
+		n = 1
+	}
+	plan, err := planCopy(abs, logf)
+	if err != nil {
 		return nil, err
 	}
 	out := make([]Sandbox, 0, n)
@@ -92,7 +133,7 @@ func gitList(root string, args ...string) ([]string, error) {
 	return paths, nil
 }
 
-func planCopy(root string) (*copyPlan, error) {
+func planCopy(root string, logf func(string, ...any)) (*copyPlan, error) {
 	listed, err := gitList(root, "-co", "--exclude-standard")
 	if err != nil {
 		return nil, err
@@ -106,7 +147,9 @@ func planCopy(root string) (*copyPlan, error) {
 		return nil, err
 	}
 	trackedDirs := map[string]bool{}
+	isTracked := map[string]bool{}
 	for _, p := range tracked {
+		isTracked[p] = true
 		for d := path.Dir(p); d != "."; d = path.Dir(d) {
 			trackedDirs[d] = true
 		}
@@ -152,6 +195,14 @@ func planCopy(root string) (*copyPlan, error) {
 		fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p)))
 		if err != nil || fi.IsDir() {
 			continue // deleted but still tracked, or a submodule
+		}
+		if !isTracked[p] && fi.Mode().IsRegular() {
+			f, err := os.Open(filepath.Join(root, filepath.FromSlash(p)))
+			if err != nil {
+				logf("%s: %v; not copied", p, err)
+				continue
+			}
+			f.Close()
 		}
 		plan.files[p] = true
 		addDirs(p)
@@ -259,8 +310,8 @@ func syncFile(src, dst string) error {
 	}
 	if dfi, err := os.Lstat(dst); err == nil && dfi.Mode().IsRegular() && dfi.Size() == int64(len(want)) {
 		if have, err := os.ReadFile(dst); err == nil && bytes.Equal(have, want) {
-			if dfi.Mode().Perm() != fi.Mode().Perm() {
-				return os.Chmod(dst, fi.Mode().Perm())
+			if dfi.Mode().Perm() != sandboxPerm(fi) {
+				return os.Chmod(dst, sandboxPerm(fi))
 			}
 			return nil
 		}
@@ -271,7 +322,13 @@ func syncFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, want, fi.Mode().Perm())
+	return os.WriteFile(dst, want, sandboxPerm(fi))
+}
+
+// sandboxPerm is src's permission bits made owner-writable, so a mutant
+// can always be planted in (and restored to) a read-only module's copy.
+func sandboxPerm(src fs.FileInfo) fs.FileMode {
+	return src.Mode().Perm() | 0o200
 }
 
 // copiedFile reports whether rel is a regular file copied into sandbox dir

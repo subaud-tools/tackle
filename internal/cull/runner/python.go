@@ -56,7 +56,7 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	interp := verify.PythonInterpreter(dir)
 	argv := append([]string{interp, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=" + tmpPath}, files...)
 
-	res := runProcess(ctx, dir, argv, timeout)
+	res := runProcessEnv(ctx, dir, argv, pythonEnv(), timeout)
 	if res.StartErr != nil {
 		out.Err = res.StartErr.Error()
 		return out
@@ -169,4 +169,20 @@ func stripParam(s string) string {
 		return s
 	}
 	return s[:i]
+}
+
+// pythonEnv is the filtered environment with bytecode caching off:
+// CPython validates a cached .pyc by whole-second source mtime and size,
+// so a same-size mutant planted within a second of an earlier version
+// could otherwise run that version's bytecode. PYTHONPYCACHEPREFIX is
+// dropped so no shared out-of-tree cache is consulted either.
+func pythonEnv() []string {
+	var env []string
+	for _, kv := range verify.FilteredEnv() {
+		if strings.HasPrefix(kv, "PYTHONDONTWRITEBYTECODE=") || strings.HasPrefix(kv, "PYTHONPYCACHEPREFIX=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "PYTHONDONTWRITEBYTECODE=1")
 }

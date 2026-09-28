@@ -84,6 +84,10 @@ type modPlan struct {
 	unmapped int
 }
 
+// plantHook, if set (tests only), is called with the mutated file's path
+// right after each mutant is planted.
+var plantHook func(file string)
+
 var dupIDRe = regexp.MustCompile(` #\d+$`)
 
 var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts:"}
@@ -93,7 +97,9 @@ var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts
 // baseline); then each sampled mutant (at most MaxMutants, seeded by the
 // module's bytes) is written into a free sandbox, the tests are run, and
 // the module's original bytes are restored before the sandbox is reused.
-// The working tree is never written.
+// The working tree is never written. Run holds an exclusive lock on the
+// project's sandbox root (<base>/.lock) throughout; a concurrent Run or
+// Prepare on the same project fails fast with an error naming it.
 func Run(ctx context.Context, root string, mods []Module, opt Options) (Matrix, error) {
 	if opt.Workers <= 0 {
 		opt.Workers = runtime.NumCPU()
@@ -111,15 +117,20 @@ func Run(ctx context.Context, root string, mods []Module, opt Options) (Matrix, 
 	if err != nil {
 		return Matrix{}, err
 	}
-	sbs, err := Prepare(abs, opt.Workers)
-	if err != nil {
-		return Matrix{}, err
-	}
 	var logMu sync.Mutex
 	logf := func(format string, args ...any) {
 		logMu.Lock()
 		defer logMu.Unlock()
 		fmt.Fprintf(opt.Stderr, "cull evidence: "+format+"\n", args...)
+	}
+	base, unlock, err := lockBase(abs)
+	if err != nil {
+		return Matrix{}, err
+	}
+	defer unlock()
+	sbs, err := prepare(abs, base, opt.Workers, logf)
+	if err != nil {
+		return Matrix{}, err
 	}
 
 	var plans []*modPlan
@@ -203,6 +214,21 @@ func Run(ctx context.Context, root string, mods []Module, opt Options) (Matrix, 
 		m.Flaky = append(m.Flaky, id)
 	}
 	sort.Strings(m.Flaky)
+	// measured is per module, flakiness global: a test stable in one
+	// module's baselines may have failed in another's. Only tests in the
+	// final Baseline are credited.
+	for i := range m.Mutants {
+		if m.Mutants[i].KilledBy == nil {
+			continue
+		}
+		kept := []string{}
+		for _, id := range m.Mutants[i].KilledBy {
+			if m.Baseline[id] {
+				kept = append(kept, id)
+			}
+		}
+		m.Mutants[i].KilledBy = kept
+	}
 	return m, nil
 }
 
@@ -378,6 +404,7 @@ func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duratio
 	passes := map[string]int{}
 	for run := 0; run < 2; run++ {
 		for _, g := range p.groups {
+			p.clearBytecode(sb)
 			o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
 			if badRun(o) != "" {
 				p.ok = false
@@ -417,12 +444,16 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 	if err := os.WriteFile(file, mutated, 0o644); err != nil {
 		return nil, "", fmt.Errorf("evidence: plant mutant in %s: %w", file, err)
 	}
+	if plantHook != nil {
+		plantHook(file)
+	}
 	killed := []string{}
 	why := ""
 	for _, g := range p.groups {
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
+		p.clearBytecode(sb)
 		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
 		if why = badRun(o); why != "" {
 			break
@@ -450,4 +481,21 @@ func holdsMeasured(g *group, measured map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// clearBytecode removes a Python module's cached bytecode from sb before a
+// run. The runner already runs with PYTHONDONTWRITEBYTECODE=1; this also
+// drops any .pyc that got there anyway (e.g. copied from the working
+// tree), since CPython's whole-second mtime + size check can't tell a
+// same-size mutant from the version the .pyc was compiled from.
+func (p *modPlan) clearBytecode(sb Sandbox) {
+	if p.mod.Lang != "python" {
+		return
+	}
+	rel := filepath.FromSlash(p.mod.Rel)
+	stem := strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel))
+	pyc, _ := filepath.Glob(filepath.Join(sb.Dir, filepath.Dir(rel), "__pycache__", stem+".*.pyc"))
+	for _, f := range pyc {
+		_ = os.Remove(f)
+	}
 }
