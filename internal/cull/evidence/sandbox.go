@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -51,9 +52,10 @@ func Prepare(root string, n int) ([]Sandbox, error) {
 		return nil, err
 	}
 	defer unlock()
-	return prepare(abs, base, n, func(format string, args ...any) {
+	sbs, _, err := prepare(abs, base, n, func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "cull evidence: "+format+"\n", args...)
 	})
+	return sbs, err
 }
 
 // sandboxBase is the directory holding abs's sandboxes.
@@ -86,26 +88,32 @@ func lockBase(abs string) (string, func(), error) {
 }
 
 // prepare is Prepare for an absolute root whose lock the caller holds.
-func prepare(abs, base string, n int, logf func(string, ...any)) ([]Sandbox, error) {
+// It also returns the copied files (root-relative, '/'-separated).
+func prepare(abs, base string, n int, logf func(string, ...any)) ([]Sandbox, []string, error) {
 	if n < 1 {
 		n = 1
 	}
 	plan, err := planCopy(abs, logf)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := make([]Sandbox, 0, n)
 	for i := 0; i < n; i++ {
 		dir := filepath.Join(base, fmt.Sprintf("w%d", i))
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := plan.sync(abs, dir); err != nil {
-			return nil, fmt.Errorf("evidence: sandbox %s: %w", dir, err)
+			return nil, nil, fmt.Errorf("evidence: sandbox %s: %w", dir, err)
 		}
 		out = append(out, Sandbox{Dir: dir})
 	}
-	return out, nil
+	files := make([]string, 0, len(plan.files))
+	for f := range plan.files {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return out, files, nil
 }
 
 // copyPlan is the set of root-relative ('/'-separated) paths a sandbox

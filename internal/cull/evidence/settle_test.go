@@ -130,7 +130,7 @@ func loadLast(t *testing.T, root string) (check.Report, map[string]check.TestRes
 }
 
 func settleOpts() Options {
-	return Options{Workers: 2, MaxMutants: 30, RunTimeout: 60 * time.Second, Stderr: &bytes.Buffer{}}
+	return Options{Workers: 2, MaxMutants: 30, RunTimeout: 60 * time.Second, Stderr: &bytes.Buffer{}, NoCache: true}
 }
 
 func perm(t *testing.T, p string) os.FileMode {

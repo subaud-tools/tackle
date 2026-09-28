@@ -16,19 +16,23 @@ import (
 	tools "github.com/schuettc/tools-common"
 )
 
-var evidenceFlags = flags("evidence", "cull evidence [--workers 8] [--max-mutants 30] [--timeout 60s] [--json]",
+var evidenceFlags = flags("evidence", "cull evidence [--workers 8] [--max-mutants 30] [--timeout 60s] [--no-cache] [--json]",
 	"Settle the tests the last `cull check` left in the review band (.cull/last.json) by\n"+
 		"planting small bugs in the project code they call, one at a time, in sandbox copies\n"+
 		"(the working tree is never modified), and running the tests against each. A test that\n"+
 		"is the only one catching some bug is kept; one that catches nothing only it catches is\n"+
 		"cut; one that can't be measured stays in review with the reason. No other verdict\n"+
 		"changes. Writes .cull/evidence.json and updates .cull/last.json. Makes no Jev calls.\n"+
+		"Each bug runs only the tests whose coverage includes it (all of them when coverage\n"+
+		"can't be measured). Module results are cached; a rerun redoes only modules whose\n"+
+		"inputs changed (--no-cache: redo all).\n"+
 		"Refuses if a test file changed since check.\n"+
-		"Exit: 0 done, 2 refused or error.",
+		"Exit: 0 done, 2 refused or error, 130/143 interrupted (SIGINT/SIGTERM; nothing written).",
 	func(fs *flag.FlagSet) {
 		fs.Int("workers", 8, "parallel sandboxes")
 		fs.Int("max-mutants", 30, "planted bugs per module whose targets' callees aren't known (at most)")
 		fs.Duration("timeout", 60*time.Second, "minimum per mutant run timeout (3× the slower baseline run when longer)")
+		fs.Bool("no-cache", false, "ignore cached module results and run everything again")
 		fs.Bool("json", false, "print the result as JSON")
 	})
 
@@ -81,6 +85,7 @@ func runEvidence(args []string, out, errw io.Writer) error {
 
 	res, err := evidence.Run(ctx, root, evidence.Options{
 		Workers: workers, MaxMutants: maxMutants, RunTimeout: timeout, Stderr: errw,
+		NoCache: boolFlag(fs, "no-cache"),
 	})
 	if s, ok := got.Load().(os.Signal); ok && err != nil {
 		code := 130

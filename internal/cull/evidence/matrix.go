@@ -95,11 +95,12 @@ type Matrix struct {
 // Evidence always runs the runner package's detected per-test command,
 // never a project's test_command override. NoCoverage turns off
 // coverage-guided test selection: every mutant runs every test file.
+// NoCache ignores (and doesn't write) the result cache (see resultCache).
 type Options struct {
 	Workers, MaxMutants         int
 	RunTimeout, BaselineTimeout time.Duration
 	Stderr                      io.Writer
-	NoCoverage                  bool
+	NoCoverage, NoCache         bool
 }
 
 // group is a set of test files run together by one Runner, with an index
@@ -130,6 +131,10 @@ type modPlan struct {
 
 	selective bool     // every group has coverage: mutants run only covering tests
 	funcs     [][2]int // function and method spans (sites outside run every test)
+
+	key           string   // result cache key ("": no cache)
+	cached        bool     // results restored from the cache
+	cachedMutants []Mutant // the cached mutants
 }
 
 // runTimeout is the timeout for p's canary and mutant runs: the larger of
@@ -192,9 +197,13 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		return Matrix{}, err
 	}
 	defer unlock()
-	sbs, err := prepare(abs, base, opt.Workers, logf)
+	sbs, copied, err := prepare(abs, base, opt.Workers, logf)
 	if err != nil {
 		return Matrix{}, err
+	}
+	var cache *resultCache
+	if !opt.NoCache {
+		cache = newResultCache(abs, base, copied, opt)
 	}
 
 	var plans []*modPlan
@@ -202,6 +211,13 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	for _, mod := range mods {
 		p, empty := planModule(abs, sbs[0].Dir, mod, opt.MaxMutants, logf)
 		if p != nil {
+			if cache != nil {
+				p.key = cache.keyFor(p)
+				if e, ok := cache.get(p.key, p.mod.Rel); ok {
+					p.restore(e)
+					logf("%s: unchanged since a previous run; reusing its %d mutant results", p.mod.Rel, len(e.Mutants))
+				}
+			}
 			plans = append(plans, p)
 		}
 		if empty {
@@ -217,6 +233,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	// Phase 1: baselines, one job per module.
 	jobs := make([]func(Sandbox) error, 0, len(plans))
 	for _, p := range plans {
+		if p.cached {
+			continue
+		}
 		jobs = append(jobs, func(sb Sandbox) error {
 			p.baseline(ctx, sb, opt.BaselineTimeout)
 			if err := ctx.Err(); err != nil {
@@ -264,44 +283,61 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 
 	// Phase 2: mutants, one job per (module, site), results by index.
 	var mutants []Mutant
+	span := map[*modPlan][2]int{} // p's mutants: mutants[lo:hi]
 	jobs = jobs[:0]
 	for _, p := range plans {
-		if !p.ok {
-			logf("%s: baseline invalid; its tests are unmeasurable", p.mod.Rel)
-			continue
-		}
-		if len(p.measured) == 0 || p.shadowed || p.unsure {
-			continue
-		}
-		for i, s := range p.sites {
-			idx := len(mutants)
-			mutants = append(mutants, Mutant{Module: p.mod.Rel, Site: s})
-			n := i + 1
-			if p.selective && p.uncovered(s) {
-				mutants[idx].KilledBy, mutants[idx].Uncovered = []string{}, true
-				logf("%s mutant %d/%d (%s): uncovered (no measured test runs it); not run", p.mod.Rel, n, len(p.sites), s.Desc)
-				continue
+		lo := len(mutants)
+		switch {
+		case p.cached:
+			for _, mu := range p.cachedMutants {
+				mu.KilledBy = slices.Clone(mu.KilledBy)
+				mutants = append(mutants, mu)
 			}
-			jobs = append(jobs, func(sb Sandbox) error {
-				killed, why, err := p.mutant(ctx, sb, s, p.runTimeout(opt.RunTimeout))
-				if err != nil {
-					return err
+		case !p.ok:
+			logf("%s: baseline invalid; its tests are unmeasurable", p.mod.Rel)
+		case len(p.measured) == 0 || p.shadowed || p.unsure:
+		default:
+			for i, s := range p.sites {
+				idx := len(mutants)
+				mutants = append(mutants, Mutant{Module: p.mod.Rel, Site: s})
+				n := i + 1
+				if p.selective && p.uncovered(s) {
+					mutants[idx].KilledBy, mutants[idx].Uncovered = []string{}, true
+					logf("%s mutant %d/%d (%s): uncovered (no measured test runs it); not run", p.mod.Rel, n, len(p.sites), s.Desc)
+					continue
 				}
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				mutants[idx].KilledBy = killed
-				if killed == nil {
-					logf("%s mutant %d/%d (%s): excluded (%s)", p.mod.Rel, n, len(p.sites), s.Desc, why)
-				} else {
-					logf("%s mutant %d/%d (%s): killed by %d", p.mod.Rel, n, len(p.sites), s.Desc, len(killed))
-				}
-				return nil
-			})
+				jobs = append(jobs, func(sb Sandbox) error {
+					killed, why, err := p.mutant(ctx, sb, s, p.runTimeout(opt.RunTimeout))
+					if err != nil {
+						return err
+					}
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					mutants[idx].KilledBy = killed
+					if killed == nil {
+						logf("%s mutant %d/%d (%s): excluded (%s)", p.mod.Rel, n, len(p.sites), s.Desc, why)
+					} else {
+						logf("%s mutant %d/%d (%s): killed by %d", p.mod.Rel, n, len(p.sites), s.Desc, len(killed))
+					}
+					return nil
+				})
+			}
 		}
+		span[p] = [2]int{lo, len(mutants)}
 	}
 	if err := runJobs(ctx, pool, opt.Workers, jobs); err != nil {
 		return Matrix{}, err
+	}
+	if cache != nil {
+		for _, p := range plans {
+			sp := span[p]
+			if muts := mutants[sp[0]:sp[1]]; !p.cached && cacheable(p, muts) {
+				if err := cache.put(entry(p.key, p, muts)); err != nil {
+					logf("%s: result not cached: %v", p.mod.Rel, err)
+				}
+			}
+		}
 	}
 
 	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}, Dropped: map[string][]string{}, Unloaded: map[string][]string{}, NoSites: noSites}

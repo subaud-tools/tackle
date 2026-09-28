@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -31,5 +32,27 @@ func TestEvidenceSignalExit(t *testing.T) {
 				t.Error("last.json changed")
 			}
 		})
+	}
+}
+
+// A rerun reuses the cached module results; --no-cache runs afresh.
+func TestEvidenceNoCache(t *testing.T) {
+	root := evidenceProject(t)
+	lastPath := filepath.Join(root, ".cull", "last.json")
+	last, _ := os.ReadFile(lastPath)
+	for i, c := range []struct {
+		args   []string
+		reused bool
+	}{{nil, false}, {nil, true}, {[]string{"--no-cache"}, false}} {
+		if err := os.WriteFile(lastPath, last, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code, _, errw := run(t, "", append([]string{"evidence", "--workers", "1"}, c.args...)...)
+		if code != 0 {
+			t.Fatalf("run %d: code %d, errw %q", i, code, errw)
+		}
+		if got := strings.Contains(errw, "reusing"); got != c.reused {
+			t.Errorf("run %d %v: reused %v\n%s", i, c.args, got, errw)
+		}
 	}
 }

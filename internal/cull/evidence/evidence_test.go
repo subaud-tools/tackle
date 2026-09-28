@@ -121,7 +121,9 @@ func calcModule() Module {
 }
 
 func opts(workers int) Options {
-	return Options{Workers: workers, MaxMutants: 30, RunTimeout: 60 * time.Second, Stderr: &bytes.Buffer{}}
+	// NoCache: tests rerunning a root expect real runs (cache_test.go
+	// covers the cache).
+	return Options{Workers: workers, MaxMutants: 30, RunTimeout: 60 * time.Second, Stderr: &bytes.Buffer{}, NoCache: true}
 }
 
 type row struct {
