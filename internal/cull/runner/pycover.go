@@ -19,8 +19,12 @@ import (
 // mechanism pytest-cov's --cov-context=test uses): each test's setup,
 // call and teardown get their own context, named by the test's node id
 // with its file path relative to the run's working directory. It writes
-// {"error", "contexts": {context: [lines]}, "stmts", "tests"} to
-// $CULL_COV_OUT. It starts coverage when pytest loads it (before
+// {"error", "contexts": {context: [lines]}, "stmts", "tests", "spawned"}
+// to $CULL_COV_OUT. An audit hook (and a wrap of multiprocessing's
+// Process.start, whose spawn and forkserver methods raise no audit
+// event) sees every process the tests start: one started in a test's
+// call phase lists that test in "spawned" (its child's work can't be
+// measured), one started anywhere else is an error. It starts coverage when pytest loads it (before
 // collection imports anything) and refuses (error) if the target was
 // already imported, or if coverage's tracer (sys.gettrace() and
 // threading's, as set by start) was replaced or removed after
@@ -35,6 +39,38 @@ _cov = None
 _tests = set()
 _tracer = None
 _ttracer = None
+_phase = None
+_spawned = set()
+_SPAWN = frozenset(["subprocess.Popen", "os.fork", "os.forkpty", "os.posix_spawn", "os.posix_spawnp", "os.system", "os.startfile"])
+
+
+def _on_spawn(event):
+    global _err
+    if _phase is not None and _phase[1] == "call":
+        _spawned.add(_phase[0])
+    elif _err is None:
+        where = "collection" if _phase is None else _phase[0] + " " + _phase[1]
+        _err = "a process was spawned outside a test's call phase (%s during %s)" % (event, where)
+
+
+def _audit(event, args):
+    if event.startswith(("subprocess.", "os.")) and (event in _SPAWN or event.startswith(("os.exec", "os.spawn"))):
+        _on_spawn(event)
+
+
+sys.addaudithook(_audit)
+try:
+    import multiprocessing.process as _mp
+
+    _mp_start = _mp.BaseProcess.start
+
+    def _start(self, *a, **k):
+        _on_spawn("multiprocessing.Process.start")
+        return _mp_start(self, *a, **k)
+
+    _mp.BaseProcess.start = _start
+except Exception:
+    pass
 
 
 def _thread_trace():
@@ -91,31 +127,43 @@ def pytest_collection_finish(session):
     _check("collection")
 
 
+def _enter(item, phase):
+    global _phase
+    _phase = (_sel(item), phase)
+    _switch(_sel(item) + "|" + phase)
+
+
+def _leave(item, phase):
+    global _phase
+    _phase = None
+    _check(_sel(item) + " " + phase)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_setup(item):
-    _switch(_sel(item) + "|setup")
+    _enter(item, "setup")
     yield
-    _check(_sel(item) + " setup")
+    _leave(item, "setup")
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
     _tests.add(_sel(item))
-    _switch(_sel(item) + "|call")
+    _enter(item, "call")
     yield
-    _check(_sel(item) + " call")
+    _leave(item, "call")
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
-    _switch(_sel(item) + "|teardown")
+    _enter(item, "teardown")
     yield
-    _check(_sel(item) + " teardown")
+    _leave(item, "teardown")
     _switch("")
 
 
 def pytest_unconfigure(config):
-    out = {"error": _err, "contexts": {}, "stmts": [], "tests": sorted(_tests)}
+    out = {"error": _err, "contexts": {}, "stmts": [], "tests": sorted(_tests), "spawned": sorted(_spawned)}
     if _cov is not None:
         try:
             _cov.stop()
@@ -141,6 +189,7 @@ type pyCovData struct {
 	Contexts map[string][]int `json:"contexts"`
 	Stmts    []int            `json:"stmts"`
 	Tests    []string         `json:"tests"`
+	Spawned  []string         `json:"spawned"`
 }
 
 // Cover measures per-test coverage of module with pyCovPlugin. A unit
@@ -263,6 +312,10 @@ func pyCoverage(src []byte, files map[string]map[string]string, d pyCovData) *Co
 			return false
 		}
 	}
+	spawned := map[string]bool{}
+	for _, sel := range d.Spawned {
+		spawned[unitSel(sel)] = true
+	}
 	cov := &Coverage{global: hits(global, true)}
 	sels := make([]string, 0, len(byUnit))
 	for u := range byUnit {
@@ -278,7 +331,11 @@ func pyCoverage(src []byte, files map[string]map[string]string, d pyCovData) *Co
 		if !ok {
 			continue
 		}
-		cov.Units = append(cov.Units, Unit{Sel: sel, File: file, IDs: []string{id}, hit: hits(byUnit[sel], false)})
+		hit := hits(byUnit[sel], false)
+		if spawned[sel] {
+			hit = func(int, int) bool { return true }
+		}
+		cov.Units = append(cov.Units, Unit{Sel: sel, File: file, IDs: []string{id}, hit: hit})
 	}
 	return cov
 }

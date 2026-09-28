@@ -5,10 +5,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,7 +32,9 @@ type goBlock struct {
 // subtests share its coverage). Code in no coverage block (package-level
 // declarations and var initializers, signatures) is global; init bodies
 // run in every test binary run, so every test covers them. A test
-// passed only if its run exited 0.
+// passed only if its run exited 0. Every test of a package whose test
+// files can start a process (see goTestsSpawn) covers every line: the
+// child's work isn't in the test's profile.
 func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -69,6 +76,10 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 	var all []goBlock // every block of the module (any count)
 	cov := &Coverage{Passed: map[string]bool{}}
 	for i, sub := range subs {
+		spawns, err := goTestsSpawn(filepath.Join(dir, filepath.FromSlash(sub)))
+		if err != nil {
+			return nil, err
+		}
 		bin := filepath.Join(tmp, fmt.Sprintf("p%d.test", i))
 		pkg := "./"
 		if sub != "." {
@@ -106,6 +117,9 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 				}
 				return false
 			}}
+			if spawns {
+				u.hit = func(int, int) bool { return true }
+			}
 			for native, id := range files[tc.file] {
 				if native == tc.name || strings.HasPrefix(native, tc.name+"/") {
 					u.IDs = append(u.IDs, id)
@@ -132,6 +146,52 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 		return true
 	}
 	return cov, nil
+}
+
+// goTestsSpawn reports whether the _test.go files in dir can start a
+// process: one imports os/exec, or calls os.StartProcess or syscall's
+// Exec, ForkExec or StartProcess.
+func goTestsSpawn(dir string) (bool, error) {
+	names, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	if err != nil {
+		return false, err
+	}
+	calls := map[string][]string{"os": {"StartProcess"}, "syscall": {"Exec", "ForkExec", "StartProcess"}}
+	for _, name := range names {
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return false, err
+		}
+		local := map[string]string{} // local package name -> import path
+		for _, im := range f.Imports {
+			p, _ := strconv.Unquote(im.Path.Value)
+			if p == "os/exec" {
+				return true, nil
+			}
+			if _, ok := calls[p]; ok {
+				n := p
+				if im.Name != nil {
+					n = im.Name.Name
+				}
+				local[n] = p
+			}
+		}
+		found := false
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || found {
+				return !found
+			}
+			if x, ok := sel.X.(*ast.Ident); ok && slices.Contains(calls[local[x.Name]], sel.Sel.Name) {
+				found = true
+			}
+			return !found
+		})
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // procErr explains why a coverage subprocess can't be used, or is nil.

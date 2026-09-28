@@ -40,7 +40,8 @@ type v8Range struct {
 // source (plain JavaScript, or TypeScript run by node's own type
 // stripping, which keeps every offset), a mutant is covered if its
 // innermost V8 range ran; otherwise any file that loaded the module
-// covers all of it. Nothing is global: module-level code runs in every
+// covers all of it. A test file that can start a process (see
+// tsFileSpawns) covers all of it too. Nothing is global: module-level code runs in every
 // file that loads the module.
 func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if r.kind != "node" {
@@ -94,7 +95,14 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		for _, id := range files[f] {
 			u.IDs = append(u.IDs, id)
 		}
-		if found {
+		spawns, err := tsFileSpawns(filepath.Join(dir, filepath.FromSlash(f)))
+		if err != nil {
+			return nil, err
+		}
+		if spawns {
+			// A child started with its own env escapes NODE_V8_COVERAGE.
+			u.hit = func(int, int) bool { return true }
+		} else if found {
 			loaded = true
 			if !transformed && aligned(ranges, u16[len(src)], "file://"+real) {
 				u.hit = func(start, end int) bool {
@@ -110,6 +118,25 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		return nil, fmt.Errorf("no test file loaded %s in the coverage runs", module)
 	}
 	return cov, nil
+}
+
+// tsSpawnMarks are source fragments of a test file that can start a
+// process or a worker.
+var tsSpawnMarks = []string{"child_process", "worker_threads", "spawn(", "spawnSync(", "exec(", "execSync(", "execFile(", "execFileSync(", "fork("}
+
+// tsFileSpawns reports whether the test file at path mentions any of
+// tsSpawnMarks.
+func tsFileSpawns(path string) (bool, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range tsSpawnMarks {
+		if strings.Contains(string(src), m) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // transforms reports whether the test command (or NODE_OPTIONS) loads a
