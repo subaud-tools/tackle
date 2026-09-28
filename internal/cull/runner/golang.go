@@ -38,8 +38,6 @@ type goTestEvent struct {
 }
 
 func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, index map[string]string, timeout time.Duration) Outcome {
-	out := newOutcome()
-
 	groups := map[string]map[string]bool{} // package dir, relative to dir ("." = dir itself) -> top-level test names
 	for _, f := range testFiles {
 		slash := filepath.ToSlash(f)
@@ -55,7 +53,12 @@ func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 			groups[sub][n] = true
 		}
 	}
+	return runGoGroups(ctx, dir, groups, index, timeout)
+}
 
+// runGoGroups runs, per package directory, the named top-level tests.
+func runGoGroups(ctx context.Context, dir string, groups map[string]map[string]bool, index map[string]string, timeout time.Duration) Outcome {
+	out := newOutcome()
 	subs := make([]string, 0, len(groups))
 	for s := range groups {
 		subs = append(subs, s)
