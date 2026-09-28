@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/schuettc/tackle/internal/cull/cases"
 	"github.com/schuettc/tackle/internal/cull/mutate"
@@ -54,5 +55,31 @@ func TestTargetSitesFallbackDedupe(t *testing.T) {
 	got = targetSites(src, sites, []cases.Callee{{Symbol: "x", Source: "zzz"}, {Symbol: "b", Source: "bbbb"}})
 	if len(got) != 2 || got[0].Desc != "a" || got[1].Desc != "b" {
 		t.Errorf("fallback: %v", got)
+	}
+}
+
+// Mutant runs get 3× the slower baseline run: slow tests (here ~2 s,
+// with a 1 s floor) are measured, not cut off.
+func TestTimeoutScalesWithBaseline(t *testing.T) {
+	needPython(t)
+	root := newRepo(t, map[string]string{
+		"calc.py":      pyCalc,
+		"test_calc.py": "import time\nfrom calc import add\n\n\ndef test_add():\n    time.sleep(2)\n    assert add(2, 3) == 5\n",
+	})
+	id := "py:test_calc.py:test_add"
+	mod := Module{Rel: "calc.py", Lang: "python", TestFiles: []string{"test_calc.py"}, Tests: []string{id}}
+	o := opts(2)
+	o.RunTimeout = time.Second
+	m, err := RunMatrix(context.Background(), root, []Module{mod}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Baseline[id] || len(m.Mutants) == 0 {
+		t.Fatalf("baseline %v, %d mutants", m.Baseline, len(m.Mutants))
+	}
+	for _, mu := range m.Mutants {
+		if mu.KilledBy == nil {
+			t.Errorf("mutant %s excluded", mu.Site.Desc)
+		}
 	}
 }

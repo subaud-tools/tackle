@@ -26,8 +26,8 @@ var evidenceFlags = flags("evidence", "cull evidence [--workers 8] [--max-mutant
 		"Exit: 0 done, 2 refused or error.",
 	func(fs *flag.FlagSet) {
 		fs.Int("workers", 8, "parallel sandboxes")
-		fs.Int("max-mutants", 30, "planted bugs per module (at most)")
-		fs.Duration("timeout", 60*time.Second, "per test run timeout")
+		fs.Int("max-mutants", 30, "planted bugs per module whose targets' callees aren't known (at most)")
+		fs.Duration("timeout", 60*time.Second, "minimum per mutant run timeout (3× the slower baseline run when longer)")
 		fs.Bool("json", false, "print the result as JSON")
 	})
 

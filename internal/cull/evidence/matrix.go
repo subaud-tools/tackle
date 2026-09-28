@@ -69,13 +69,16 @@ type Matrix struct {
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
-// MaxMutants = 30 (for a module without Callees), RunTimeout = 60s, Stderr = discard.
+// MaxMutants = 30 (for a module without Callees), RunTimeout = 60s,
+// BaselineTimeout = 10m, Stderr = discard. Baseline runs get
+// BaselineTimeout; canary and mutant runs get the larger of RunTimeout and
+// 3× the module's slower baseline run.
 // Evidence always runs the runner package's detected per-test command,
 // never a project's test_command override.
 type Options struct {
-	Workers, MaxMutants int
-	RunTimeout          time.Duration
-	Stderr              io.Writer
+	Workers, MaxMutants         int
+	RunTimeout, BaselineTimeout time.Duration
+	Stderr                      io.Writer
 }
 
 // group is a set of test files run together by one Runner, with an index
@@ -98,6 +101,13 @@ type modPlan struct {
 	measured map[string]bool // passed both baseline runs
 	failed   map[string]bool // failed at least one baseline run
 	unmapped int
+	slowest  time.Duration // the slower baseline run (all groups)
+}
+
+// runTimeout is the timeout for p's canary and mutant runs: the larger of
+// floor and 3× its slower baseline run.
+func (p *modPlan) runTimeout(floor time.Duration) time.Duration {
+	return max(floor, 3*p.slowest)
 }
 
 // plantHook, if set (tests only), is called with the mutated file's path
@@ -127,6 +137,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	}
 	if opt.RunTimeout <= 0 {
 		opt.RunTimeout = 60 * time.Second
+	}
+	if opt.BaselineTimeout <= 0 {
+		opt.BaselineTimeout = 10 * time.Minute
 	}
 	if opt.Stderr == nil {
 		opt.Stderr = io.Discard
@@ -167,12 +180,12 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	jobs := make([]func(Sandbox) error, 0, len(plans))
 	for _, p := range plans {
 		jobs = append(jobs, func(sb Sandbox) error {
-			p.baseline(ctx, sb, opt.RunTimeout)
+			p.baseline(ctx, sb, opt.BaselineTimeout)
 			logf("baseline %s: %d measured, %d failing", p.mod.Rel, len(p.measured), len(p.failed))
 			if !p.ok || len(p.measured) == 0 {
 				return nil
 			}
-			loaded, why, err := p.canary(ctx, sb, opt.RunTimeout)
+			loaded, why, err := p.canary(ctx, sb, p.runTimeout(opt.RunTimeout))
 			if err != nil {
 				return err
 			}
@@ -205,7 +218,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			mutants = append(mutants, Mutant{Module: p.mod.Rel, Site: s})
 			n := i + 1
 			jobs = append(jobs, func(sb Sandbox) error {
-				killed, why, err := p.mutant(ctx, sb, s, opt.RunTimeout)
+				killed, why, err := p.mutant(ctx, sb, s, p.runTimeout(opt.RunTimeout))
 				if err != nil {
 					return err
 				}
@@ -483,6 +496,7 @@ func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duratio
 	p.failed = map[string]bool{}
 	passes := map[string]int{}
 	for run := 0; run < 2; run++ {
+		start := time.Now()
 		for _, g := range p.groups {
 			p.clearBytecode(sb)
 			o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
@@ -499,6 +513,7 @@ func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duratio
 				p.failed[id] = true
 			}
 		}
+		p.slowest = max(p.slowest, time.Since(start))
 	}
 	p.measured = map[string]bool{}
 	if !p.ok {
