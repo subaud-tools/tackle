@@ -136,6 +136,27 @@ func TestCoverageFixtureSpawnFallsBack(t *testing.T) {
 	settleExpect(t, root, "spawned")
 }
 
+// C2: per-test isolation needs os.fork; without it (a conftest deletes
+// it) the module falls back, and verdicts equal the full run's.
+func TestCoverageNoForkFallsBack(t *testing.T) {
+	needCoverage(t)
+	root := pySettleRepo(t, soundCalcFG, soundFGTests)
+	write(t, root, "conftest.py", "import os\n\ndel os.fork\n")
+	settleExpect(t, root, "per-test isolation needs os.fork")
+}
+
+// C2: a fork that fails (a conftest makes os.fork raise) sends the
+// module to the fallback, and verdicts equal the full run's.
+func TestCoverageForkFailsFallsBack(t *testing.T) {
+	needCoverage(t)
+	root := pySettleRepo(t, soundCalcFG, soundFGTests)
+	write(t, root, "conftest.py", "import os\n\n\ndef _nope():\n    raise OSError('nope')\n\n\nos.fork = _nope\n")
+	settleExpect(t, root, "fork failed (nope)")
+}
+
+// soundFGTests: test_a alone checks f, test_b alone checks g.
+const soundFGTests = "from calc import f, g\n\n\ndef test_a():\n    assert f(10)\n    assert not f(3)\n    g(0)\n\n\ndef test_b():\n    assert f(10)\n    assert g(3) == 6\n"
+
 // C1 (Go): TestB alone checks G, in a re-run of its own test binary: a
 // test package that uses os/exec covers the whole module.
 func TestGoCoverageSubprocessCoversAll(t *testing.T) {
