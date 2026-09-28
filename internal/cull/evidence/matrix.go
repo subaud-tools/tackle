@@ -471,7 +471,8 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 // def samples only its own sites, those not inside a def nested in it
 // (a class: its field defaults and body statements; a function: not its
 // nested helpers), and a callee only its sites not inside any def within
-// it. It returns their union, deduplicated and sorted by Start.
+// it (a callee holding no def of its own: every site in its span). It
+// returns their union, deduplicated and sorted by Start.
 func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Callee, defs []mutate.Def, logf func(string, ...any)) []mutate.Site {
 	type key struct {
 		start, end int
@@ -528,14 +529,21 @@ func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Ca
 			}
 			return false
 		}
+		var own []int // the defs inside this callee's spans
+		for i, d := range defs {
+			if in(span{d.Start, d.End}) {
+				own = append(own, i)
+			}
+		}
+		if len(own) == 0 {
+			// No definition of its own: sample its span directly.
+			sample(func(i int) bool { return in(span{sites[i].Start, sites[i].End}) }, c.Symbol)
+			continue
+		}
 		sample(func(i int) bool {
 			return in(span{sites[i].Start, sites[i].End}) && (!hasInner[i] || !in(inner[i]))
 		}, c.Symbol)
-		for i, d := range defs {
-			if in(span{d.Start, d.End}) {
-				seeds = append(seeds, i)
-			}
-		}
+		seeds = append(seeds, own...)
 	}
 	done := map[span]bool{} // defs sharing one span share one sample
 	for _, j := range reach(defs, seeds) {
