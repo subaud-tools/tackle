@@ -300,9 +300,13 @@ func targetCallees(rel string, targets []int, tests []check.TestResult, byID map
 // declared on several receivers in its package with every one of them
 // (logged once per package and name): extraction matches a method call
 // by selector name alone, so it may have picked the wrong receiver's.
+// The methods are looked up once per package and name, but each callee is
+// replaced only if its own Source is one of them: a same-package function
+// shares the bare name as its Symbol and keeps its own span.
 func spanSameNamedMethods(root string, all []cases.TestCase, stderr io.Writer) {
 	type key struct{ dir, name string }
 	cache := map[key][]cases.Callee{}
+	logged := map[key]bool{}
 	for i := range all {
 		tc := &all[i]
 		if tc.Lang != "go" {
@@ -314,23 +318,22 @@ func spanSameNamedMethods(root string, all []cases.TestCase, stderr io.Writer) {
 			ms, ok := cache[k]
 			if !ok {
 				ms = golang.Methods(root, filepath.Join(root, filepath.FromSlash(k.dir)), c.Symbol)
-				if len(ms) < 2 || !slices.ContainsFunc(ms, func(m cases.Callee) bool { return m.Source == c.Source }) {
-					ms = nil
-				} else {
-					var where []string
-					for _, m := range ms {
-						where = append(where, m.Symbol+" in "+m.File)
-					}
-					fmt.Fprintf(stderr, "cull evidence: method %s is declared on %d receivers in %s; mutating every one (%s)\n",
-						c.Symbol, len(ms), k.dir, strings.Join(where, ", "))
-				}
 				cache[k] = ms
 			}
-			if ms == nil {
+			if len(ms) < 2 || !slices.ContainsFunc(ms, func(m cases.Callee) bool { return m.Source == c.Source }) {
 				out = append(out, c)
-			} else {
-				out = append(out, ms...)
+				continue
 			}
+			if !logged[k] {
+				logged[k] = true
+				var where []string
+				for _, m := range ms {
+					where = append(where, m.Symbol+" in "+m.File)
+				}
+				fmt.Fprintf(stderr, "cull evidence: method %s is declared on %d receivers in %s; mutating every one (%s)\n",
+					c.Symbol, len(ms), k.dir, strings.Join(where, ", "))
+			}
+			out = append(out, ms...)
 		}
 		tc.Callees = out
 	}

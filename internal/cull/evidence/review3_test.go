@@ -284,3 +284,49 @@ func TestModuleGapTable(t *testing.T) {
 		})
 	}
 }
+
+// A same-package func Get shares its bare callee Symbol with the methods
+// (A) Get and (B) Get. Whichever callee is seen first must not decide for
+// the others: the function keeps its own span (TestFn, its sole guard, is
+// kept) and A.Get's caller is spanned across receivers (TestA is kept).
+func TestGoFuncAndSameNamedMethods(t *testing.T) {
+	needTools(t)
+	testA := "func TestA(t *testing.T) {\n\tif (A{}).Get(1) != 2 {\n\t\tt.Fatal(\"a\")\n\t}\n}\n\n"
+	testFn := "func TestFn(t *testing.T) {\n\tif Get(3) != 2 {\n\t\tt.Fatal(\"fn\")\n\t}\n}\n\n"
+	for _, tc := range []struct{ name, tests string }{
+		{"function first", testFn + testA},
+		{"method first", testA + testFn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newRepo(t, map[string]string{
+				"go.mod":       "module fixture\n\ngo 1.22\n",
+				"a.go":         "package calc\n\ntype A struct{}\n\nfunc (A) Get(x int) int { return x + 1 }\n",
+				"b.go":         "package calc\n\ntype B struct{}\n\nfunc (B) Get(x int) int { return x * 2 }\n",
+				"c.go":         "package calc\n\nfunc Get(x int) int { return x - 1 }\n",
+				"calc_test.go": "package calc\n\nimport \"testing\"\n\n" + tc.tests,
+			})
+			writeLast(t, root, []string{"calc_test.go"}, map[string]verdict{
+				"TestA":  {"review", "review_band"},
+				"TestFn": {"review", "review_band"},
+			})
+			o := settleOpts()
+			var log bytes.Buffer
+			o.Stderr = &log
+			if _, err := Run(context.Background(), root, o); err != nil {
+				t.Fatal(err)
+			}
+			_, by := loadLast(t, root)
+			for _, id := range []string{"TestFn", "TestA"} {
+				if tr := by[id]; tr.Verdict != "keep" || tr.Rule != RuleSoleGuard {
+					t.Errorf("%s: %s/%s %v", id, tr.Verdict, tr.Rule, tr.Reasons)
+				}
+			}
+			if !strings.Contains(log.String(), "A.Get in a.go") {
+				t.Errorf("A.Get not spanned:\n%s", log.String())
+			}
+			if t.Failed() {
+				t.Log(log.String())
+			}
+		})
+	}
+}
