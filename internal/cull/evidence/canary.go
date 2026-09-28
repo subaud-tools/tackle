@@ -8,6 +8,10 @@ import (
 // measured test noticed: the tests import some other copy of it.
 const reasonShadowed = "tests don't load this copy of the module (an installed package or path setting shadows it)"
 
+// reasonUnconfirmed is the unmeasured reason for a module whose canary run
+// timed out or failed to start.
+const reasonUnconfirmed = "could not confirm the tests load this copy of the module"
+
 // canarySource returns src with a module-breaking change planted: any test
 // that really loads this copy of the module fails (or fails to build or
 // collect). Python: raise RuntimeError as the first statement after the

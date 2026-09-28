@@ -59,6 +59,9 @@ type Mutant struct {
 // for that module's mutants. Shadowed lists (sorted) the modules whose
 // canary no measured test noticed: the tests load another copy of them,
 // so none of their mutants run and none of their tests are measured.
+// Unconfirmed lists (sorted) the modules whose canary run timed out or
+// failed to start: whether the tests load them is unknown, so they are
+// treated like Shadowed ones.
 // Dropped maps a module to the test files (sorted) left out of it because
 // they did not run cleanly on their own (see modPlan.isolate).
 type Matrix struct {
@@ -69,6 +72,7 @@ type Matrix struct {
 
 	MeasuredByModule map[string]map[string]bool `json:"measured_by_module"`
 	Shadowed         []string                   `json:"shadowed"`
+	Unconfirmed      []string                   `json:"unconfirmed"`
 	Dropped          map[string][]string        `json:"dropped"`
 }
 
@@ -102,6 +106,7 @@ type modPlan struct {
 
 	ok       bool            // baseline valid
 	shadowed bool            // canary unnoticed: tests load another copy
+	unsure   bool            // canary run timed out or failed to start
 	measured map[string]bool // passed both baseline runs
 	failed   map[string]bool // failed at least one baseline run
 	dropped  []string        // test files that did not run cleanly alone
@@ -193,15 +198,19 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			if !p.ok || len(p.measured) == 0 {
 				return nil
 			}
-			loaded, why, err := p.canary(ctx, sb, p.runTimeout(opt.RunTimeout))
+			st, why, err := p.canary(ctx, sb, p.runTimeout(opt.RunTimeout))
 			if err != nil {
 				return err
 			}
-			p.shadowed = !loaded
-			if loaded {
+			switch st {
+			case canaryLoaded:
 				logf("canary %s: loaded (%s)", p.mod.Rel, why)
-			} else {
+			case canaryShadowed:
+				p.shadowed = true
 				logf("canary %s: not loaded; %s", p.mod.Rel, reasonShadowed)
+			default:
+				p.unsure = true
+				logf("canary %s: %s; %s", p.mod.Rel, why, reasonUnconfirmed)
 			}
 			return nil
 		})
@@ -218,7 +227,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			logf("%s: baseline invalid; its tests are unmeasurable", p.mod.Rel)
 			continue
 		}
-		if len(p.measured) == 0 || p.shadowed {
+		if len(p.measured) == 0 || p.shadowed || p.unsure {
 			continue
 		}
 		for i, s := range p.sites {
@@ -256,10 +265,13 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		if p.shadowed {
 			m.Shadowed = append(m.Shadowed, p.mod.Rel)
 		}
+		if p.unsure {
+			m.Unconfirmed = append(m.Unconfirmed, p.mod.Rel)
+		}
 		if len(p.dropped) > 0 {
 			m.Dropped[p.mod.Rel] = p.dropped
 		}
-		if !p.ok || p.shadowed || len(p.sites) == 0 {
+		if !p.ok || p.shadowed || p.unsure || len(p.sites) == 0 {
 			continue
 		}
 		for id := range p.measured {
@@ -277,6 +289,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	}
 	sort.Strings(m.Flaky)
 	sort.Strings(m.Shadowed)
+	sort.Strings(m.Unconfirmed)
 	// measured is per module, flakiness global: a test stable in one
 	// module's baselines may have failed in another's. Only tests in the
 	// final Baseline are credited.
@@ -668,46 +681,60 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 	return killed, "", nil
 }
 
+// canaryStatus is what a canary run showed.
+type canaryStatus int
+
+const (
+	canaryLoaded      canaryStatus = iota // a measured test failed, or a run was Invalid
+	canaryShadowed                        // every run valid, no measured test failed
+	canaryUnconfirmed                     // otherwise: a run timed out or failed to start
+)
+
 // canary plants a module-breaking change (see canarySource) in sb, runs
-// the groups holding measured tests once, and restores the module. loaded
-// is false only when every run was valid (not Invalid, timed out or
-// failed to start) and no measured test failed: the tests then load some
-// other copy of the module. An Invalid run (a Go build failure, a pytest
-// collection error) counts as loaded. why says what showed it loaded. An
-// error means the sandbox couldn't be written or restored.
-func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration) (loaded bool, why string, err error) {
+// the groups holding measured tests once, and restores the module. The
+// status is canaryLoaded when a measured test failed (even in a run that
+// then timed out) or a run was Invalid (a Go build failure, a pytest
+// collection error); else canaryUnconfirmed when a run timed out or
+// failed to start; else canaryShadowed: the tests load some other copy
+// of the module. why says what showed it. An error means the sandbox
+// couldn't be written or restored.
+func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration) (st canaryStatus, why string, err error) {
 	broken, ok := canarySource(p.mod.Lang, p.src)
 	if !ok {
-		return true, "no canary for " + p.mod.Lang, nil
+		return canaryLoaded, "no canary for " + p.mod.Lang, nil
 	}
 	file := filepath.Join(sb.Dir, filepath.FromSlash(p.mod.Rel))
 	if err := os.WriteFile(file, broken, 0o644); err != nil {
-		return false, "", fmt.Errorf("evidence: plant canary in %s: %w", file, err)
+		return 0, "", fmt.Errorf("evidence: plant canary in %s: %w", file, err)
 	}
+	st = canaryShadowed
 	for _, g := range p.groups {
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
 		p.clearBytecode(sb)
 		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
-		if why = badRun(o); why != "" {
-			loaded = true
-			break
-		}
 		for id := range o.Failed {
 			if p.measured[id] {
-				loaded, why = true, id+" failed"
+				st, why = canaryLoaded, id+" failed"
 				break
 			}
 		}
-		if loaded {
+		if st == canaryLoaded {
 			break
+		}
+		if o.Invalid && !o.TimedOut && o.Err == "" {
+			st, why = canaryLoaded, badRun(o)
+			break
+		}
+		if r := badRun(o); r != "" {
+			st, why = canaryUnconfirmed, r
 		}
 	}
 	if err := os.WriteFile(file, p.src, 0o644); err != nil {
-		return false, "", fmt.Errorf("evidence: restore %s: %w", file, err)
+		return 0, "", fmt.Errorf("evidence: restore %s: %w", file, err)
 	}
-	return loaded, why, nil
+	return st, why, nil
 }
 
 func holdsMeasured(g *group, measured map[string]bool) bool {

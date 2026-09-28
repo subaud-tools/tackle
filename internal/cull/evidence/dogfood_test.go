@@ -106,3 +106,28 @@ func TestBrokenTestFileIsolated(t *testing.T) {
 		t.Errorf("test_add_bad reason = %q", r)
 	}
 }
+
+// A canary run that times out can't confirm the tests load this copy:
+// the module is unmeasured, not taken as loaded.
+func TestCanaryTimeoutUnmeasured(t *testing.T) {
+	needPython(t)
+	root := newRepo(t, map[string]string{
+		"calc.py": pyCalc,
+		"test_calc.py": "import time\n\ntry:\n    from calc import add\nexcept RuntimeError:\n    time.sleep(120)\n\n\n" +
+			"def test_add():\n    assert add(2, 3) == 5\n",
+	})
+	writeLast(t, root, []string{"test_calc.py"}, map[string]verdict{"test_add": {"review", "review_band"}})
+	o := settleOpts()
+	o.RunTimeout = 3 * time.Second
+	res, err := Run(context.Background(), root, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "py:test_calc.py:test_add"
+	if len(res.Settled) != 0 || res.Mutants != 0 {
+		t.Errorf("Settled = %v, %d mutants", res.Settled, res.Mutants)
+	}
+	if r := res.Reasons[id]; r != "could not confirm the tests load this copy of the module" {
+		t.Errorf("reason = %q", r)
+	}
+}

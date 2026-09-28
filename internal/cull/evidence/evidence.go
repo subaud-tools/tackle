@@ -213,9 +213,12 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	for _, id := range m.Flaky {
 		flaky[id] = true
 	}
-	shadowed := map[string]bool{}
+	shadowed := map[string]string{} // module → why its canary kept it unmeasured
 	for _, rel := range m.Shadowed {
-		shadowed[rel] = true
+		shadowed[rel] = reasonShadowed
+	}
+	for _, rel := range m.Unconfirmed {
+		shadowed[rel] = reasonUnconfirmed
 	}
 	sites := map[string]bool{} // module → has mutation sites (computed lazily)
 	hasSites := func(rel string) bool {
@@ -370,7 +373,7 @@ func testSupport(rel string) bool {
 
 // unmeasuredReason says why id has no usable measurement.
 func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []string,
-	byModule map[string][]Mutant, baseline, flaky, shadowed map[string]bool, dropped map[string][]string,
+	byModule map[string][]Mutant, baseline, flaky map[string]bool, shadowed map[string]string, dropped map[string][]string,
 	hasSites func(string) bool) string {
 	tc, ok := byID[id]
 	if !ok {
@@ -399,8 +402,8 @@ func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []st
 	}
 	if total == 0 {
 		for _, rel := range mods {
-			if shadowed[rel] {
-				return reasonShadowed
+			if r := shadowed[rel]; r != "" {
+				return r
 			}
 		}
 		for _, rel := range mods {
@@ -460,13 +463,14 @@ func extractSuite(root string, files []string, stderr io.Writer) ([]cases.TestCa
 // evidenceFile is .cull/evidence.json: the modules measured and their
 // full kill matrix.
 type evidenceFile struct {
-	Modules  []moduleJSON        `json:"modules"`
-	Mutants  []Mutant            `json:"mutants"`
-	Baseline map[string]bool     `json:"baseline"`
-	Flaky    []string            `json:"flaky"`
-	Unmapped int                 `json:"unmapped"`
-	Shadowed []string            `json:"shadowed"`
-	Dropped  map[string][]string `json:"dropped"`
+	Modules     []moduleJSON        `json:"modules"`
+	Mutants     []Mutant            `json:"mutants"`
+	Baseline    map[string]bool     `json:"baseline"`
+	Flaky       []string            `json:"flaky"`
+	Unmapped    int                 `json:"unmapped"`
+	Shadowed    []string            `json:"shadowed"`
+	Unconfirmed []string            `json:"unconfirmed"`
+	Dropped     map[string][]string `json:"dropped"`
 }
 
 type moduleJSON struct {
@@ -477,7 +481,7 @@ type moduleJSON struct {
 }
 
 func writeEvidenceJSON(root string, mods []Module, m Matrix) error {
-	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Dropped: m.Dropped}
+	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Unconfirmed: m.Unconfirmed, Dropped: m.Dropped}
 	for _, mod := range mods {
 		f.Modules = append(f.Modules, moduleJSON{mod.Rel, mod.Lang, mod.TestFiles, mod.Tests})
 	}
