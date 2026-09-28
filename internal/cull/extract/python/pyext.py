@@ -484,8 +484,9 @@ def sites_for(data):
 def defs_for(data):
     """Definitions in data (one Python source file's raw bytes): a list of
     {"name","owner","kind","start","end","refs"} dicts. Top-level
-    functions, classes and assignments (owner ""), and the methods of
-    top-level classes (owner: the class name). start/end are the UTF-8 byte
+    functions, classes and assignments (owner ""), also inside top-level
+    if/try/with blocks, and the methods of those classes (owner: the class
+    name). start/end are the UTF-8 byte
     offsets of the definition's whole source lines (decorators through its
     last line); refs are the names (ast.Name ids and attribute names) used
     anywhere inside it. Returns [] for a file that fails to parse.
@@ -511,19 +512,32 @@ def defs_for(data):
                 refs.add(x.attr)
         out.append({"name": name, "owner": owner, "kind": kind, "start": start, "end": end, "refs": sorted(refs)})
 
-    for n in tree.body:
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            add(n, n.name, "", "function")
-        elif isinstance(n, ast.ClassDef):
-            add(n, n.name, "", "class")
-            for m in n.body:
-                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    add(m, m.name, n.name, "method")
-        elif isinstance(n, (ast.Assign, ast.AnnAssign)):
-            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
-            for t in targets:
-                if isinstance(t, ast.Name):
-                    add(n, t.id, "", "var")
+    blocks = (ast.If, ast.Try, ast.With, ast.AsyncWith) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+
+    def visit(body):
+        for n in body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                add(n, n.name, "", "function")
+            elif isinstance(n, ast.ClassDef):
+                add(n, n.name, "", "class")
+                for m in n.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        add(m, m.name, n.name, "method")
+            elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        add(n, t.id, "", "var")
+            elif isinstance(n, blocks):
+                # Top-level if/try/with (TYPE_CHECKING, ImportError
+                # fallbacks): the definitions in every branch count.
+                visit(n.body)
+                visit(getattr(n, "orelse", []))
+                for h in getattr(n, "handlers", []):
+                    visit(h.body)
+                visit(getattr(n, "finalbody", []))
+
+    visit(tree.body)
     return out
 
 

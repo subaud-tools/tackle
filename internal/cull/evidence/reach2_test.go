@@ -88,3 +88,41 @@ def build(c, s):
 		}, "test_post")
 	})
 }
+
+// Python definitions inside top-level try/if/with blocks are definitions:
+// _compat, defined in a try block, holds the target's unique catch.
+func TestPythonBlockDefinitionsReached(t *testing.T) {
+	const mod = `import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import List
+
+try:
+    import json
+
+    def _compat(x):
+        return x + "!"
+except ImportError:
+    def _compat(x):
+        return x
+finally:
+    pass
+
+if sys.version_info >= (3, 0):
+    def _tail(x):
+        return _compat(x)
+else:
+    def _tail(x):
+        return x
+
+
+def build(s):
+    return _tail(s.strip())
+`
+	pyKeep(t, map[string]string{
+		"calc.py": mod,
+		"test_calc.py": "from calc import build\n\n\ndef test_other():\n    assert build(\" a \").startswith(\"a\")\n\n\n" +
+			"def test_compat():\n    assert build(\"a\").endswith(\"!\")\n",
+	}, "test_compat")
+}
