@@ -966,6 +966,12 @@ func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duratio
 		}
 		logf("%s: no per-test coverage (%s); running every test file per mutant", p.mod.Rel, why)
 	}
+	ignored := map[string]bool{}
+	defer func() {
+		if len(ignored) > 0 {
+			logf("%s: coverage ignored native programs started outside any test: %s", p.mod.Rel, strings.Join(sortedKeys(ignored), ", "))
+		}
+	}()
 	for _, g := range p.groups {
 		if !holdsMeasured(g, p.measured) {
 			continue
@@ -987,6 +993,9 @@ func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duratio
 		if err != nil {
 			fallback(err.Error())
 			return
+		}
+		for _, exe := range cov.Ignored {
+			ignored[exe] = true
 		}
 		have := map[string]bool{}
 		for _, u := range cov.Units {

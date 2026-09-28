@@ -19,8 +19,8 @@ import (
 // mechanism pytest-cov's --cov-context=test uses): each test's setup,
 // call and teardown get their own context, named by the test's node id
 // with its file path relative to the run's working directory. It writes
-// {"error", "contexts": {context: [lines]}, "stmts", "tests", "spawned"}
-// to $CULL_COV_OUT.
+// {"error", "contexts": {context: [lines]}, "stmts", "tests", "spawned",
+// "ignored"} to $CULL_COV_OUT.
 //
 // Each test (setup, call, teardown of every fixture it uses) runs in its
 // own forked child, pytest-forked style, which sends back (pickled, as
@@ -33,7 +33,9 @@ import (
 // spawn and forkserver methods raise no audit event) sees every process
 // the tests start (the plugin's own forks exempt): one started in a
 // test's call phase lists that test in "spawned" (its child's work can't
-// be measured), one started anywhere else is an error.
+// be measured), one started anywhere else is an error, unless it runs a
+// native program that can't run the project's Python (see _benign): that
+// one is listed in "ignored".
 //
 // It starts coverage when pytest loads it (before collection imports
 // anything) and refuses (error) if the target was already imported, if
@@ -42,9 +44,10 @@ import (
 // phase ran outside a forked child, or if a fork failed or a child died
 // without its data. The ctrace core is forced: sys.monitoring stops
 // reporting a line after its first hit, which breaks per-test contexts.
-const pyCovPlugin = `import json, os, pickle, sys, threading, warnings
+const pyCovPlugin = `import json, os, pickle, re, sys, threading, warnings
 
 _target = os.path.realpath(os.environ["CULL_COV_TARGET"])
+_root = os.path.realpath(os.environ["CULL_COV_ROOT"])
 _out = os.environ["CULL_COV_OUT"]
 _err = None
 _cov = None
@@ -53,27 +56,111 @@ _tracer = None
 _ttracer = None
 _phase = None
 _spawned = set()
+_ignored = set()  # native programs started outside a call phase
 _own = False  # the plugin itself is forking
 _child = False  # this process is a test's forked child
 _ctxs = {}  # context -> lines, from the children
 _n = 0
 _SPAWN = frozenset(["subprocess.Popen", "os.fork", "os.forkpty", "os.posix_spawn", "os.posix_spawnp", "os.system", "os.startfile"])
+# Interpreters, shells and launchers: native, but they run anything.
+_LAUNCHERS = frozenset(
+    "python pypy node deno bun go sh bash zsh dash fish env make uv uvx poetry pipx pip tox nox npm npx pnpm yarn pytest git".split()
+)
 
 
-def _on_spawn(event):
+def _find(name, path, cwd):
+    """The executable file a spawn of name runs: name itself if it has a
+    directory part (or path is None), else the first executable
+    candidate in the path list (subprocess's search); relative ones
+    against cwd. None if there is none."""
+    if path is None or os.path.dirname(name):
+        cands = [name]
+    else:
+        cands = [os.path.join(d, name) for d in path]
+    for c in cands:
+        c = os.path.join(cwd, c)
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
+def _native(p):
+    """Whether file p is a native executable by its magic bytes: Mach-O
+    (thin or fat), ELF or PE. A #! script is not."""
+    with open(p, "rb") as fh:
+        h = fh.read(8)
+    if h[:4] in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe", b"\x7fELF"):
+        return True
+    if len(h) == 8 and h[:4] in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"):
+        return int.from_bytes(h[4:], "big") < 45  # fat Mach-O arch count, not a Java class version
+    if len(h) == 8 and h[:4] in (b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+        return int.from_bytes(h[4:], "little") < 45
+    return h[:2] == b"MZ"
+
+
+def _launcher(name):
+    b = name.lower()
+    if b.endswith(".exe"):
+        b = b[:-4]
+    return re.sub(r"[-_]?[0-9][0-9.]*t?$", "", b) in _LAUNCHERS
+
+
+def _benign(event, args):
+    """The real path of the program a spawn outside a call phase runs, if
+    it can't run the project's Python: a native executable (by magic
+    bytes) outside the project root (symlinks resolved), not an
+    interpreter, shell or launcher. None if it may, or can't be told."""
+    try:
+        cwd = os.getcwd()
+        if event == "subprocess.Popen":
+            exe, _, pcwd, env = args
+            name = os.fsdecode(exe)
+            if pcwd is not None:
+                cwd = os.path.join(cwd, os.fsdecode(pcwd))
+            found = _find(name, os.get_exec_path(env), cwd)
+        elif event == "os.posix_spawn":
+            name = os.fsdecode(args[0])
+            found = _find(name, None, cwd)
+        elif event == "os.posix_spawnp":
+            # The C library searches this process's PATH; require the
+            # passed env's PATH (if any) to find the same file.
+            name = os.fsdecode(args[0])
+            env = args[2]
+            found = _find(name, os.get_exec_path(), cwd)
+            if env is not None and _find(name, os.get_exec_path(env), cwd) != found:
+                return None
+        else:
+            return None
+        if found is None:
+            return None
+        real = os.path.realpath(found)
+        if real == _root or real.startswith(os.path.join(_root, "")):
+            return None
+        if any(_launcher(os.path.basename(p)) for p in (name, found, real)):
+            return None
+        return real if _native(real) else None
+    except Exception:
+        return None
+
+
+def _on_spawn(event, args=None):
     global _err
     if _own:
         return
     if _phase is not None and _phase[1] == "call":
         _spawned.add(_phase[0])
     elif _err is None:
+        exe = _benign(event, args)
+        if exe is not None:
+            _ignored.add(exe)
+            return
         where = "collection" if _phase is None else _phase[0] + " " + _phase[1]
         _err = "a process was spawned outside a test's call phase (%s during %s)" % (event, where)
 
 
 def _audit(event, args):
     if event.startswith(("subprocess.", "os.")) and (event in _SPAWN or event.startswith(("os.exec", "os.spawn"))):
-        _on_spawn(event)
+        _on_spawn(event, args)
 
 
 sys.addaudithook(_audit)
@@ -208,6 +295,7 @@ def _run_child(item, res):
         "contexts": {c: sorted(ls) for c, ls in ctxs.items()},
         "tests": sorted(_tests),
         "spawned": sorted(_spawned),
+        "ignored": sorted(_ignored),
     }
     with open(res + ".tmp", "wb") as fh:
         try:
@@ -275,6 +363,7 @@ def pytest_runtest_protocol(item, nextitem):
             _ctxs.setdefault(c, set()).update(ls)
         _tests.update(d["tests"])
         _spawned.update(d["spawned"])
+        _ignored.update(d["ignored"])
         for r in d["reports"]:
             rep = item.config.hook.pytest_report_from_serializable(config=item.config, data=r)
             ihook.pytest_runtest_logreport(report=rep)
@@ -285,7 +374,7 @@ def pytest_runtest_protocol(item, nextitem):
 def pytest_unconfigure(config):
     if _child:
         return
-    out = {"error": _err, "contexts": {}, "stmts": [], "tests": sorted(_tests), "spawned": sorted(_spawned)}
+    out = {"error": _err, "contexts": {}, "stmts": [], "tests": sorted(_tests), "spawned": sorted(_spawned), "ignored": sorted(_ignored)}
     if _cov is not None:
         try:
             ctxs = _contexts()
@@ -306,6 +395,7 @@ type pyCovData struct {
 	Stmts    []int            `json:"stmts"`
 	Tests    []string         `json:"tests"`
 	Spawned  []string         `json:"spawned"`
+	Ignored  []string         `json:"ignored"`
 }
 
 // Cover measures per-test coverage of module with pyCovPlugin. A unit
@@ -343,7 +433,7 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "CULL_COV_TARGET="+target, "CULL_COV_OUT="+outPath)
+	env = append(env, "CULL_COV_TARGET="+target, "CULL_COV_OUT="+outPath, "CULL_COV_ROOT="+absDir)
 	junit := filepath.Join(tmp, "junit.xml")
 	argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "cull_cov_plugin", "--junitxml=" + junit}, sortedFiles(files)...)
 	res := runProcessEnv(ctx, dir, argv, env, timeout)
@@ -379,6 +469,7 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 	o := newOutcome()
 	readPyJUnit(dir, junit, index, &o)
 	cov.Passed = o.Passed
+	cov.Ignored = d.Ignored
 	return cov, nil
 }
 

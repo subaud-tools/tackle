@@ -19,8 +19,10 @@ import (
 // verdicts and rules are identical. With fallback non-empty, the
 // coverage run must log that the module fell back, with a reason
 // containing fallback; with it empty, the module must not fall back.
-func settleExpect(t *testing.T, root, fallback string) {
+// It returns the coverage run's stderr.
+func settleExpect(t *testing.T, root, fallback string) string {
 	t.Helper()
+	var covLog string
 	lastPath := filepath.Join(root, ".cull", "last.json")
 	last, err := os.ReadFile(lastPath)
 	if err != nil {
@@ -41,6 +43,7 @@ func settleExpect(t *testing.T, root, fallback string) {
 		}
 		if !noCov {
 			s := log.String()
+			covLog = s
 			fell := strings.Contains(s, "no per-test coverage")
 			switch {
 			case fallback == "" && fell:
@@ -61,6 +64,7 @@ func settleExpect(t *testing.T, root, fallback string) {
 	if len(got[0].Settled) == 0 {
 		t.Error("nothing settled")
 	}
+	return covLog
 }
 
 // pySettleRepo is a two-test Python repo (calc.py, test_calc.py) with

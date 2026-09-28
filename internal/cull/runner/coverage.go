@@ -22,6 +22,11 @@ type Coverage struct {
 	// that failed there (or wasn't reported) may have stopped recording
 	// early: its coverage can't be trusted.
 	Passed map[string]bool
+	// Ignored lists the programs started outside any test (a setup hook
+	// probing a bundled native tool) that coverage didn't count against
+	// selection: native executables outside the project that can't run
+	// its code.
+	Ignored []string
 }
 
 // Global reports whether [start, end) of the module runs for every test
