@@ -257,3 +257,67 @@ func Tidy(root, relpath string, before, src []byte) ([]byte, []string, error) {
 	}
 	return []byte(*result.Source), result.Removed, nil
 }
+
+// MutationSite is one candidate mutation the helper found: replace
+// src[Start:End] (UTF-8 byte offsets) with Replacement. Mirrors
+// mutate.Site's shape without importing the mutate package (which wraps
+// Sites instead, to avoid an import cycle).
+type MutationSite struct {
+	Start       int    `json:"start"`
+	End         int    `json:"end"`
+	Replacement string `json:"replacement"`
+	Desc        string `json:"desc"`
+}
+
+// sitesResult is the JSON the helper's --sites mode prints on stdout.
+type sitesResult struct {
+	Sites []MutationSite `json:"sites"`
+}
+
+// Sites returns the mutation sites the embedded helper finds in src, a
+// TypeScript file at relpath: it runs `node tsext.cjs --sites
+// <typescript-dir> <relpath>`, feeding src on stdin, and decodes its
+// {"sites":[...]} JSON reply. If node is not on PATH, or no typescript
+// package can be found ($CULL_TS or node_modules/typescript walking up
+// from root), Sites returns no sites and no error: a missing toolchain
+// makes the file unmeasurable, not a bug.
+func Sites(root, relpath string, src []byte) ([]MutationSite, error) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		return nil, nil
+	}
+
+	tsDir, ok := findTypescript(root)
+	if !ok {
+		return nil, nil
+	}
+
+	tmpDir, err := os.MkdirTemp("", "cull-tsext-sites-*")
+	if err != nil {
+		return nil, fmt.Errorf("extract/ts: temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		return nil, fmt.Errorf("extract/ts: chmod temp dir: %w", err)
+	}
+	helperPath := filepath.Join(tmpDir, "tsext.cjs")
+	if err := os.WriteFile(helperPath, helperSrc, 0o600); err != nil {
+		return nil, fmt.Errorf("extract/ts: write helper: %w", err)
+	}
+
+	cmd := exec.Command(nodePath, helperPath, "--sites", tsDir, filepath.ToSlash(relpath))
+	cmd.Env = extract.HelperEnv(defaultMaxContext)
+	cmd.Stdin = bytes.NewReader(src)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("extract/ts: run helper --sites: %w (stderr: %s)", err, stderr.String())
+	}
+
+	var result sitesResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return nil, fmt.Errorf("extract/ts: decode helper --sites output %q: %w", stdout.Bytes(), err)
+	}
+	return result.Sites, nil
+}

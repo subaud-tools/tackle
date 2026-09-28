@@ -22,6 +22,7 @@ import ast
 import io
 import json
 import os
+import re
 import sys
 import tokenize
 
@@ -257,6 +258,229 @@ def tidy_source(data, before=b""):
     return out_source, removed
 
 
+def line_starts(data):
+    """Byte offset of the start of each 1-indexed physical line in data."""
+    starts = [0]
+    for i, b in enumerate(data):
+        if b == 0x0A:  # '\n'
+            starts.append(i + 1)
+    return starts
+
+
+# --- Mutation sites (--sites mode) --------------------------------------
+#
+# ast.Compare/BoolOp/BinOp give no position for the operator token itself
+# (only their operands), so each operator's byte span is found by
+# searching the narrow byte range between the two operands it separates
+# for the exact text ast already told us must be there. UnaryOp(Not) and
+# Return are exceptions: their own node position is the keyword's own
+# position, so no search is needed. col_offset/end_col_offset are UTF-8
+# byte offsets (not character offsets) as of Python 3.8, so combined with
+# line_starts they give exact byte spans directly -- no separate
+# byte<->char conversion is needed here (unlike tokenize's positions,
+# which are character offsets, so tokenize is not used).
+
+_COMPARE_OPS = {
+    ast.Eq: ("==", "!="),
+    ast.NotEq: ("!=", "=="),
+    ast.Lt: ("<", ">="),
+    ast.GtE: (">=", "<"),
+    ast.Gt: (">", "<="),
+    ast.LtE: ("<=", ">"),
+    ast.Is: ("is", "is not"),
+    ast.IsNot: ("is not", "is"),
+    ast.In: ("in", "not in"),
+    ast.NotIn: ("not in", "in"),
+}
+
+_BOOL_OPS = {
+    ast.And: ("and", "or"),
+    ast.Or: ("or", "and"),
+}
+
+_BIN_OPS = {
+    ast.Add: ("+", "-"),
+    ast.Sub: ("-", "+"),
+    ast.Mult: ("*", "+"),
+}
+
+# Regex per operator symbol, used to find its exact byte span within the
+# narrow gap between the two operands ast says it separates. Word-based
+# operators use \b so e.g. "in" never matches inside a longer identifier;
+# the gap is narrow enough (and ast already told us which operator is
+# there) that there is never more than one candidate in it.
+_SYMBOL_RE = {
+    "==": re.compile(rb"=="),
+    "!=": re.compile(rb"!="),
+    "<": re.compile(rb"<"),
+    ">": re.compile(rb">"),
+    "<=": re.compile(rb"<="),
+    ">=": re.compile(rb">="),
+    "is": re.compile(rb"\bis\b"),
+    "is not": re.compile(rb"\bis\s+not\b"),
+    "in": re.compile(rb"\bin\b"),
+    "not in": re.compile(rb"\bnot\s+in\b"),
+    "and": re.compile(rb"\band\b"),
+    "or": re.compile(rb"\bor\b"),
+    "+": re.compile(rb"\+"),
+    "-": re.compile(rb"-"),
+    "*": re.compile(rb"\*"),
+}
+
+
+def _docstring_and_fstring_constants(tree):
+    """id()s of ast.Constant nodes that must never become a site: a module/
+    class/function's own docstring (its body's first statement, if a bare
+    string expression), and the literal-text parts of an f-string (nested
+    inside its ast.JoinedStr.values) -- CPython's positions for those parts
+    are unreliable across versions, and they're never plain string
+    constants a reader would think of as "a string literal" anyway.
+    """
+    skip = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                skip.add(id(body[0].value))
+        elif isinstance(node, ast.JoinedStr):
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    skip.add(id(v))
+    return skip
+
+
+def _bump_int_literal(text):
+    """text's value plus one, formatted with the same base prefix as text."""
+    try:
+        n = int(text, 0) + 1
+    except ValueError:
+        return None
+    lower = text.lower()
+    if lower.startswith("0x"):
+        return "0x" + format(n, "x")
+    if lower.startswith("0o"):
+        return "0o" + format(n, "o")
+    if lower.startswith("0b"):
+        return "0b" + format(n, "b")
+    return str(n)
+
+
+def _bump_float_literal(text):
+    """text's value plus one."""
+    try:
+        v = float(text)
+    except ValueError:
+        return None
+    return repr(v + 1)
+
+
+def _mutate_string_literal(text):
+    """text (a Python string literal's source text, including any prefix
+    and its quotes) with "_mut" inserted just before the closing quote."""
+    for triple in ('"""', "'''"):
+        if len(text) >= 6 and text.endswith(triple):
+            return text[: -len(triple)] + "_mut" + triple
+    if len(text) >= 2 and text[-1] in ('"', "'"):
+        return text[:-1] + "_mut" + text[-1]
+    return None
+
+
+def sites_for(data):
+    """Mutation sites in data (one Python source file's raw bytes): a list
+    of {"start","end","replacement","desc"} dicts with UTF-8 byte offsets,
+    sorted by start. Returns [] for a file that fails to parse or isn't
+    valid UTF-8 -- an unparsable file is unmeasurable, not an error.
+    """
+    try:
+        src = data.decode("utf-8")
+        tree = ast.parse(src)
+    except Exception:
+        return []
+
+    starts = line_starts(data)
+    skip_const = _docstring_and_fstring_constants(tree)
+    sites = []
+
+    def pos(lineno, col_offset):
+        return starts[lineno - 1] + col_offset
+
+    def add(start, end, replacement, desc):
+        line = data[:start].count(b"\n") + 1
+        sites.append({"start": start, "end": end, "replacement": replacement, "desc": f"line {line}: {desc}"})
+
+    def find_op(lo, hi, symbol):
+        m = _SYMBOL_RE[symbol].search(data, lo, hi)
+        return (m.start(), m.end()) if m else None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            prev_end = (node.left.end_lineno, node.left.end_col_offset)
+            for op, comparator in zip(node.ops, node.comparators):
+                spec = _COMPARE_OPS.get(type(op))
+                if spec:
+                    sym, repl = spec
+                    found = find_op(pos(*prev_end), pos(comparator.lineno, comparator.col_offset), sym)
+                    if found:
+                        add(found[0], found[1], repl, f"flip {sym}")
+                prev_end = (comparator.end_lineno, comparator.end_col_offset)
+        elif isinstance(node, ast.BoolOp):
+            spec = _BOOL_OPS.get(type(node.op))
+            if spec:
+                sym, repl = spec
+                for a, b in zip(node.values, node.values[1:]):
+                    found = find_op(pos(a.end_lineno, a.end_col_offset), pos(b.lineno, b.col_offset), sym)
+                    if found:
+                        add(found[0], found[1], repl, f"flip {sym}")
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            start = pos(node.lineno, node.col_offset)
+            add(start, start + 3, "", "drop not")  # "not" is always 3 bytes
+        elif isinstance(node, ast.BinOp):
+            spec = _BIN_OPS.get(type(node.op))
+            if spec:
+                sym, repl = spec
+                found = find_op(
+                    pos(node.left.end_lineno, node.left.end_col_offset),
+                    pos(node.right.lineno, node.right.col_offset),
+                    sym,
+                )
+                if found:
+                    add(found[0], found[1], repl, f"flip {sym}")
+        elif isinstance(node, ast.Constant) and id(node) not in skip_const:
+            start = pos(node.lineno, node.col_offset)
+            end = pos(node.end_lineno, node.end_col_offset)
+            v = node.value
+            if isinstance(v, bool):
+                add(start, end, "False" if v else "True", f"flip {v}")
+            elif isinstance(v, int):
+                bumped = _bump_int_literal(data[start:end].decode("utf-8"))
+                if bumped is not None:
+                    add(start, end, bumped, "+1 int")
+            elif isinstance(v, float):
+                bumped = _bump_float_literal(data[start:end].decode("utf-8"))
+                if bumped is not None:
+                    add(start, end, bumped, "+1 float")
+            elif isinstance(v, str):
+                mutated = _mutate_string_literal(data[start:end].decode("utf-8"))
+                if mutated is not None:
+                    add(start, end, mutated, "mutate string")
+        elif isinstance(node, ast.Return) and node.value is not None:
+            if not (isinstance(node.value, ast.Constant) and node.value.value is None):
+                add(
+                    pos(node.lineno, node.col_offset),
+                    pos(node.value.end_lineno, node.value.end_col_offset),
+                    "return None",
+                    "return None",
+                )
+
+    sites.sort(key=lambda s: s["start"])
+    return sites
+
+
 if len(sys.argv) > 1 and sys.argv[1] == "--tidy":
     data = sys.stdin.buffer.read()
     before = b""
@@ -267,20 +491,16 @@ if len(sys.argv) > 1 and sys.argv[1] == "--tidy":
     print(json.dumps({"source": new_source, "removed": removed}))
     sys.exit(0)
 
+if len(sys.argv) > 1 and sys.argv[1] == "--sites":
+    data = sys.stdin.buffer.read()
+    print(json.dumps({"sites": sites_for(data)}))
+    sys.exit(0)
+
 root = sys.argv[1]
 relpaths = sys.argv[2:]
 src_root = os.path.join(root, "src") if os.path.isdir(os.path.join(root, "src")) else root
 
 id_count = {}
-
-
-def line_starts(data):
-    """Byte offset of the start of each 1-indexed physical line in data."""
-    starts = [0]
-    for i, b in enumerate(data):
-        if b == 0x0A:  # '\n'
-            starts.append(i + 1)
-    return starts
 
 
 def node_lines(node):

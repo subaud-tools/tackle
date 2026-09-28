@@ -528,6 +528,157 @@ function tidySource(src, relpath, before) {
   return { source: outSource, removed };
 }
 
+// --- Mutation sites (--sites mode) --------------------------------------
+//
+// Unlike Python's ast, the TS compiler AST keeps real token nodes for
+// binary/unary operators (node.operatorToken, node.getStart() for a
+// prefix operator) and exact getStart()/getEnd() spans for every literal
+// and statement, so no separate token search is needed: every position
+// below comes straight from a node's own span, converted from UTF-16 code
+// units to UTF-8 bytes via byteAt.
+
+// BINARY_FLIP maps a BinaryExpression operator token kind to [replacement,
+// description] for every comparison/logical/arithmetic operator mutated.
+function binaryFlip() {
+  const k = ts.SyntaxKind;
+  return new Map([
+    [k.EqualsEqualsToken, ["!=", "flip =="]],
+    [k.ExclamationEqualsToken, ["==", "flip !="]],
+    [k.EqualsEqualsEqualsToken, ["!==", "flip ==="]],
+    [k.ExclamationEqualsEqualsToken, ["===", "flip !=="]],
+    [k.LessThanToken, [">=", "flip <"]],
+    [k.GreaterThanEqualsToken, ["<", "flip >="]],
+    [k.GreaterThanToken, ["<=", "flip >"]],
+    [k.LessThanEqualsToken, [">", "flip <="]],
+    [k.AmpersandAmpersandToken, ["||", "flip &&"]],
+    [k.BarBarToken, ["&&", "flip ||"]],
+    [k.PlusToken, ["-", "flip +"]],
+    [k.MinusToken, ["+", "flip -"]],
+    [k.AsteriskToken, ["+", "flip *"]],
+  ]);
+}
+
+// bumpNumericLiteral returns text's value plus one, formatted with the
+// same base prefix as text, plus "int" or "float" depending on whether
+// text has a fractional/exponent part.
+function bumpNumericLiteral(text) {
+  const stripped = text.replace(/_/g, "");
+  const lower = stripped.toLowerCase();
+  if (lower.startsWith("0x")) return { text: "0x" + (BigInt(stripped) + 1n).toString(16), kind: "int" };
+  if (lower.startsWith("0o")) return { text: "0o" + (BigInt(stripped) + 1n).toString(8), kind: "int" };
+  if (lower.startsWith("0b")) return { text: "0b" + (BigInt(stripped) + 1n).toString(2), kind: "int" };
+  if (/[.eE]/.test(stripped)) return { text: String(parseFloat(stripped) + 1), kind: "float" };
+  return { text: (BigInt(stripped) + 1n).toString(10), kind: "int" };
+}
+
+// mutateStringLiteralText inserts "_mut" just before the closing
+// quote/backtick of text (a string/template literal's full source text,
+// including its delimiters), or returns null if text is too short to have
+// one.
+function mutateStringLiteralText(text) {
+  if (text.length < 2) return null;
+  const quote = text[text.length - 1];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return null;
+  return text.slice(0, -1) + "_mut" + quote;
+}
+
+// isSkippedStringLiteral reports whether node is a string literal that
+// must never be mutated because it names something rather than holding
+// data: an import/export module specifier, the sole argument of a dynamic
+// import(...) or require(...) call, or a module/namespace declaration's
+// name.
+function isSkippedStringLiteral(node) {
+  const p = node.parent;
+  if (!p) return false;
+  if ((ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) && p.moduleSpecifier === node) return true;
+  if (ts.isCallExpression(p) && p.arguments[0] === node) {
+    if (p.expression.kind === ts.SyntaxKind.ImportKeyword) return true;
+    if (ts.isIdentifier(p.expression) && p.expression.text === "require") return true;
+  }
+  if (ts.isModuleDeclaration(p) && p.name === node) return true;
+  return false;
+}
+
+// sitesFor returns the mutation sites found in src (one TypeScript file's
+// full text at relpath, used only to pick .ts vs .tsx parsing), with
+// UTF-8 byte offsets. Returns [] for a file that fails to parse: an
+// unparsable file is unmeasurable, not an error.
+function sitesFor(relpath, src) {
+  let sf;
+  try {
+    sf = ts.createSourceFile(relpath || "input.ts", src, ts.ScriptTarget.Latest, true, scriptKindFor(relpath || ""));
+  } catch (e) {
+    return [];
+  }
+  if (sf.parseDiagnostics && sf.parseDiagnostics.length > 0) return [];
+
+  const flips = binaryFlip();
+  const byteAt = utf16ToByteMap(src);
+  const sites = [];
+  const lineOf = (pos16) => sf.getLineAndCharacterOfPosition(pos16).line + 1;
+  const add = (start16, end16, replacement, desc) => {
+    sites.push({
+      start: byteAt[start16],
+      end: byteAt[end16],
+      replacement,
+      desc: `line ${lineOf(start16)}: ${desc}`,
+    });
+  };
+
+  (function walk(node) {
+    if (ts.isBinaryExpression(node)) {
+      const flip = flips.get(node.operatorToken.kind);
+      if (flip) {
+        const [repl, desc] = flip;
+        add(node.operatorToken.getStart(sf), node.operatorToken.getEnd(), repl, desc);
+      }
+    } else if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+      const start = node.getStart(sf);
+      add(start, start + 1, "", "drop !");
+    } else if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) {
+      const isTrue = node.kind === ts.SyntaxKind.TrueKeyword;
+      add(node.getStart(sf), node.getEnd(), isTrue ? "false" : "true", `flip ${isTrue ? "true" : "false"}`);
+    } else if (ts.isNumericLiteral(node)) {
+      const text = node.getText(sf);
+      const bumped = bumpNumericLiteral(text);
+      add(node.getStart(sf), node.getEnd(), bumped.text, `+1 ${bumped.kind}`);
+    } else if (
+      (ts.isStringLiteral(node) || node.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) &&
+      !isSkippedStringLiteral(node)
+    ) {
+      const mutated = mutateStringLiteralText(node.getText(sf));
+      if (mutated !== null) add(node.getStart(sf), node.getEnd(), mutated, "mutate string");
+    } else if (ts.isReturnStatement(node) && node.expression) {
+      const isUndefined = ts.isIdentifier(node.expression) && node.expression.text === "undefined";
+      if (!isUndefined) {
+        add(node.getStart(sf), node.expression.getEnd(), "return undefined", "return undefined");
+      }
+    }
+    ts.forEachChild(node, walk);
+  })(sf);
+
+  sites.sort((a, b) => a.start - b.start);
+  return sites;
+}
+
+function sitesMain(args) {
+  const [tsDir, relpath] = args;
+  ts = require(tsDir);
+
+  const chunks = [];
+  process.stdin.on("data", (c) => chunks.push(c));
+  process.stdin.on("end", () => {
+    const buf = Buffer.concat(chunks);
+    const src = buf.toString("utf8");
+    // Not valid UTF-8: refuse (no sites), same convention as --tidy.
+    if (!Buffer.from(src, "utf8").equals(buf)) {
+      console.log(JSON.stringify({ sites: [] }));
+      return;
+    }
+    console.log(JSON.stringify({ sites: sitesFor(relpath, src) }));
+  });
+}
+
 function tidyMain(args) {
   const [tsDir, relpath, beforePath] = args;
   ts = require(tsDir);
@@ -556,6 +707,8 @@ function tidyMain(args) {
 const cliArgs = process.argv.slice(2);
 if (cliArgs[0] === "--tidy") {
   tidyMain(cliArgs.slice(1));
+} else if (cliArgs[0] === "--sites") {
+  sitesMain(cliArgs.slice(1));
 } else {
   extractMain(cliArgs);
 }

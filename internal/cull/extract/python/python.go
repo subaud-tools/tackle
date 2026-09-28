@@ -165,6 +165,66 @@ type tidyResult struct {
 	Removed []string `json:"removed"`
 }
 
+// MutationSite is one candidate mutation the helper found: replace
+// src[Start:End] (UTF-8 byte offsets) with Replacement. Mirrors
+// mutate.Site's shape without importing the mutate package (which wraps
+// Sites instead, to avoid an import cycle).
+type MutationSite struct {
+	Start       int    `json:"start"`
+	End         int    `json:"end"`
+	Replacement string `json:"replacement"`
+	Desc        string `json:"desc"`
+}
+
+// sitesResult is the JSON the helper's --sites mode prints on stdout.
+type sitesResult struct {
+	Sites []MutationSite `json:"sites"`
+}
+
+// Sites returns the mutation sites the embedded helper finds in src, a
+// Python file at relpath: it runs `python3 pyext.py --sites <relpath>`,
+// feeding src on stdin, and decodes its {"sites":[...]} JSON reply. root
+// is accepted for parity with the ts package (which needs it to locate
+// the typescript package) but isn't otherwise used. If python3 is not on
+// PATH, Sites returns no sites and no error: a missing interpreter makes
+// the file unmeasurable, not a bug.
+func Sites(root, relpath string, src []byte) ([]MutationSite, error) {
+	_ = root
+	pyPath, err := exec.LookPath("python3")
+	if err != nil {
+		return nil, nil
+	}
+
+	tmpDir, err := os.MkdirTemp("", "cull-pyext-sites-*")
+	if err != nil {
+		return nil, fmt.Errorf("extract/python: temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		return nil, fmt.Errorf("extract/python: chmod temp dir: %w", err)
+	}
+	helperPath := filepath.Join(tmpDir, "pyext.py")
+	if err := os.WriteFile(helperPath, helperSrc, 0o600); err != nil {
+		return nil, fmt.Errorf("extract/python: write helper: %w", err)
+	}
+
+	cmd := exec.Command(pyPath, helperPath, "--sites", filepath.ToSlash(relpath))
+	cmd.Env = helperEnvFunc(defaultMaxContext)
+	cmd.Stdin = bytes.NewReader(src)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("extract/python: run helper --sites: %w (stderr: %s)", err, stderr.String())
+	}
+
+	var result sitesResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return nil, fmt.Errorf("extract/python: decode helper --sites output %q: %w", stdout.Bytes(), err)
+	}
+	return result.Sites, nil
+}
+
 // Tidy removes now-unused imports from a Python test file's source: it
 // runs the embedded helper as `python3 pyext.py --tidy --before <file>`,
 // feeding src on stdin, and decodes its {"source":...,"removed":[...]}

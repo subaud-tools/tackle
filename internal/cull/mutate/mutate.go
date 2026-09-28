@@ -78,6 +78,10 @@ func For(lang string) Mutator {
 	switch lang {
 	case "go":
 		return goMutator{}
+	case "python":
+		return pythonMutator{}
+	case "typescript":
+		return tsMutator{}
 	default:
 		return nil
 	}
