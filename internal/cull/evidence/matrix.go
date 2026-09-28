@@ -526,30 +526,10 @@ func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duratio
 
 // combinedBaseline runs every group twice unmutated in sb.
 func (p *modPlan) combinedBaseline(ctx context.Context, sb Sandbox, timeout time.Duration) {
-	p.ok = true
 	p.failed = map[string]bool{}
-	passes := map[string]int{}
-	for run := 0; run < 2; run++ {
-		start := time.Now()
-		for _, g := range p.groups {
-			p.clearBytecode(sb)
-			o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
-			if badRun(o) != "" {
-				p.ok = false
-			}
-			if run == 0 {
-				p.unmapped += o.Unmapped
-			}
-			for id := range o.Passed {
-				passes[id]++
-			}
-			for id := range o.Failed {
-				p.failed[id] = true
-			}
-		}
-		p.slowest = max(p.slowest, time.Since(start))
-	}
 	p.measured = map[string]bool{}
+	var passes map[string]int
+	p.ok, passes, p.slowest, p.unmapped = p.runGroups(ctx, sb, timeout)
 	if !p.ok {
 		return
 	}
@@ -560,22 +540,53 @@ func (p *modPlan) combinedBaseline(ctx context.Context, sb Sandbox, timeout time
 	}
 }
 
+// runGroups runs every group twice unmutated in sb, adding every failure
+// to p.failed. ok is false when a run was unusable. passes counts each
+// test's passing runs; slowest is the slower run (summed over groups);
+// unmapped is the first run's unmapped results.
+func (p *modPlan) runGroups(ctx context.Context, sb Sandbox, timeout time.Duration) (ok bool, passes map[string]int, slowest time.Duration, unmapped int) {
+	ok = true
+	passes = map[string]int{}
+	for run := 0; run < 2; run++ {
+		start := time.Now()
+		for _, g := range p.groups {
+			p.clearBytecode(sb)
+			o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
+			if badRun(o) != "" {
+				ok = false
+			}
+			if run == 0 {
+				unmapped += o.Unmapped
+			}
+			for id := range o.Passed {
+				passes[id]++
+			}
+			for id := range o.Failed {
+				p.failed[id] = true
+			}
+		}
+		slowest = max(slowest, time.Since(start))
+	}
+	return ok, passes, slowest, unmapped
+}
+
 // isolate runs each test file alone, twice, unmutated in sb, and drops
 // (into p.dropped) the files with an unusable run or a test that passed
 // one run and failed the other. The kept files form the module's groups
-// and their two runs its baseline; p.ok is false when none is kept.
-// Failures seen in the combined baseline stay in p.failed.
+// and are then run together twice more (see runGroups): a test is
+// measured only if it passed all four runs. p.ok is false when no file is
+// kept or a together run is unusable. Failures seen in any baseline run
+// stay in p.failed.
 func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration) {
 	passes := map[string]int{}
 	var dur [2]time.Duration
-	p.unmapped = 0
 	var groups []*group
 	for _, g := range p.groups {
 		kept := &group{r: g.r, index: map[string]string{}}
 		for _, f := range g.files {
 			idx := nativeIndex(p.mod.Lang, f, p.mod.Tests)
 			fp, ff := map[string]int{}, map[string]bool{}
-			bad, unmapped := false, 0
+			bad := false
 			for run := 0; run < 2 && !bad; run++ {
 				p.clearBytecode(sb)
 				start := time.Now()
@@ -583,9 +594,6 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 				dur[run] += time.Since(start)
 				if badRun(o) != "" {
 					bad = true
-				}
-				if run == 0 {
-					unmapped = o.Unmapped
 				}
 				for id := range o.Passed {
 					fp[id]++
@@ -611,7 +619,6 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 			}
 			kept.files = append(kept.files, f)
 			maps.Copy(kept.index, idx)
-			p.unmapped += unmapped
 			for id, n := range fp {
 				passes[id] += n
 			}
@@ -631,8 +638,18 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 	if !p.ok {
 		return
 	}
+	// The kept files run together in every canary and mutant run: run
+	// them together twice unmutated too, so a failure seen only in that
+	// combination marks its test flaky instead of killing every mutant.
+	ok, together, slowest, unmapped := p.runGroups(ctx, sb, timeout)
+	p.slowest = max(p.slowest, slowest)
+	p.unmapped = unmapped
+	if !ok {
+		p.ok = false
+		return
+	}
 	for id, n := range passes {
-		if n == 2 && !p.failed[id] {
+		if n == 2 && together[id] == 2 && !p.failed[id] {
 			p.measured[id] = true
 		}
 	}
