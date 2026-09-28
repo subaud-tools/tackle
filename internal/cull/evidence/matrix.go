@@ -143,6 +143,10 @@ func (p *modPlan) runTimeout(floor time.Duration) time.Duration {
 	return max(floor, 3*p.slowest)
 }
 
+// preparedHook, if set (tests only), runs right after the sandboxes are
+// copied.
+var preparedHook func()
+
 // plantHook, if set (tests only), is called with the mutated file's path
 // right after each mutant is planted.
 var plantHook func(file string)
@@ -201,9 +205,12 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	if err != nil {
 		return Matrix{}, err
 	}
+	if preparedHook != nil {
+		preparedHook()
+	}
 	var cache *resultCache
 	if !opt.NoCache {
-		cache = newResultCache(abs, base, copied, opt)
+		cache = newResultCache(abs, sbs[0].Dir, base, copied, opt)
 	}
 
 	var plans []*modPlan

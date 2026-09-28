@@ -1,11 +1,13 @@
 package evidence
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -63,11 +65,13 @@ type cacheKey struct {
 	NoCoverage                  bool
 }
 
-func newResultCache(root, base string, copied []string, opt Options) *resultCache {
-	return &resultCache{dir: filepath.Join(base, "cache"), root: root, files: fingerprint(root, copied), stamp: buildStamp(root), opt: opt}
+// newResultCache fingerprints the copies in w0 (the first sandbox, what
+// the runs see) of the copied files of the project at root.
+func newResultCache(root, w0, base string, copied []string, opt Options) *resultCache {
+	return &resultCache{dir: filepath.Join(base, "cache"), root: root, files: fingerprint(w0, copied), stamp: buildStamp(root), opt: opt}
 }
 
-// fingerprint hashes every copied project file, except .cull/ (evidence's
+// fingerprint hashes every copied project file under root, except .cull/ (evidence's
 // own output) and Python bytecode.
 func fingerprint(root string, copied []string) map[string]string {
 	out := map[string]string{}
@@ -104,15 +108,30 @@ var exeHash = sync.OnceValue(func() string {
 	return hex.EncodeToString(sum[:])
 })
 
-// buildStamp is cull's version and build, and the environment that picks
-// the test toolchains.
+// buildStamp is cull's version and build, the environment that picks the
+// test toolchains, and their version output.
 func buildStamp(root string) []string {
+	py := verify.PythonInterpreter(root)
 	s := []string{version.Number(), version.Commit(), exeHash(), runtime.GOOS + "/" + runtime.GOARCH,
-		"python=" + verify.PythonInterpreter(root)}
+		"python=" + py, "go-version=" + toolVersion("go", "version"), "node-version=" + toolVersion("node", "--version"),
+		"python-version=" + toolVersion(py, "--version")}
 	for _, k := range []string{"PATH", "VIRTUAL_ENV", "PYTHONPATH", "GOFLAGS", "GOTOOLCHAIN", "CGO_ENABLED", "NODE_OPTIONS", "CULL_TS"} {
 		s = append(s, k+"="+os.Getenv(k))
 	}
 	return s
+}
+
+// toolVersion is argv's trimmed output, or why it failed.
+func toolVersion(argv ...string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = verify.FilteredEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "unavailable: " + err.Error()
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // keyFor is p's cache key: the sha256 of its module's bytes, the module's
