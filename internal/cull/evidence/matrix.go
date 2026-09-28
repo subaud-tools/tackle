@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -42,11 +43,14 @@ const perCallee = 15
 // place. KilledBy is nil when the mutant is excluded (its run timed out,
 // failed to build/collect, or couldn't start): it tells nothing about
 // individual tests. A non-nil empty KilledBy means no measured test caught
-// it.
+// it. Uncovered marks a mutant never run because coverage showed no
+// measured test executes its code: KilledBy is empty (non-nil), and it
+// counts as planted for no test (see measure).
 type Mutant struct {
-	Module   string      `json:"module"`
-	Site     mutate.Site `json:"site"`
-	KilledBy []string    `json:"killed_by"`
+	Module    string      `json:"module"`
+	Site      mutate.Site `json:"site"`
+	KilledBy  []string    `json:"killed_by"`
+	Uncovered bool        `json:"uncovered,omitempty"`
 }
 
 // Matrix is the kill matrix over every module run. Baseline holds the
@@ -89,11 +93,13 @@ type Matrix struct {
 // BaselineTimeout; canary and mutant runs get the larger of RunTimeout and
 // 3× the module's slower baseline run.
 // Evidence always runs the runner package's detected per-test command,
-// never a project's test_command override.
+// never a project's test_command override. NoCoverage turns off
+// coverage-guided test selection: every mutant runs every test file.
 type Options struct {
 	Workers, MaxMutants         int
 	RunTimeout, BaselineTimeout time.Duration
 	Stderr                      io.Writer
+	NoCoverage                  bool
 }
 
 // group is a set of test files run together by one Runner, with an index
@@ -102,6 +108,7 @@ type group struct {
 	r     runner.Runner
 	files []string
 	index map[string]string
+	cov   *runner.Coverage // per-test coverage of the module (nil: none)
 }
 
 // modPlan is one module ready to measure.
@@ -120,6 +127,9 @@ type modPlan struct {
 	unloaded []string        // measured tests that passed a valid canary run
 	unmapped int
 	slowest  time.Duration // the slower baseline run (all groups)
+
+	selective bool     // every group has coverage: mutants run only covering tests
+	funcs     [][2]int // function and method spans (sites outside run every test)
 }
 
 // runTimeout is the timeout for p's canary and mutant runs: the larger of
@@ -140,9 +150,14 @@ var idPrefix = map[string]string{"go": "go:", "python": "py:", "typescript": "ts
 // their kill matrix. Per module: the test files run twice unmutated (the
 // baseline); then a canary (see canarySource) is planted and the tests run
 // once, and a module whose canary no measured test notices is shadowed
-// (see Matrix.Shadowed); then each sampled mutant (see targetSites; for a module
-// without Callees, at most MaxMutants seeded by the module's bytes) is written into a free sandbox, the tests are run, and
-// the module's original bytes are restored before the sandbox is reused.
+// (see Matrix.Shadowed); then per-test coverage of the module is measured
+// (see modPlan.coverage; the full test set, unmutated); then each sampled
+// mutant (see targetSites; for a module without Callees, at most
+// MaxMutants seeded by the module's bytes) is written into a free
+// sandbox, the tests whose coverage includes it are run (every test for
+// module-level code, or when coverage is unavailable; none: the mutant is
+// Uncovered and not run), and the module's original bytes are restored
+// before the sandbox is reused.
 // The working tree is never written. Run holds an exclusive lock on the
 // project's sandbox root (<base>/.lock) throughout; a concurrent Run or
 // Prepare on the same project fails fast with an error naming it.
@@ -227,6 +242,12 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			switch st {
 			case canaryLoaded:
 				logf("canary %s: loaded (%s)", p.mod.Rel, why)
+				if !opt.NoCoverage {
+					p.coverage(ctx, sb, opt.BaselineTimeout, logf)
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
 			case canaryShadowed:
 				p.shadowed = true
 				logf("canary %s: not loaded; %s", p.mod.Rel, reasonShadowed)
@@ -256,6 +277,11 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			idx := len(mutants)
 			mutants = append(mutants, Mutant{Module: p.mod.Rel, Site: s})
 			n := i + 1
+			if p.selective && p.uncovered(s) {
+				mutants[idx].KilledBy, mutants[idx].Uncovered = []string{}, true
+				logf("%s mutant %d/%d (%s): uncovered (no measured test runs it); not run", p.mod.Rel, n, len(p.sites), s.Desc)
+				continue
+			}
 			jobs = append(jobs, func(sb Sandbox) error {
 				killed, why, err := p.mutant(ctx, sb, s, p.runTimeout(opt.RunTimeout))
 				if err != nil {
@@ -819,12 +845,21 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
+		units, all := p.selection(g, s)
+		if !all && len(units) == 0 {
+			continue // no test of this group runs the mutated code
+		}
 		if ctx.Err() != nil {
 			why = "cancelled"
 			break
 		}
 		p.clearBytecode(sb)
-		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
+		var o runner.Outcome
+		if all {
+			o = g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
+		} else {
+			o = g.r.(runner.Coverer).RunUnits(ctx, sb.Dir, units, g.index, timeout)
+		}
 		if why = badRun(o); why != "" {
 			break
 		}
@@ -842,6 +877,116 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 	}
 	sort.Strings(killed)
 	return killed, "", nil
+}
+
+// coverage measures, per group, what each test executes of the module
+// (see runner.Coverer), after the canary, with the final measured set.
+// If any group holding measured tests can't be measured, or a measured
+// test is missing from its data, it logs why once and leaves the module
+// running every test file on every mutant (p.selective false).
+func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duration, logf func(string, ...any)) {
+	fallback := func(why string) {
+		for _, g := range p.groups {
+			g.cov = nil
+		}
+		logf("%s: no per-test coverage (%s); running every test file per mutant", p.mod.Rel, why)
+	}
+	for _, g := range p.groups {
+		if !holdsMeasured(g, p.measured) {
+			continue
+		}
+		c, ok := g.r.(runner.Coverer)
+		if !ok {
+			fallback("the test runner can't measure it")
+			return
+		}
+		files := map[string]map[string]string{}
+		for _, f := range g.files {
+			files[f] = nativeIndex(p.mod.Lang, f, p.mod.Tests)
+		}
+		p.clearBytecode(sb)
+		cov, err := c.Cover(ctx, sb.Dir, files, p.mod.Rel, timeout)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			fallback(err.Error())
+			return
+		}
+		have := map[string]bool{}
+		for _, u := range cov.Units {
+			for _, id := range u.IDs {
+				have[id] = true
+			}
+		}
+		for _, id := range sortedKeys(p.measured) {
+			if slices.Contains(sortedValues(g.index), id) && !have[id] {
+				fallback("no coverage data for " + id)
+				return
+			}
+		}
+		g.cov = cov
+	}
+	defs, err := mutate.Defs(p.mod.Lang, sb.Dir, p.mod.Rel, p.src)
+	if err != nil {
+		fallback("definitions unavailable: " + err.Error())
+		return
+	}
+	for _, d := range defs {
+		if d.Kind == "function" || d.Kind == "method" {
+			p.funcs = append(p.funcs, [2]int{d.Start, d.End})
+		}
+	}
+	p.selective = true
+}
+
+// selection is what a mutant at s runs of g: all (every test file: the
+// module isn't selective, s is outside every function or method, or its
+// code runs for every test), else the units whose coverage includes it
+// (none: skip g).
+func (p *modPlan) selection(g *group, s mutate.Site) (units []runner.Unit, all bool) {
+	if !p.selective || g.cov == nil || !p.inFunc(s) || g.cov.Global(s.Start, s.End) {
+		return nil, true
+	}
+	for _, u := range g.cov.Units {
+		if u.Covers(s.Start, s.End) && slices.ContainsFunc(u.IDs, func(id string) bool { return p.measured[id] }) {
+			units = append(units, u)
+		}
+	}
+	return units, false
+}
+
+// uncovered reports whether no group holding measured tests would run
+// anything for a mutant at s.
+func (p *modPlan) uncovered(s mutate.Site) bool {
+	for _, g := range p.groups {
+		if !holdsMeasured(g, p.measured) {
+			continue
+		}
+		if units, all := p.selection(g, s); all || len(units) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// inFunc reports whether s lies inside a function or method.
+func (p *modPlan) inFunc(s mutate.Site) bool {
+	for _, f := range p.funcs {
+		if s.Start >= f[0] && s.End <= f[1] {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedValues(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // canaryStatus is what a canary run showed.

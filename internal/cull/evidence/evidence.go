@@ -59,6 +59,7 @@ const (
 	reasonDupName    = "no runner-reportable name (duplicate test name)"
 	reasonNotFound   = "not found when the suite was extracted again"
 	reasonDropped    = "their test file did not run cleanly"
+	reasonUncovered  = "no planted bug was in code a measured test runs"
 )
 
 // extractContext is large enough that extraction never drops a callee for
@@ -75,8 +76,9 @@ var afterMatrixHook func()
 // cull check, or if a target file, a mutated module or one of its test
 // files changed while the matrix ran. It mutates only non-test source
 // files the targets call (their extracted callees), only inside the
-// definitions they call (at most 15 mutants each), runs every test in
-// those modules' test files against each mutant, and settles each target:
+// definitions they call (at most 15 mutants each), runs the tests in
+// those modules' test files whose coverage includes each mutant (see
+// RunMatrix), and settles each target:
 // sole guard of any bug → keep; measured with no sole guard → cut;
 // unmeasured → stays review (rule evidence_unmeasured). A target is
 // unmeasured if any module it exercises is unmeasured for it (see
@@ -354,8 +356,8 @@ func measure(id string, mods []string, byModule map[string][]Mutant, measuredBy 
 			continue
 		}
 		for _, mu := range byModule[rel] {
-			if mu.KilledBy == nil {
-				continue
+			if mu.KilledBy == nil || mu.Uncovered {
+				continue // excluded, or run by no test: planted for nobody
 			}
 			ev.Planted++
 			desc := mu.Module + " " + mu.Site.Desc
@@ -470,6 +472,13 @@ func unmeasuredReason(root, id string, byID map[string]cases.TestCase, mods []st
 	}
 	if !baseline[id] {
 		return reasonNoBaseline
+	}
+	for _, rel := range mods {
+		for _, mu := range byModule[rel] {
+			if mu.Uncovered {
+				return reasonUncovered
+			}
+		}
 	}
 	return reasonExcluded
 }

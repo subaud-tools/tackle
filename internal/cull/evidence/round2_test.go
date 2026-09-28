@@ -150,6 +150,7 @@ func TestMeasureTable(t *testing.T) {
 		reason     string
 	}{
 		{"all excluded", []Mutant{excluded, excluded}, all, yes, false, "review", RuleUnmeasured, reasonExcluded},
+		{"all uncovered", []Mutant{excluded, {Module: "a.go", KilledBy: []string{}, Uncovered: true}}, all, yes, false, "review", RuleUnmeasured, reasonUncovered},
 		{"flaky", []Mutant{mu("a.go", "m", "X")}, none, noT, true, "review", RuleUnmeasured, reasonFlaky},
 		{"not in baseline", []Mutant{mu("a.go", "m", "X")}, none, noT, false, "review", RuleUnmeasured, reasonNoBaseline},
 		{"catches nothing", []Mutant{mu("a.go", "m", "X"), mu("a.go", "n")}, all, yes, false, "cut", RuleCatchesNothing, ""},
