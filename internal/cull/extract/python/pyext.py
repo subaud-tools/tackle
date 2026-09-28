@@ -485,8 +485,9 @@ def defs_for(data):
     """Definitions in data (one Python source file's raw bytes): a list of
     {"name","owner","kind","start","end","refs"} dicts. Top-level
     functions, classes and assignments (owner ""), also inside top-level
-    if/try/with blocks, and the methods of those classes (owner: the class
-    name). start/end are the UTF-8 byte
+    if/try/with blocks, the methods of those classes (owner: the class
+    name), and the functions and classes nested inside any of them (a
+    nested class's methods owned by it). start/end are the UTF-8 byte
     offsets of the definition's whole source lines (decorators through its
     last line); refs are the names (ast.Name ids and attribute names) used
     anywhere inside it. Returns [] for a file that fails to parse.
@@ -514,15 +515,35 @@ def defs_for(data):
 
     blocks = (ast.If, ast.Try, ast.With, ast.AsyncWith) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
 
+    funcs = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+    def defn(n, owner):
+        # n (a function, or a method of owner) or class n, and the
+        # functions and classes nested anywhere inside it.
+        if isinstance(n, funcs):
+            add(n, n.name, owner, "method" if owner else "function")
+            inner(n)
+            return
+        add(n, n.name, "", "class")
+        for m in n.body:
+            if isinstance(m, funcs):
+                defn(m, n.name)
+            elif isinstance(m, ast.ClassDef):
+                defn(m, "")
+            else:
+                inner(m)
+
+    def inner(node):
+        for c in ast.iter_child_nodes(node):
+            if isinstance(c, funcs + (ast.ClassDef,)):
+                defn(c, "")
+            else:
+                inner(c)
+
     def visit(body):
         for n in body:
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                add(n, n.name, "", "function")
-            elif isinstance(n, ast.ClassDef):
-                add(n, n.name, "", "class")
-                for m in n.body:
-                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        add(m, m.name, n.name, "method")
+            if isinstance(n, funcs + (ast.ClassDef,)):
+                defn(n, "")
             elif isinstance(n, (ast.Assign, ast.AnnAssign)):
                 targets = n.targets if isinstance(n, ast.Assign) else [n.target]
                 for t in targets:

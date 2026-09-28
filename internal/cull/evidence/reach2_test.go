@@ -3,7 +3,12 @@ package evidence
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/schuettc/tackle/internal/cull/cases"
+	"github.com/schuettc/tackle/internal/cull/mutate"
 )
 
 // pyKeep runs evidence on files and fails t unless target (a review-band
@@ -169,4 +174,48 @@ func init() {
 	if tr := by["TestTable"]; tr.Verdict != "keep" || tr.Rule != RuleSoleGuard {
 		t.Errorf("TestTable: %s/%s %v\n%s", tr.Verdict, tr.Rule, tr.Reasons, log.String())
 	}
+}
+
+// Each reached definition samples only its own sites: a class's field
+// sites are always planted however many sites its methods hold, and each
+// method gets its own sample.
+func TestClassOwnSample(t *testing.T) {
+	src := []byte("F" + strings.Repeat(".", 99) + "C" + strings.Repeat(".", 899))
+	for v := 0; v < 20; v++ {
+		cls := fmt.Sprintf("C%d", v)
+		defs := []mutate.Def{
+			{Name: "f", Kind: "function", Start: 0, End: 100, Refs: []string{cls}},
+			{Name: cls, Kind: "class", Start: 100, End: 1000},
+			{Name: "m1", Owner: cls, Kind: "method", Start: 200, End: 600},
+			{Name: "m2", Owner: cls, Kind: "method", Start: 600, End: 1000},
+		}
+		sites := []mutate.Site{{Start: 110, End: 111, Desc: "field"}, {Start: 120, End: 121, Desc: "field"}}
+		for i := 0; i < 80; i++ {
+			sites = append(sites, mutate.Site{Start: 200 + i*10, End: 201 + i*10, Desc: "method"})
+		}
+		got := targetSites("m.py", src, sites, []cases.Callee{{Symbol: "f", Source: string(src[:100])}}, defs, nolog)
+		n := map[string]int{}
+		for _, s := range got {
+			n[s.Desc]++
+		}
+		if n["field"] != 2 || n["method"] != 2*perCallee {
+			t.Errorf("%s: sampled %v", cls, n)
+		}
+	}
+}
+
+// A nested helper gets its own sample: its site is planted though its
+// parent has many more than perCallee other sites.
+func TestNestedHelperPlanted(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("def build(x):\n    def _norm(s):\n        return s + \"!\"\n\n    t = 0\n")
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&b, "    if x > %d:\n        t = t + %d\n", i+100, i)
+	}
+	b.WriteString("    return _norm(str(t))\n")
+	pyKeep(t, map[string]string{
+		"calc.py": b.String(),
+		"test_calc.py": "from calc import build\n\n\ndef test_other():\n    assert build(0).startswith(\"0\")\n\n\n" +
+			"def test_bang():\n    assert build(0).endswith(\"!\")\n",
+	}, "test_bang")
 }

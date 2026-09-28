@@ -12,7 +12,8 @@ import (
 // any owner by name alone), and for each class or type so reached, all of
 // its methods (dunders, constructors, Go methods on it). A reached method
 // reaches its owner class too (cls(...), type(self)(...), replace(self)
-// construct it unnamed). Every "init" def (Go) is reached whenever
+// construct it unnamed), and a reached def reaches every def nested in
+// its span. Every "init" def (Go) is reached whenever
 // anything is: defs are one file's. Resolution is by
 // name only: over-inclusion is accepted, dynamic dispatch may be missed.
 func reach(defs []mutate.Def, seeds []int) []int {
@@ -47,6 +48,11 @@ func reach(defs []mutate.Def, seeds []int) []int {
 		queue = queue[1:]
 		if d.Owner == "" && (d.Kind == "class" || d.Kind == "type") {
 			for _, j := range byOwner[d.Name] {
+				visit(j)
+			}
+		}
+		for j, e := range defs {
+			if e.End > e.Start && e.Start >= d.Start && e.End <= d.End {
 				visit(j)
 			}
 		}

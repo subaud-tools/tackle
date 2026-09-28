@@ -352,3 +352,15 @@ export function other(x: number): number {
 		t.Errorf("reach(other) = %v, missing dec", got)
 	}
 }
+
+// A reached def reaches the defs nested in its span, named or not.
+func TestReachNested(t *testing.T) {
+	defs := []mutate.Def{
+		{Name: "f", Kind: "function", Start: 0, End: 100},
+		{Name: "g", Kind: "function", Start: 10, End: 50},
+		{Name: "h", Kind: "function", Start: 100, End: 150},
+	}
+	if got := reach(defs, []int{0}); !slices.Equal(got, []int{0, 1}) {
+		t.Errorf("reach(f) = %v", got)
+	}
+}

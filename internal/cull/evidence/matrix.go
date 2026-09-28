@@ -463,30 +463,41 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 	return p, false
 }
 
-// targetSites keeps the sites fully inside each callee's definition
-// (every occurrence of its Source text in src, matched with CRLF line
-// endings read as LF and mapped back to src's bytes; the whole module,
-// logged, when it isn't found), samples up to perCallee per callee
-// (seeded by src and the callee's symbol), and returns their union sorted
-// by Start. It also samples up to perCallee sites (seeded by src and the
-// definition's name) in each of defs reached (see reach) from the defs
-// inside a located callee's definition, except that callee's own def.
+// targetSites plants up to perCallee sites (seeded by src and a name) in
+// each callee and in each definition reached (see reach) from the defs
+// inside a located callee's definition (every occurrence of its Source
+// text in src, matched with CRLF line endings read as LF and mapped back
+// to src's bytes; the whole module, logged, when it isn't found). Each
+// def samples only its own sites, those not inside a def nested in it
+// (a class: its field defaults and body statements; a function: not its
+// nested helpers), and a callee only its sites not inside any def within
+// it. It returns their union, deduplicated and sorted by Start.
 func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Callee, defs []mutate.Def, logf func(string, ...any)) []mutate.Site {
 	type key struct {
 		start, end int
 		repl       string
 	}
+	type span [2]int
+	within := func(a, b span) bool { return a[0] >= b[0] && a[1] <= b[1] }
+	// inner[i]: the smallest def span holding site i (ok false: none).
+	inner := make([]span, len(sites))
+	hasInner := make([]bool, len(sites))
+	for i, s := range sites {
+		for _, d := range defs {
+			sp := span{d.Start, d.End}
+			if within(span{s.Start, s.End}, sp) && (!hasInner[i] || sp[1]-sp[0] < inner[i][1]-inner[i][0]) {
+				inner[i], hasInner[i] = sp, true
+			}
+		}
+	}
 	norm, orig := lfOffsets(src)
 	seen := map[key]bool{}
 	var out []mutate.Site
-	sample := func(spans [][2]int, name string) {
+	sample := func(keep func(i int) bool, name string) {
 		var in []mutate.Site
-		for _, s := range sites {
-			for _, sp := range spans {
-				if s.Start >= sp[0] && s.End <= sp[1] {
-					in = append(in, s)
-					break
-				}
+		for i, s := range sites {
+			if keep(i) {
+				in = append(in, s)
 			}
 		}
 		seed := sha256.Sum256(append(append([]byte(nil), src...), name...))
@@ -499,31 +510,39 @@ func targetSites(rel string, src []byte, sites []mutate.Site, callees []cases.Ca
 		}
 	}
 	var seeds []int
-	own := map[int]bool{} // a callee's own def: already sampled as the callee
 	for _, c := range callees {
-		spans := sourceSpans(norm, orig, c.Source)
+		var spans []span
+		for _, sp := range sourceSpans(norm, orig, c.Source) {
+			spans = append(spans, span(sp))
+		}
 		if len(spans) == 0 {
 			logf("%s: definition of %s not found; sampling the whole module", rel, c.Symbol)
-			sample([][2]int{{0, len(src)}}, c.Symbol)
+			sample(func(int) bool { return true }, c.Symbol)
 			continue
 		}
-		sample(spans, c.Symbol)
-		bare := c.Symbol[strings.LastIndex(c.Symbol, ".")+1:]
-		for i, d := range defs {
+		in := func(x span) bool {
 			for _, sp := range spans {
-				if d.Start >= sp[0] && d.End <= sp[1] {
-					seeds = append(seeds, i)
-					if d.Name == bare {
-						own[i] = true
-					}
-					break
+				if within(x, sp) {
+					return true
 				}
+			}
+			return false
+		}
+		sample(func(i int) bool {
+			return in(span{sites[i].Start, sites[i].End}) && (!hasInner[i] || !in(inner[i]))
+		}, c.Symbol)
+		for i, d := range defs {
+			if in(span{d.Start, d.End}) {
+				seeds = append(seeds, i)
 			}
 		}
 	}
-	for _, i := range reach(defs, seeds) {
-		if !own[i] {
-			sample([][2]int{{defs[i].Start, defs[i].End}}, qualName(defs[i]))
+	done := map[span]bool{} // defs sharing one span share one sample
+	for _, j := range reach(defs, seeds) {
+		sp := span{defs[j].Start, defs[j].End}
+		if !done[sp] {
+			done[sp] = true
+			sample(func(i int) bool { return hasInner[i] && inner[i] == sp }, qualName(defs[j]))
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
