@@ -24,3 +24,17 @@ func TestV8Helpers(t *testing.T) {
 		}
 	}
 }
+
+// A site runs if any of its bytes ran, not only its ends: here both ends
+// sit in unexecuted ranges and the middle ran.
+func TestV8SiteRanMiddle(t *testing.T) {
+	src := []byte("aaaaaaaaaaaaaaaaaaaa")
+	u16 := utf16Offsets(src)
+	ranges := []v8Range{{0, 20, 1}, {2, 6, 0}, {12, 18, 0}}
+	if !v8SiteRan(ranges, u16, 4, 14) {
+		t.Error("a site whose middle ran reads as not run")
+	}
+	if v8SiteRan(ranges, u16, 3, 5) {
+		t.Error("a site inside an unexecuted range reads as run")
+	}
+}

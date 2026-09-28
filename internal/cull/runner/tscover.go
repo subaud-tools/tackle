@@ -38,11 +38,11 @@ type v8Range struct {
 // test in it covers what the file ran. A file that never loaded the
 // module covers nothing. When V8's offsets provably match the module's
 // source (plain JavaScript, or TypeScript run by node's own type
-// stripping, which keeps every offset), a mutant is covered if its
-// innermost V8 range ran; otherwise any file that loaded the module
-// covers all of it. A test file that can start a process (see
-// tsFileSpawns) covers all of it too. Nothing is global: module-level code runs in every
-// file that loads the module.
+// stripping, which keeps every offset), a mutant is covered if the
+// innermost V8 range of any of its bytes ran; otherwise any file that
+// loaded the module covers all of it. A test file that can start a
+// process (see tsFileSpawns) covers all of it too. Nothing is global:
+// module-level code runs in every file that loads the module.
 func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if r.kind != "node" {
 		return nil, fmt.Errorf("per-file coverage is only measured for node:test (this project runs %s)", r.kind)
@@ -105,9 +105,7 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		} else if found {
 			loaded = true
 			if !transformed && aligned(ranges, u16[len(src)], "file://"+real) {
-				u.hit = func(start, end int) bool {
-					return v8Ran(ranges, u16[start]) || (end > start+1 && v8Ran(ranges, u16[end-1]))
-				}
+				u.hit = func(start, end int) bool { return v8SiteRan(ranges, u16, start, end) }
 			} else {
 				u.hit = func(int, int) bool { return true }
 			}
@@ -207,6 +205,17 @@ func aligned(ranges []v8Range, n int, url string) bool {
 	extra := end - n
 	tail := len("//# sourceURL=" + url)
 	return extra == 0 || (extra >= tail && extra <= tail+2)
+}
+
+// v8SiteRan reports whether any byte of [start, end) of the module (its
+// start when empty) ran (see v8Ran), given u16 (see utf16Offsets).
+func v8SiteRan(ranges []v8Range, u16 []int, start, end int) bool {
+	for off := start; off < max(end, start+1); off++ {
+		if v8Ran(ranges, u16[off]) {
+			return true
+		}
+	}
+	return false
 }
 
 // v8Ran reports whether the innermost range holding UTF-16 offset off ran
