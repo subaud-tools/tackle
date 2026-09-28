@@ -56,16 +56,13 @@ func runEvidence(args []string, out, errw io.Writer) error {
 	if err != nil {
 		return tools.Exitf(2, "%v", err)
 	}
+	// Progress and warnings always go to stderr; --json changes stdout only.
 	jsonMode := boolFlag(fs, "json")
-	var progress io.Writer = errw
-	if jsonMode {
-		progress = io.Discard
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	res, err := evidence.Run(ctx, root, evidence.Options{
-		Workers: workers, MaxMutants: maxMutants, RunTimeout: timeout, Stderr: progress,
+		Workers: workers, MaxMutants: maxMutants, RunTimeout: timeout, Stderr: errw,
 	})
 	if err != nil {
 		return tools.Exitf(2, "%v", err)

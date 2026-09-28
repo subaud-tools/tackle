@@ -114,6 +114,10 @@ func TestEvidenceExitCodes(t *testing.T) {
 			len(got.Unmeasured) != 1 || got.Modules != 1 || got.Mutants != 1 {
 			t.Errorf("json = %s", out)
 		}
+		// --json changes stdout only: progress still goes to stderr.
+		if !strings.Contains(errw, "cull evidence: baseline calc.go") {
+			t.Errorf("stderr lacks progress in --json mode: %q", errw)
+		}
 	})
 	t.Run("2 changed file refused", func(t *testing.T) {
 		root := evidenceProject(t)
