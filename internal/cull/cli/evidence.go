@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -36,8 +37,32 @@ var evidenceFlags = flags("evidence", "cull evidence [--workers 8] [--max-mutant
 		fs.Bool("json", false, "print the result as JSON")
 	})
 
-// notifySignals is signal.Notify (tests replace it).
-var notifySignals = signal.Notify
+// notifySignals is signal.Notify and exitNow os.Exit (tests replace
+// them).
+var (
+	notifySignals = signal.Notify
+	exitNow       = os.Exit
+)
+
+// syncWriter serializes writes to w.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(b)
+}
+
+// sigCode is the exit code for signal s (128 + its number).
+func sigCode(s os.Signal) int {
+	if n, ok := s.(syscall.Signal); ok {
+		return 128 + int(n)
+	}
+	return 130
+}
 
 func runEvidence(args []string, out, errw io.Writer) error {
 	fs := evidenceFlags()
@@ -67,19 +92,38 @@ func runEvidence(args []string, out, errw io.Writer) error {
 	// Progress and warnings always go to stderr; --json changes stdout only.
 	jsonMode := boolFlag(fs, "json")
 	// A signal cancels the run at once (no new test run starts, in-flight
-	// ones are killed, nothing is written) and exits 128 + its number.
+	// ones are killed, nothing is written) and exits 128 + its number. A
+	// second one exits at once: every test's process group is killed and
+	// every planted module restored first.
+	errw = &syncWriter{w: errw}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	sigs := make(chan os.Signal, 1)
+	// done ends the signal watcher; runEvidence returns only once it has
+	// (a forced exit in progress finishes first).
+	var watching sync.WaitGroup
+	defer watching.Wait()
+	done := make(chan struct{})
+	defer close(done)
+	sigs := make(chan os.Signal, 2)
 	notifySignals(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	var got atomic.Value // os.Signal
+	watching.Add(1)
 	go func() {
+		defer watching.Done()
 		select {
 		case s := <-sigs:
 			got.Store(s)
 			cancel()
-		case <-ctx.Done():
+		case <-done:
+			return
+		}
+		select {
+		case s := <-sigs:
+			evidence.Abort()
+			_, _ = fmt.Fprintf(errw, "cull evidence: interrupted again (%v); exiting now\n", s)
+			exitNow(sigCode(s))
+		case <-done:
 		}
 	}()
 
@@ -88,11 +132,7 @@ func runEvidence(args []string, out, errw io.Writer) error {
 		NoCache: boolFlag(fs, "no-cache"),
 	})
 	if s, ok := got.Load().(os.Signal); ok && err != nil {
-		code := 130
-		if n, ok := s.(syscall.Signal); ok {
-			code = 128 + int(n)
-		}
-		return tools.Exitf(code, "cull evidence: interrupted (%v); nothing written", s)
+		return tools.Exitf(sigCode(s), "cull evidence: interrupted (%v); nothing written", s)
 	}
 	if err != nil {
 		return tools.Exitf(2, "%v", err)

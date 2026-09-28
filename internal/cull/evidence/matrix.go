@@ -20,6 +20,7 @@ import (
 	"github.com/schuettc/tackle/internal/cull/cases"
 	"github.com/schuettc/tackle/internal/cull/mutate"
 	"github.com/schuettc/tackle/internal/cull/runner"
+	"github.com/schuettc/tackle/internal/cull/verify"
 )
 
 // Module is one non-test source file to mutate, the test files that
@@ -866,6 +867,36 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 	}
 }
 
+// planted maps each sandbox module holding a planted change (a mutant or
+// the canary) to its original bytes.
+var planted sync.Map
+
+// plant writes data to file, remembering orig for Abort.
+func plant(file string, data, orig []byte) error {
+	planted.Store(file, orig)
+	return os.WriteFile(file, data, 0o644)
+}
+
+// unplant restores file to orig.
+func unplant(file string, orig []byte) error {
+	if err := os.WriteFile(file, orig, 0o644); err != nil {
+		return err
+	}
+	planted.Delete(file)
+	return nil
+}
+
+// Abort is for a forced exit mid-run: it kills every running test
+// process group and restores every sandbox module holding a planted
+// change.
+func Abort() {
+	verify.KillAll()
+	planted.Range(func(k, v any) bool {
+		_ = os.WriteFile(k.(string), v.([]byte), 0o644)
+		return true
+	})
+}
+
 // mutant plants s in sb, runs the groups holding measured tests, and
 // restores the module. It returns the sorted measured tests that failed
 // (non-nil), or nil and a reason when the run is excluded. An error means
@@ -876,7 +907,7 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 		return nil, err.Error(), nil
 	}
 	file := filepath.Join(sb.Dir, filepath.FromSlash(p.mod.Rel))
-	if err := os.WriteFile(file, mutated, 0o644); err != nil {
+	if err := plant(file, mutated, p.src); err != nil {
 		return nil, "", fmt.Errorf("evidence: plant mutant in %s: %w", file, err)
 	}
 	if plantHook != nil {
@@ -912,7 +943,7 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 			}
 		}
 	}
-	if err := os.WriteFile(file, p.src, 0o644); err != nil {
+	if err := unplant(file, p.src); err != nil {
 		return nil, "", fmt.Errorf("evidence: restore %s: %w", file, err)
 	}
 	if why != "" {
@@ -1065,7 +1096,7 @@ func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration)
 		return canaryLoaded, "no canary for " + p.mod.Lang, nil
 	}
 	file := filepath.Join(sb.Dir, filepath.FromSlash(p.mod.Rel))
-	if err := os.WriteFile(file, broken, 0o644); err != nil {
+	if err := plant(file, broken, p.src); err != nil {
 		return 0, "", fmt.Errorf("evidence: plant canary in %s: %w", file, err)
 	}
 	st = canaryShadowed
@@ -1107,7 +1138,7 @@ func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration)
 			st, why = canaryUnconfirmed, r
 		}
 	}
-	if err := os.WriteFile(file, p.src, 0o644); err != nil {
+	if err := unplant(file, p.src); err != nil {
 		return 0, "", fmt.Errorf("evidence: restore %s: %w", file, err)
 	}
 	sort.Strings(passed)

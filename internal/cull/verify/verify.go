@@ -416,6 +416,15 @@ func RunProcess(ctx context.Context, dir string, argv []string, env []string, ti
 	if err := cmd.Start(); err != nil {
 		return RawResult{ExitCode: -1, StartErr: err}
 	}
+	pid := cmd.Process.Pid // its process group's id too (Setpgid)
+	liveMu.Lock()
+	live[pid] = true
+	liveMu.Unlock()
+	defer func() {
+		liveMu.Lock()
+		delete(live, pid)
+		liveMu.Unlock()
+	}()
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -449,6 +458,28 @@ func RunProcess(ctx context.Context, dir string, argv []string, env []string, ti
 		}
 		return RawResult{ExitCode: exitCode}
 	}
+}
+
+// live holds the process group of every RunProcess child still running.
+var (
+	liveMu sync.Mutex
+	live   = map[int]bool{}
+)
+
+// KillAll kills the process group of every running RunProcess child (for
+// a forced exit: their RunProcess calls then return).
+func KillAll() {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	for pgid := range live {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+}
+
+func liveCount() int {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	return len(live)
 }
 
 // tail returns the last n lines of s.

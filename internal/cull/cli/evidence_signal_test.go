@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // A signal cancels the run: nothing is written to .cull/ and the exit
@@ -54,5 +55,32 @@ func TestEvidenceNoCache(t *testing.T) {
 		if got := strings.Contains(errw, "reusing"); got != c.reused {
 			t.Errorf("run %d %v: reused %v\n%s", i, c.args, got, errw)
 		}
+	}
+}
+
+// A second signal forces an immediate exit (128 + its number) without
+// waiting for the run to wind down.
+func TestEvidenceSecondSignalForcesExit(t *testing.T) {
+	root := evidenceProject(t)
+	last, _ := os.ReadFile(filepath.Join(root, ".cull", "last.json"))
+	forced := make(chan int, 1)
+	exitNow = func(code int) { forced <- code }
+	defer func() { exitNow = os.Exit }()
+	notifySignals = func(c chan<- os.Signal, _ ...os.Signal) {
+		c <- os.Interrupt
+		c <- syscall.SIGTERM
+	}
+	defer func() { notifySignals = signal.Notify }()
+	code, _, errw := run(t, "", "evidence", "--workers", "1")
+	select {
+	case got := <-forced:
+		if got != 143 {
+			t.Errorf("forced exit %d, want 143", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no forced exit (code %d, errw %q)", code, errw)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, ".cull", "last.json")); string(b) != string(last) {
+		t.Error("last.json changed")
 	}
 }

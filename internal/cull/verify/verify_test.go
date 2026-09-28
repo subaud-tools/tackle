@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -370,5 +371,36 @@ func TestRunEnvHasNoKey(t *testing.T) {
 	}
 	if strings.Contains(r.OutputTail, "leaked") {
 		t.Errorf("OutputTail contains leaked key marker: %s", r.OutputTail)
+	}
+}
+
+// KillAll kills every running process group at once.
+func TestKillAll(t *testing.T) {
+	done := make(chan RawResult, 1)
+	go func() {
+		done <- RunProcess(context.Background(), t.TempDir(), []string{"sh", "-c", "sleep 30 & sleep 30"}, os.Environ(), time.Minute, io.Discard, io.Discard)
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for liveCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("process never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	start := time.Now()
+	KillAll()
+	select {
+	case r := <-done:
+		if r.ExitCode == 0 {
+			t.Errorf("killed process exited 0")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("KillAll didn't stop the process")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("took %v", d)
+	}
+	if n := liveCount(); n != 0 {
+		t.Errorf("%d groups still registered", n)
 	}
 }

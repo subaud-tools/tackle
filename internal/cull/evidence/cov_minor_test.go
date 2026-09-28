@@ -3,6 +3,7 @@ package evidence
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -54,5 +55,31 @@ func TestCacheStampToolVersions(t *testing.T) {
 	}
 	if _, err := exec.LookPath("python3"); err == nil && !strings.Contains(s, "python-version=Python 3.") {
 		t.Errorf("stamp lacks Python's version:\n%s", s)
+	}
+}
+
+// Abort (a forced exit) restores every module holding a planted change.
+func TestAbortRestoresPlanted(t *testing.T) {
+	needTools(t)
+	root := calcRepo(t)
+	var restored []string
+	plantHook = func(file string) {
+		Abort()
+		b, _ := os.ReadFile(file)
+		restored = append(restored, string(b))
+	}
+	t.Cleanup(func() { plantHook = nil })
+	o := opts(1)
+	o.MaxMutants = 1
+	if _, err := RunMatrix(context.Background(), root, []Module{calcModule()}, o); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) == 0 {
+		t.Fatal("no mutant planted")
+	}
+	for _, b := range restored {
+		if b != calcSrc {
+			t.Errorf("after Abort the module is\n%s", b)
+		}
 	}
 }
