@@ -204,6 +204,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	for _, p := range plans {
 		jobs = append(jobs, func(sb Sandbox) error {
 			p.baseline(ctx, sb, opt.BaselineTimeout)
+			if err := ctx.Err(); err != nil {
+				return err // cancelled: its results mean nothing
+			}
 			if len(p.dropped) > 0 {
 				logf("%s: dropped test files that did not run cleanly alone: %s", p.mod.Rel, strings.Join(p.dropped, ", "))
 			}
@@ -213,6 +216,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			}
 			st, why, err := p.canary(ctx, sb, p.runTimeout(opt.RunTimeout))
 			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if len(p.unloaded) > 0 {
@@ -253,6 +259,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			jobs = append(jobs, func(sb Sandbox) error {
 				killed, why, err := p.mutant(ctx, sb, s, p.runTimeout(opt.RunTimeout))
 				if err != nil {
+					return err
+				}
+				if err := ctx.Err(); err != nil {
 					return err
 				}
 				mutants[idx].KilledBy = killed
@@ -330,7 +339,8 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 
 // runJobs runs jobs on at most workers goroutines, each job holding one
 // sandbox from pool for its duration. The first job error (or ctx
-// cancellation) stops further jobs and is returned.
+// cancellation) stops further jobs at once, even ones already handed to
+// a worker, and is returned.
 func runJobs(ctx context.Context, pool chan Sandbox, workers int, jobs []func(Sandbox) error) error {
 	next := make(chan func(Sandbox) error)
 	var (
@@ -355,7 +365,7 @@ func runJobs(ctx context.Context, pool chan Sandbox, workers int, jobs []func(Sa
 		go func() {
 			defer wg.Done()
 			for job := range next {
-				if failed() {
+				if failed() || ctx.Err() != nil {
 					continue
 				}
 				sb := <-pool
@@ -639,7 +649,7 @@ func badRun(o runner.Outcome) string {
 // files (see isolate).
 func (p *modPlan) baseline(ctx context.Context, sb Sandbox, timeout time.Duration) {
 	p.combinedBaseline(ctx, sb, timeout)
-	if !p.ok {
+	if !p.ok && ctx.Err() == nil {
 		p.isolate(ctx, sb, timeout)
 	}
 }
@@ -671,6 +681,9 @@ func (p *modPlan) runGroups(ctx context.Context, sb Sandbox, timeout time.Durati
 	for run := 0; run < 2 && ok; run++ {
 		start := time.Now()
 		for _, g := range p.groups {
+			if ctx.Err() != nil {
+				return false, passes, slowest, unmapped
+			}
 			p.clearBytecode(sb)
 			o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
 			for id := range o.Failed {
@@ -711,6 +724,10 @@ func (p *modPlan) isolate(ctx context.Context, sb Sandbox, timeout time.Duration
 			bad := false
 			var fdur [2]time.Duration
 			for run := 0; run < 2 && !bad; run++ {
+				if ctx.Err() != nil {
+					p.ok = false
+					return
+				}
 				p.clearBytecode(sb)
 				start := time.Now()
 				o := g.r.Run(ctx, sb.Dir, []string{f}, idx, timeout)
@@ -802,6 +819,10 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
+		if ctx.Err() != nil {
+			why = "cancelled"
+			break
+		}
 		p.clearBytecode(sb)
 		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
 		if why = badRun(o); why != "" {
@@ -856,6 +877,10 @@ func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration)
 	for _, g := range p.groups {
 		if !holdsMeasured(g, p.measured) {
 			continue
+		}
+		if ctx.Err() != nil {
+			st, why = canaryUnconfirmed, "cancelled"
+			break
 		}
 		p.clearBytecode(sb)
 		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)

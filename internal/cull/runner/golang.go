@@ -74,6 +74,10 @@ func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	defer cancel()
 
 	for _, sub := range subs {
+		if err := ctx.Err(); err != nil {
+			out.Err = err.Error() // cancelled: start nothing more
+			break
+		}
 		names := make([]string, 0, len(groups[sub]))
 		for n := range groups[sub] {
 			names = append(names, n)

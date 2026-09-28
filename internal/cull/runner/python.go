@@ -40,6 +40,10 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	if len(testFiles) == 0 {
 		return out
 	}
+	if err := ctx.Err(); err != nil {
+		out.Err = err.Error()
+		return out
+	}
 
 	tmp, err := os.CreateTemp("", "cull-pytest-*.xml")
 	if err != nil {

@@ -42,6 +42,7 @@ type Outcome struct {
 // isn't in index is attributed to its nearest ancestor that is (the
 // leaf-rule fallback: a loop-generated Go subtest or a parametrized
 // pytest case collapses to its parent unit), or else counted in Unmapped.
+// A cancelled ctx starts no process (Err is set) and kills running ones.
 type Runner interface {
 	Run(ctx context.Context, dir string, testFiles []string, index map[string]string, timeout time.Duration) Outcome
 }

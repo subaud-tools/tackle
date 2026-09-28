@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -30,6 +31,9 @@ var evidenceFlags = flags("evidence", "cull evidence [--workers 8] [--max-mutant
 		fs.Duration("timeout", 60*time.Second, "minimum per mutant run timeout (3× the slower baseline run when longer)")
 		fs.Bool("json", false, "print the result as JSON")
 	})
+
+// notifySignals is signal.Notify (tests replace it).
+var notifySignals = signal.Notify
 
 func runEvidence(args []string, out, errw io.Writer) error {
 	fs := evidenceFlags()
@@ -58,12 +62,33 @@ func runEvidence(args []string, out, errw io.Writer) error {
 	}
 	// Progress and warnings always go to stderr; --json changes stdout only.
 	jsonMode := boolFlag(fs, "json")
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
+	// A signal cancels the run at once (no new test run starts, in-flight
+	// ones are killed, nothing is written) and exits 128 + its number.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := make(chan os.Signal, 1)
+	notifySignals(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+	var got atomic.Value // os.Signal
+	go func() {
+		select {
+		case s := <-sigs:
+			got.Store(s)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 
 	res, err := evidence.Run(ctx, root, evidence.Options{
 		Workers: workers, MaxMutants: maxMutants, RunTimeout: timeout, Stderr: errw,
 	})
+	if s, ok := got.Load().(os.Signal); ok && err != nil {
+		code := 130
+		if n, ok := s.(syscall.Signal); ok {
+			code = 128 + int(n)
+		}
+		return tools.Exitf(code, "cull evidence: interrupted (%v); nothing written", s)
+	}
 	if err != nil {
 		return tools.Exitf(2, "%v", err)
 	}

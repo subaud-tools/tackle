@@ -57,6 +57,10 @@ func (r *tsRunner) Run(ctx context.Context, dir string, testFiles []string, inde
 	if len(testFiles) == 0 {
 		return out
 	}
+	if err := ctx.Err(); err != nil {
+		out.Err = err.Error()
+		return out
+	}
 	switch r.kind {
 	case "vitest":
 		return r.runVitest(ctx, dir, testFiles, index, timeout)

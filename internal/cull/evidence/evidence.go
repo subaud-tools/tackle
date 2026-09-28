@@ -267,6 +267,9 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	sort.Strings(res.Unmeasured)
 	rep.Recount()
 
+	if err := ctx.Err(); err != nil {
+		return res, err // cancelled: write nothing
+	}
 	if h, err := hashFile(root, lastRel); err != nil || h != lastHash {
 		return res, fmt.Errorf("refused: .cull/last.json changed while cull evidence ran; nothing written, run cull evidence again")
 	}
