@@ -241,6 +241,34 @@ func TestTSCoverageHelperSpawnMatchesFull(t *testing.T) {
 	matrixMatchesFull(t, root, mod)
 }
 
+// TS: b.test.ts checks g only in a node child that escapes coverage
+// (NODE_V8_COVERAGE=""), started by an npm dependency the text scan
+// doesn't read: the runtime preload marks b.test.ts as spawning, so it
+// covers the whole module.
+func TestTSCoverageDependencySpawnCoversAll(t *testing.T) {
+	needTools(t)
+	if os.Getenv("CULL_TS") == "" {
+		t.Skip("CULL_TS not set")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH")
+	}
+	src := "export function f(x: number): boolean {\n  return x > 3;\n}\n\nexport function g(x: number): number {\n  return x * 2;\n}\n"
+	a := "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { f, g } from './calc.ts';\n\ntest('a', () => {\n  assert.ok(f(10));\n  assert.ok(!f(3));\n  g(0);\n});\n"
+	dep := "import * as cp from 'node:child_process';\n\nexport function runScript(code) {\n  cp.execFileSync(process.execPath, ['--input-type=module', '-e', code], { env: { PATH: process.env.PATH, NODE_V8_COVERAGE: '' } });\n}\n"
+	b := "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { runScript } from 'runner-dep';\nimport { f } from './calc.ts';\n\ntest('b', () => {\n  assert.ok(f(10));\n  runScript(\"const m = await import('./calc.ts'); if (m.g(3) !== 6) process.exit(1);\");\n});\n"
+	root := newRepo(t, map[string]string{
+		"package.json":                         `{"type": "module", "scripts": {"test": "node --test"}}`,
+		"calc.ts":                              src,
+		"a.test.ts":                            a,
+		"b.test.ts":                            b,
+		"node_modules/runner-dep/package.json": `{"name": "runner-dep", "type": "module", "main": "index.js"}`,
+		"node_modules/runner-dep/index.js":     dep,
+	})
+	mod := Module{Rel: "calc.ts", Lang: "typescript", TestFiles: []string{"a.test.ts", "b.test.ts"}, Tests: []string{"ts:a.test.ts:a", "ts:b.test.ts:b"}}
+	matrixMatchesFull(t, root, mod)
+}
+
 // matrixMatchesFull runs mod's matrix with coverage selection (which
 // must be used) and without, and fails t unless they're identical.
 func matrixMatchesFull(t *testing.T, root string, mod Module) {

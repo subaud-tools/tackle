@@ -90,3 +90,32 @@ func TestV8GroupsPerScript(t *testing.T) {
 		t.Error("a misaligned group passes")
 	}
 }
+
+// The text scan follows relative imports (with TypeScript's .js → .ts
+// and directory index resolution) and nothing else.
+func TestTSFileSpawnsTransitive(t *testing.T) {
+	dir := t.TempDir()
+	for rel, body := range map[string]string{
+		"a.test.ts":         "import { h } from './h.js';\n",
+		"h.ts":              "export * from '../x/lib';\nexport const h = 1;\n",
+		"../x/lib/index.ts": "export { run } from './deep.mjs';\n",
+		"../x/lib/deep.mjs": "import cp from 'node:child_process';\nexport const run = () => cp.spawnSync('true');\n",
+		"c.test.ts":         "import { k } from './k';\nimport 'some-dep';\nconst m = await import('./m.ts');\n",
+		"k.ts":              "import { c } from './c.test.ts';\nexport const k = 1;\n",
+		"m.ts":              "export const m = 1;\n",
+	} {
+		p := filepath.Join(dir, "p", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for f, want := range map[string]bool{"a.test.ts": true, "c.test.ts": false} {
+		got, err := tsFileSpawns(filepath.Join(dir, "p", f))
+		if err != nil || got != want {
+			t.Errorf("%s: got %v, %v; want %v", f, got, err, want)
+		}
+	}
+}

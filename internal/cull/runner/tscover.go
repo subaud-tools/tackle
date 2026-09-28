@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -41,7 +42,8 @@ type v8Range struct {
 // stripping, which keeps every offset), a mutant is covered if the
 // innermost V8 range of any of its bytes ran; otherwise any file that
 // loaded the module covers all of it. A test file that can start a
-// process (see tsFileSpawns) covers all of it too. Nothing is global:
+// process (see tsFileSpawns), or did start one while its tests ran (see
+// tsSpawnPreload), covers all of it too. Nothing is global:
 // module-level code runs in every file that loads the module.
 func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if r.kind != "node" {
@@ -66,6 +68,10 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
+	preload := filepath.Join(tmp, "spawn-mark.cjs")
+	if err := os.WriteFile(preload, []byte(tsSpawnPreload), 0o600); err != nil {
+		return nil, err
+	}
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cov := &Coverage{global: func(int, int) bool { return false }, Passed: map[string]bool{}}
@@ -75,7 +81,8 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		if err := os.MkdirAll(covDir, 0o700); err != nil {
 			return nil, err
 		}
-		env := append(verify.FilteredEnv(), "NODE_V8_COVERAGE="+covDir)
+		mark := filepath.Join(tmp, fmt.Sprintf("%d.spawned", i))
+		env := tsCoverEnv(covDir, preload, mark)
 		junit := filepath.Join(tmp, fmt.Sprintf("%d.xml", i))
 		argv := append(strings.Fields(r.nodeCmd), "--test-reporter=junit", "--test-reporter-destination="+junit, f)
 		res := runProcessEnv(dctx, dir, argv, env, timeout)
@@ -99,8 +106,12 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		if err != nil {
 			return nil, err
 		}
+		if _, err := os.Stat(mark); err == nil {
+			spawns = true
+		}
 		if spawns {
-			// A child started with its own env escapes NODE_V8_COVERAGE.
+			// A child that isn't node, or whose env sets NODE_V8_COVERAGE,
+			// escapes this coverage.
 			u.hit = func(int, int) bool { return true }
 		} else if found {
 			loaded = true
@@ -118,23 +129,117 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 	return cov, nil
 }
 
-// tsSpawnMarks are source fragments of a test file that can start a
-// process or a worker.
+// tsSpawnPreload is loaded (NODE_OPTIONS --require) into every node
+// process of a coverage run. In a test file's process (NODE_TEST_CONTEXT
+// set: node --test's own spawns of test files don't count; or a run with
+// test isolation off, where node --test spawns nothing), a call that
+// starts a process or a worker creates the file $CULL_TS_SPAWNED.
+const tsSpawnPreload = `'use strict';
+const mark = process.env.CULL_TS_SPAWNED;
+const inTest = !!process.env.NODE_TEST_CONTEXT ||
+  process.execArgv.some((a) => /^--(experimental-)?test-isolation=none$/.test(a));
+if (mark && inTest) {
+  const fs = require('node:fs');
+  const hit = () => { try { fs.writeFileSync(mark, ''); } catch {} };
+  const cp = require('node:child_process');
+  for (const n of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
+    const orig = cp[n];
+    if (typeof orig !== 'function') continue;
+    cp[n] = function (...args) { hit(); return orig.apply(this, args); };
+  }
+  const wt = require('node:worker_threads');
+  const W = wt.Worker;
+  wt.Worker = class extends W { constructor(...args) { hit(); super(...args); } };
+  require('node:module').syncBuiltinESMExports();
+}
+`
+
+// tsCoverEnv is the environment of a coverage run: V8 coverage into
+// covDir, preload loaded, its mark file at mark.
+func tsCoverEnv(covDir, preload, mark string) []string {
+	opts := ""
+	var env []string
+	for _, kv := range verify.FilteredEnv() {
+		switch {
+		case strings.HasPrefix(kv, "NODE_OPTIONS="):
+			opts = strings.TrimPrefix(kv, "NODE_OPTIONS=") + " "
+		case strings.HasPrefix(kv, "NODE_V8_COVERAGE="), strings.HasPrefix(kv, "CULL_TS_SPAWNED="):
+		default:
+			env = append(env, kv)
+		}
+	}
+	q := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(preload)
+	return append(env, "NODE_V8_COVERAGE="+covDir, "CULL_TS_SPAWNED="+mark, "NODE_OPTIONS="+opts+`--require "`+q+`"`)
+}
+
+// tsSpawnMarks are source fragments that can start a process or a
+// worker.
 var tsSpawnMarks = []string{"child_process", "worker_threads", "spawn(", "spawnSync(", "exec(", "execSync(", "execFile(", "execFileSync(", "fork("}
 
-// tsFileSpawns reports whether the test file at path mentions any of
-// tsSpawnMarks.
+// tsRelImport matches a relative module specifier in an import, export
+// ... from, dynamic import or require.
+var tsRelImport = regexp.MustCompile(`(?:\bfrom|\bimport|\brequire)\s*\(?\s*['"](\.{1,2}/[^'"]*)['"]`)
+
+// tsFileSpawns reports whether the file at path, or a file it imports
+// through relative specifiers (transitively), mentions any of
+// tsSpawnMarks. Bare specifiers (npm packages) aren't read: the runtime
+// preload sees those.
 func tsFileSpawns(path string) (bool, error) {
-	src, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-	for _, m := range tsSpawnMarks {
-		if strings.Contains(string(src), m) {
-			return true, nil
+	seen := map[string]bool{}
+	queue := []string{path}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		src, err := os.ReadFile(p)
+		if err != nil {
+			if p == path {
+				return false, err
+			}
+			continue
+		}
+		for _, m := range tsSpawnMarks {
+			if strings.Contains(string(src), m) {
+				return true, nil
+			}
+		}
+		for _, sm := range tsRelImport.FindAllStringSubmatch(string(src), -1) {
+			if r := tsResolve(filepath.Join(filepath.Dir(p), filepath.FromSlash(sm[1]))); r != "" {
+				queue = append(queue, r)
+			}
 		}
 	}
 	return false, nil
+}
+
+// tsResolve finds the file a relative specifier (joined to its
+// importer's directory) names: itself, with a script extension added or
+// its .js-style extension swapped for a TypeScript one, or a directory's
+// index; "" if none.
+func tsResolve(base string) string {
+	exts := []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
+	cands := []string{base}
+	for _, e := range exts {
+		cands = append(cands, base+e)
+	}
+	swap := map[string][]string{".js": {".ts", ".tsx"}, ".jsx": {".tsx"}, ".mjs": {".mts"}, ".cjs": {".cts"}}
+	if ts, ok := swap[filepath.Ext(base)]; ok {
+		for _, e := range ts {
+			cands = append(cands, strings.TrimSuffix(base, filepath.Ext(base))+e)
+		}
+	}
+	for _, e := range exts {
+		cands = append(cands, filepath.Join(base, "index"+e))
+	}
+	for _, c := range cands {
+		if st, err := os.Stat(c); err == nil && st.Mode().IsRegular() {
+			return c
+		}
+	}
+	return ""
 }
 
 // transforms reports whether the test command (or NODE_OPTIONS) loads a
