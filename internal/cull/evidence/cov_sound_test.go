@@ -9,6 +9,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/schuettc/tackle/internal/cull/runner"
 )
 
 // settleExpect runs Run on root with coverage selection and without
@@ -223,5 +226,111 @@ func matrixMatchesFull(t *testing.T, root string, mod Module) {
 	}
 	if !reflect.DeepEqual(rows(m), rows(full)) {
 		t.Errorf("selected:\n %v\nfull:\n %v", rows(m), rows(full))
+	}
+}
+
+// C2: table() is memoized, so only the first test to call it records its
+// body; test_b alone checks 'b'. Each test's coverage is measured in
+// its own forked child, so both record it.
+func TestCoverageMemoIsolated(t *testing.T) {
+	needCoverage(t)
+	root := pySettleRepo(t, "import functools\n\n\n@functools.lru_cache(maxsize=None)\ndef table():\n    return {'a': 1, 'b': 5}\n\n\ndef get(k):\n    return table()[k]\n",
+		"from calc import get\n\n\ndef test_a():\n    assert get('a') == 1\n\n\ndef test_b():\n    assert get('b') == 5\n")
+	settleExpect(t, root, "")
+}
+
+// C3: both tests import the module inside their body, so its
+// import-time lines (the def and its default) run in the first test
+// only; test_b alone checks limit=3 (f(4)).
+func TestCoverageLazyImportIsolated(t *testing.T) {
+	needCoverage(t)
+	root := pySettleRepo(t, "def f(x, limit=3):\n    return x > limit\n",
+		"def test_a():\n    import calc\n    assert calc.f(10)\n\n\ndef test_b():\n    import calc\n    assert calc.f(4)\n")
+	settleExpect(t, root, "")
+}
+
+// Isolating each test in a forked child doesn't change which tests pass
+// (fixtures of every scope, classes, parametrization, skips, xfail, a
+// failure, output and a teardown finalizer).
+func TestCoverageIsolationKeepsResults(t *testing.T) {
+	needCoverage(t)
+	calc := "def f(x):\n    return x > 3\n"
+	tests := `import pytest
+from calc import f
+
+STATE = []
+
+
+@pytest.fixture(scope="session")
+def sess():
+    return {"n": 0}
+
+
+@pytest.fixture(scope="module")
+def mod():
+    yield [1]
+    STATE.append("down")
+
+
+@pytest.fixture
+def fn(sess):
+    sess["n"] += 1
+    return sess["n"]
+
+
+def test_ok(fn, mod):
+    print("out")
+    assert f(10) and fn == 1 and mod == [1]
+
+
+def test_fail():
+    assert f(1)
+
+
+@pytest.mark.parametrize("x,want", [(10, True), (1, False)])
+def test_param(x, want):
+    assert f(x) == want
+
+
+@pytest.mark.parametrize("x", [10, 1])
+def test_param_bad(x):
+    assert f(x)
+
+
+@pytest.mark.skip
+def test_skipped():
+    assert False
+
+
+@pytest.mark.xfail
+def test_xfail():
+    assert f(1)
+
+
+class TestK:
+    def test_m(self, fn):
+        assert f(5) and fn >= 1
+
+    def test_bad(self):
+        assert not f(5)
+`
+	root := newRepo(t, map[string]string{"calc.py": calc, "test_calc.py": tests})
+	ids := []string{"py:test_calc.py:test_ok", "py:test_calc.py:test_fail", "py:test_calc.py:test_param", "py:test_calc.py:test_param_bad", "py:test_calc.py:test_skipped", "py:test_calc.py:test_xfail", "py:test_calc.py:TestK::test_m", "py:test_calc.py:TestK::test_bad"}
+	idx := nativeIndex("python", "test_calc.py", ids)
+	r, err := runner.For(root, "python", "test_calc.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := r.Run(context.Background(), root, []string{"test_calc.py"}, idx, time.Minute)
+	cov, err := r.(runner.Coverer).Cover(context.Background(), root, map[string]map[string]string{"test_calc.py": idx}, "calc.py", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"py:test_calc.py:test_ok": true, "py:test_calc.py:test_param": true, "py:test_calc.py:TestK::test_m": true}
+	if !reflect.DeepEqual(full.Passed, want) {
+		t.Fatalf("full run passed %v", full.Passed)
+	}
+	if !reflect.DeepEqual(cov.Passed, full.Passed) {
+		t.Errorf("coverage run passed %v, full run %v", cov.Passed, full.Passed)
 	}
 }

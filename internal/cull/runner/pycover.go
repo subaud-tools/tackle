@@ -20,17 +20,29 @@ import (
 // call and teardown get their own context, named by the test's node id
 // with its file path relative to the run's working directory. It writes
 // {"error", "contexts": {context: [lines]}, "stmts", "tests", "spawned"}
-// to $CULL_COV_OUT. An audit hook (and a wrap of multiprocessing's
-// Process.start, whose spawn and forkserver methods raise no audit
-// event) sees every process the tests start: one started in a test's
-// call phase lists that test in "spawned" (its child's work can't be
-// measured), one started anywhere else is an error. It starts coverage when pytest loads it (before
-// collection imports anything) and refuses (error) if the target was
-// already imported, or if coverage's tracer (sys.gettrace() and
-// threading's, as set by start) was replaced or removed after
-// collection or any test phase. The ctrace core is forced: sys.monitoring stops
+// to $CULL_COV_OUT.
+//
+// Each test (setup, call, teardown of every fixture it uses) runs in its
+// own forked child, pytest-forked style, which sends back (pickled, as
+// pytest's serializable reports keep tuples) its reports and coverage
+// and exits: no test changes the parent's state, so a
+// memoized or lazily imported line counts for every test that runs it,
+// not only the first. Collection runs once, in the parent (global).
+//
+// An audit hook (and a wrap of multiprocessing's Process.start, whose
+// spawn and forkserver methods raise no audit event) sees every process
+// the tests start (the plugin's own forks exempt): one started in a
+// test's call phase lists that test in "spawned" (its child's work can't
+// be measured), one started anywhere else is an error.
+//
+// It starts coverage when pytest loads it (before collection imports
+// anything) and refuses (error) if the target was already imported, if
+// coverage's tracer (sys.gettrace() and threading's, as set by start)
+// was replaced or removed after collection or any test phase, if a test
+// phase ran outside a forked child, or if a fork failed or a child died
+// without its data. The ctrace core is forced: sys.monitoring stops
 // reporting a line after its first hit, which breaks per-test contexts.
-const pyCovPlugin = `import json, os, sys, threading
+const pyCovPlugin = `import json, os, pickle, sys, threading, warnings
 
 _target = os.path.realpath(os.environ["CULL_COV_TARGET"])
 _out = os.environ["CULL_COV_OUT"]
@@ -41,11 +53,17 @@ _tracer = None
 _ttracer = None
 _phase = None
 _spawned = set()
+_own = False  # the plugin itself is forking
+_child = False  # this process is a test's forked child
+_ctxs = {}  # context -> lines, from the children
+_n = 0
 _SPAWN = frozenset(["subprocess.Popen", "os.fork", "os.forkpty", "os.posix_spawn", "os.posix_spawnp", "os.system", "os.startfile"])
 
 
 def _on_spawn(event):
     global _err
+    if _own:
+        return
     if _phase is not None and _phase[1] == "call":
         _spawned.add(_phase[0])
     elif _err is None:
@@ -128,7 +146,9 @@ def pytest_collection_finish(session):
 
 
 def _enter(item, phase):
-    global _phase
+    global _phase, _err
+    if _cov is not None and not _child and _err is None:
+        _err = "%s ran outside a forked child (another plugin ran the test protocol)" % _sel(item)
     _phase = (_sel(item), phase)
     _switch(_sel(item) + "|" + phase)
 
@@ -162,19 +182,115 @@ def pytest_runtest_teardown(item, nextitem):
     _switch("")
 
 
+def _contexts():
+    """Stops coverage and returns its target lines by context."""
+    _cov.stop()
+    data = _cov.get_data()
+    ctxs = {}
+    for f in data.measured_files():
+        if os.path.realpath(f) != _target:
+            continue
+        for line, cs in (data.contexts_by_lineno(f) or {}).items():
+            for c in cs:
+                ctxs.setdefault(c, set()).add(line)
+    return ctxs
+
+
+def _run_child(item, res):
+    from _pytest.runner import runtestprotocol
+
+    reports = runtestprotocol(item, log=False, nextitem=None)
+    ctxs = _contexts()
+    hook = item.config.hook
+    d = {
+        "error": _err,
+        "reports": [hook.pytest_report_to_serializable(config=item.config, report=r) for r in reports],
+        "contexts": {c: sorted(ls) for c, ls in ctxs.items()},
+        "tests": sorted(_tests),
+        "spawned": sorted(_spawned),
+    }
+    with open(res + ".tmp", "wb") as fh:
+        try:
+            pickle.dump(d, fh)
+        except Exception:
+            fh.seek(0)
+            fh.truncate()
+            for r in d["reports"]:
+                r["user_properties"] = [(str(k), str(v)) for k, v in r.get("user_properties", [])]
+            pickle.dump(d, fh)
+    os.rename(res + ".tmp", res)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_protocol(item, nextitem):
+    global _err, _own, _child, _n
+    if _cov is None or _err is not None:
+        return None
+    if not hasattr(os, "fork"):
+        _err = "per-test isolation needs os.fork"
+        return None
+    _n += 1
+    res = "%s.%d.pickle" % (_out, _n)
+    for f in (sys.stdout, sys.stderr):
+        try:
+            f.flush()
+        except Exception:
+            pass
+    ihook = item.ihook
+    ihook.pytest_runtest_logstart(nodeid=item.nodeid, location=item.location)
+    _own = True
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pid = os.fork()
+    except Exception as e:
+        _own = False
+        _err = "per-test isolation: fork failed (%s)" % e
+        ihook.pytest_runtest_logfinish(nodeid=item.nodeid, location=item.location)
+        return True
+    if pid == 0:
+        _own = False
+        _child = True
+        code = 0
+        try:
+            _run_child(item, res)
+        except BaseException:
+            code = 70
+        os._exit(code)
+    _own = False
+    _, status = os.waitpid(pid, 0)
+    try:
+        with open(res, "rb") as fh:
+            d = pickle.load(fh)
+        os.remove(res)
+    except Exception:
+        d = None
+    if d is None:
+        if _err is None:
+            _err = "the forked run of %s died without its data (wait status %d)" % (_sel(item), status)
+    else:
+        if d["error"] and _err is None:
+            _err = d["error"]
+        for c, ls in d["contexts"].items():
+            _ctxs.setdefault(c, set()).update(ls)
+        _tests.update(d["tests"])
+        _spawned.update(d["spawned"])
+        for r in d["reports"]:
+            rep = item.config.hook.pytest_report_from_serializable(config=item.config, data=r)
+            ihook.pytest_runtest_logreport(report=rep)
+    ihook.pytest_runtest_logfinish(nodeid=item.nodeid, location=item.location)
+    return True
+
+
 def pytest_unconfigure(config):
+    if _child:
+        return
     out = {"error": _err, "contexts": {}, "stmts": [], "tests": sorted(_tests), "spawned": sorted(_spawned)}
     if _cov is not None:
         try:
-            _cov.stop()
-            data = _cov.get_data()
-            ctxs = {}
-            for f in data.measured_files():
-                if os.path.realpath(f) != _target:
-                    continue
-                for line, cs in (data.contexts_by_lineno(f) or {}).items():
-                    for c in cs:
-                        ctxs.setdefault(c, set()).add(line)
+            ctxs = _contexts()
+            for c, ls in _ctxs.items():
+                ctxs.setdefault(c, set()).update(ls)
             out["contexts"] = {c: sorted(ls) for c, ls in ctxs.items()}
             _cov.clear_exclude()
             out["stmts"] = sorted(_cov.analysis2(_target)[1])
