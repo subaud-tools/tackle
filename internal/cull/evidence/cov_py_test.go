@@ -43,8 +43,8 @@ func newRunLog(t *testing.T, src string) *runLog {
 		b, _ := os.ReadFile(file)
 		line := firstDiffLine(l.src, string(b))
 		f, _ := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		fmt.Fprintf(f, "--- %d\n", line)
-		f.Close()
+		_, _ = fmt.Fprintf(f, "--- %d\n", line)
+		_ = f.Close()
 	}
 	t.Cleanup(func() { plantHook = nil })
 	return l
@@ -69,7 +69,7 @@ func (l *runLog) byLine(t *testing.T) map[int][]string {
 	cur := -1
 	for _, s := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		if n, ok := strings.CutPrefix(s, "--- "); ok {
-			fmt.Sscan(n, &cur)
+			_, _ = fmt.Sscan(n, &cur)
 			if sets[cur] == nil {
 				sets[cur] = map[string]bool{}
 			}

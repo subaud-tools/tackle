@@ -335,7 +335,7 @@ func spanSameNamedMethods(root string, all []cases.TestCase, stderr io.Writer) {
 				for _, m := range ms {
 					where = append(where, m.Symbol+" in "+m.File)
 				}
-				fmt.Fprintf(stderr, "cull evidence: method %s is declared on %d receivers in %s; mutating every one (%s)\n",
+				_, _ = fmt.Fprintf(stderr, "cull evidence: method %s is declared on %d receivers in %s; mutating every one (%s)\n",
 					c.Symbol, len(ms), k.dir, strings.Join(where, ", "))
 			}
 			out = append(out, ms...)
@@ -517,7 +517,7 @@ func extractSuite(root string, files []string, stderr io.Writer) ([]cases.TestCa
 			return nil, err
 		}
 		for _, sk := range r.Skipped {
-			fmt.Fprintf(stderr, "cull evidence: skipped %s: %s\n", sk.File, sk.Reason)
+			_, _ = fmt.Fprintf(stderr, "cull evidence: skipped %s: %s\n", sk.File, sk.Reason)
 		}
 		all = append(all, r.Cases...)
 	}

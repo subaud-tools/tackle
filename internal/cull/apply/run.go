@@ -220,7 +220,7 @@ func Run(ctx context.Context, opt Options) (out Outcome, err error) {
 	if notice == nil {
 		notice = stderr
 	}
-	fmt.Fprintf(notice, "cull apply: snapshot %s\n", snap)
+	_, _ = fmt.Fprintf(notice, "cull apply: snapshot %s\n", snap)
 
 	// An interrupt that arrived after the baseline: nothing is written yet.
 	if ctx.Err() != nil {
@@ -471,11 +471,11 @@ func snapshotFile(dir string, e fileEdit) error {
 		return err
 	}
 	if _, err := f.Write(e.orig); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
@@ -563,6 +563,6 @@ func logCommands(w io.Writer, phase string, cmds []verify.Command) {
 		if label == "" {
 			label = strings.Join(c.Argv, " ")
 		}
-		fmt.Fprintf(w, "cull apply: %s tests: %s\n", phase, label)
+		_, _ = fmt.Fprintf(w, "cull apply: %s tests: %s\n", phase, label)
 	}
 }

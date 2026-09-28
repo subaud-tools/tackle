@@ -331,7 +331,7 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	if err := os.WriteFile(filepath.Join(tmp, "cull_cov_plugin.py"), []byte(pyCovPlugin), 0o600); err != nil {
 		return nil, err
 	}

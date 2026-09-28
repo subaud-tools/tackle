@@ -166,7 +166,7 @@ func TestUnreadableUntrackedSkipped(t *testing.T) {
 	if err := os.Chmod(secret, 0); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(secret, 0o644)
+	defer func() { _ = os.Chmod(secret, 0o644) }()
 	sbs, err := Prepare(root, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestConcurrentRunLocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}

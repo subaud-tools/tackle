@@ -23,16 +23,16 @@ type tsRunner struct {
 	nodeCmd string // node:test's script command text (kind == "node" only), split into argv at Run time
 }
 
-// noReporterErr is returned whenever a TypeScript project's test script
+// errNoReporter is returned whenever a TypeScript project's test script
 // isn't one runner knows how to get per-test results from: those tests
 // are unmeasurable, not a bug in this package.
-var noReporterErr = fmt.Errorf("no per-test reporter for this TypeScript runner")
+var errNoReporter = fmt.Errorf("no per-test reporter for this TypeScript runner")
 
 func newTSRunner(root, testFile string) (Runner, error) {
 	dirRel := path.Dir(filepath.ToSlash(testFile))
 	pkgDir, ok := verify.NearestTSTestDir(root, dirRel)
 	if !ok {
-		return nil, noReporterErr
+		return nil, errNoReporter
 	}
 	absDir := root
 	if pkgDir != "." {
@@ -40,7 +40,7 @@ func newTSRunner(root, testFile string) (Runner, error) {
 	}
 	script, ok := verify.PackageJSONTestScript(absDir)
 	if !ok {
-		return nil, noReporterErr
+		return nil, errNoReporter
 	}
 	switch {
 	case strings.Contains(script, "vitest"):
@@ -48,7 +48,7 @@ func newTSRunner(root, testFile string) (Runner, error) {
 	case strings.Contains(script, "--test"):
 		return &tsRunner{kind: "node", nodeCmd: script}, nil
 	default:
-		return nil, noReporterErr
+		return nil, errNoReporter
 	}
 }
 
@@ -93,7 +93,7 @@ func (r *tsRunner) runVitest(ctx context.Context, dir string, testFiles []string
 	}
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	argv := append([]string{"npx", "vitest", "run", "--reporter=json", "--outputFile=" + tmpPath}, testFiles...)
 	res := runProcess(ctx, dir, argv, timeout)
@@ -161,7 +161,7 @@ func (r *tsRunner) runNode(ctx context.Context, dir string, testFiles []string, 
 	}
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	fields := strings.Fields(r.nodeCmd)
 	argv := append(append([]string{}, fields...), "--test-reporter=junit", "--test-reporter-destination="+tmpPath)

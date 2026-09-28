@@ -78,12 +78,12 @@ func lockBase(abs string) (string, func(), error) {
 		return "", nil, fmt.Errorf("evidence: open lock %s: %w", lockPath, err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", nil, fmt.Errorf("evidence: another cull evidence run on %s holds the lock %s: %w", abs, lockPath, err)
 	}
 	return base, func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		_ = f.Close()
 	}, nil
 }
 
@@ -225,7 +225,7 @@ func planCopy(root string, logf func(string, ...any)) (*copyPlan, error) {
 				logf("%s: %v; not copied", p, err)
 				continue
 			}
-			f.Close()
+			_ = f.Close()
 		}
 		plan.files[p] = true
 		addDirs(p)

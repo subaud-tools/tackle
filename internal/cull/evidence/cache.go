@@ -156,7 +156,7 @@ func (c *resultCache) keyFor(p *modPlan) string {
 	}
 	for rel, sum := range c.files {
 		if extract.ForFile(rel) != nil && !slices.Contains(p.mod.TestFiles, rel) &&
-			!(strings.HasSuffix(rel, "_test.go") && testDirs[path.Dir(rel)]) {
+			(!strings.HasSuffix(rel, "_test.go") || !testDirs[path.Dir(rel)]) {
 			continue
 		}
 		k.Files[rel] = sum

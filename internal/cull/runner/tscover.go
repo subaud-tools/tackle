@@ -65,7 +65,7 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cov := &Coverage{global: func(int, int) bool { return false }, Passed: map[string]bool{}}

@@ -35,7 +35,7 @@ func TestCacheReuse(t *testing.T) {
 	}
 	ran := func() []string {
 		b, _ := os.ReadFile(log)
-		os.Remove(log)
+		_ = os.Remove(log)
 		set := map[string]bool{}
 		for _, l := range strings.Fields(string(b)) {
 			set[l] = true

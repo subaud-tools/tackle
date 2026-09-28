@@ -136,7 +136,7 @@ func (tsExtractor) Extract(root string, relpaths []string, maxContext int) (extr
 	if err != nil {
 		return extract.Result{}, fmt.Errorf("extract/ts: temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	if err := os.Chmod(tmpDir, 0o700); err != nil {
 		return extract.Result{}, fmt.Errorf("extract/ts: chmod temp dir: %w", err)
 	}
@@ -225,7 +225,7 @@ func Tidy(root, relpath string, before, src []byte) ([]byte, []string, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("extract/ts: temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	if err := os.Chmod(tmpDir, 0o700); err != nil {
 		return nil, nil, fmt.Errorf("extract/ts: chmod temp dir: %w", err)
 	}
@@ -296,7 +296,7 @@ func Sites(root, relpath string, src []byte) ([]MutationSite, error) {
 	if err != nil {
 		return nil, fmt.Errorf("extract/ts: temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	if err := os.Chmod(tmpDir, 0o700); err != nil {
 		return nil, fmt.Errorf("extract/ts: chmod temp dir: %w", err)
 	}
@@ -353,7 +353,7 @@ func Defs(root, relpath string, src []byte) ([]Definition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("extract/ts: temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	if err := os.Chmod(tmpDir, 0o700); err != nil {
 		return nil, fmt.Errorf("extract/ts: chmod temp dir: %w", err)
 	}

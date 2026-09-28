@@ -195,7 +195,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	logf := func(format string, args ...any) {
 		logMu.Lock()
 		defer logMu.Unlock()
-		fmt.Fprintf(opt.Stderr, "cull evidence: "+format+"\n", args...)
+		_, _ = fmt.Fprintf(opt.Stderr, "cull evidence: "+format+"\n", args...)
 	}
 	base, unlock, err := lockBase(abs)
 	if err != nil {

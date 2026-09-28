@@ -32,7 +32,7 @@ func TestRunCancelledStartsNothing(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		if _, err := os.Stat(marker); err == nil {
 			t.Errorf("%s: a process ran", name)
-			os.Remove(marker)
+			_ = os.Remove(marker)
 		}
 	}
 }

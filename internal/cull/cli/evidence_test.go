@@ -132,7 +132,7 @@ func TestEvidenceExitCodes(t *testing.T) {
 	})
 	t.Run("2 no last.json", func(t *testing.T) {
 		root := evidenceProject(t)
-		os.Remove(filepath.Join(root, ".cull", "last.json"))
+		_ = os.Remove(filepath.Join(root, ".cull", "last.json"))
 		if code, _, errw := run(t, "", "evidence"); code != 2 || !strings.Contains(errw, "cull check") {
 			t.Fatalf("code %d, errw %q", code, errw)
 		}

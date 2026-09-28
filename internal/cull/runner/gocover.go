@@ -48,7 +48,7 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

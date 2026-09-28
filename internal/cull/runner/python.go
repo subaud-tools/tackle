@@ -52,7 +52,7 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	}
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	files := append([]string(nil), testFiles...)
 	sort.Strings(files)

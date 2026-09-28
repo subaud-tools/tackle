@@ -116,7 +116,7 @@ func (c *Client) attempt(ctx context.Context, body []byte) (Response, error) {
 	if err != nil {
 		return Response{}, retryable{err}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	switch {
 	case res.StatusCode == http.StatusOK:

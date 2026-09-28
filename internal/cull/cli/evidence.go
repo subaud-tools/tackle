@@ -148,19 +148,19 @@ func runEvidence(args []string, out, errw io.Writer) error {
 // reasons, and what ran.
 func writeEvidence(w io.Writer, r evidence.Result) {
 	if len(r.Rules) == 0 {
-		fmt.Fprintln(w, "nothing to measure: no review-band or unmeasured tests in .cull/last.json")
+		_, _ = fmt.Fprintln(w, "nothing to measure: no review-band or unmeasured tests in .cull/last.json")
 		return
 	}
 	n := map[string]int{}
 	for _, rule := range r.Rules {
 		n[rule]++
 	}
-	fmt.Fprintf(w, "kept as sole guards: %d\n", n[evidence.RuleSoleGuard])
-	fmt.Fprintf(w, "cut as redundant: %d\n", n[evidence.RuleRedundant])
-	fmt.Fprintf(w, "cut as catching nothing: %d\n", n[evidence.RuleCatchesNothing])
-	fmt.Fprintf(w, "unmeasured: %d\n", len(r.Unmeasured))
+	_, _ = fmt.Fprintf(w, "kept as sole guards: %d\n", n[evidence.RuleSoleGuard])
+	_, _ = fmt.Fprintf(w, "cut as redundant: %d\n", n[evidence.RuleRedundant])
+	_, _ = fmt.Fprintf(w, "cut as catching nothing: %d\n", n[evidence.RuleCatchesNothing])
+	_, _ = fmt.Fprintf(w, "unmeasured: %d\n", len(r.Unmeasured))
 	for _, id := range r.Unmeasured {
-		fmt.Fprintf(w, "  %s: %s\n", id, r.Reasons[id])
+		_, _ = fmt.Fprintf(w, "  %s: %s\n", id, r.Reasons[id])
 	}
-	fmt.Fprintf(w, "modules: %d, mutants: %d, duration: %s\n", r.Modules, r.Mutants, r.Duration.Round(time.Millisecond))
+	_, _ = fmt.Fprintf(w, "modules: %d, mutants: %d, duration: %s\n", r.Modules, r.Mutants, r.Duration.Round(time.Millisecond))
 }
