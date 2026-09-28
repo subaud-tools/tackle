@@ -10,7 +10,9 @@ import (
 // one module, seeds included: transitively, every def named by a reached
 // def's refs (module-level functions, types and variables, and methods of
 // any owner by name alone), and for each class or type so reached, all of
-// its methods (dunders, constructors, Go methods on it). Resolution is by
+// its methods (dunders, constructors, Go methods on it). A reached method
+// reaches its owner class too (cls(...), type(self)(...), replace(self)
+// construct it unnamed). Resolution is by
 // name only: over-inclusion is accepted, dynamic dispatch may be missed.
 func reach(defs []mutate.Def, seeds []int) []int {
 	byName := map[string][]int{}
@@ -38,6 +40,13 @@ func reach(defs []mutate.Def, seeds []int) []int {
 		if d.Owner == "" && (d.Kind == "class" || d.Kind == "type") {
 			for _, j := range byOwner[d.Name] {
 				visit(j)
+			}
+		}
+		if d.Owner != "" {
+			for _, j := range byName[d.Owner] {
+				if defs[j].Owner == "" {
+					visit(j)
+				}
 			}
 		}
 		for _, r := range d.Refs {

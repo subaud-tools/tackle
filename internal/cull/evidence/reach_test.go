@@ -195,8 +195,8 @@ func reachNames(defs []mutate.Def, seeds ...string) []string {
 	return out
 }
 
-// Reach follows calls, constructed classes (all their methods) and
-// methods by name, transitively, and nothing else in the module.
+// Reach follows calls, constructed classes (all their methods), methods
+// by name and their owner classes, transitively, and nothing else.
 func TestReachDoesNotLeak(t *testing.T) {
 	defs := []mutate.Def{
 		{Name: "f", Kind: "function", Refs: []string{"x", "g", "C"}},
@@ -213,7 +213,7 @@ func TestReachDoesNotLeak(t *testing.T) {
 		{Name: "__init__", Owner: "D", Kind: "method"},
 	}
 	got := reachNames(defs, "f")
-	want := []string{"C", "C.__post_init__", "C.check", "R.run", "f", "g", "h"}
+	want := []string{"C", "C.__post_init__", "C.check", "R", "R.other", "R.run", "f", "g", "h"}
 	if !slices.Equal(got, want) {
 		t.Errorf("reach(f) = %v, want %v", got, want)
 	}
