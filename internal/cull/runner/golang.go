@@ -88,7 +88,10 @@ func (golangRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 			pkgSpec = "./" + sub
 		}
 		runRe := "^(" + strings.Join(names, "|") + ")$"
-		argv := []string{"go", "test", "-json", "-run", runRe, pkgSpec}
+		// -count=1: never replay a cached result. Evidence runs the same
+		// unmutated tests twice to detect flakiness; a cache hit would
+		// replay the first run and hide it.
+		argv := []string{"go", "test", "-json", "-count=1", "-run", runRe, pkgSpec}
 
 		res := runProcess(deadlineCtx, dir, argv, timeout)
 		if res.StartErr != nil {

@@ -1,0 +1,297 @@
+// Package evidence measures which tests catch small planted bugs: it
+// copies a project into sandboxes (the working tree is never modified),
+// plants mutants in one sandbox at a time, runs the tests exercising each
+// mutated module, and records the per-module kill matrix.
+package evidence
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
+
+	tools "github.com/schuettc/tools-common"
+)
+
+// Sandbox is one private copy of the project, owned by at most one worker
+// at a time.
+type Sandbox struct{ Dir string }
+
+// heavyDirs are dependency directories symlinked into a sandbox rather
+// than copied. vendor is only heavy when git tracks nothing under it.
+var heavyDirs = map[string]bool{"node_modules": true, "venv": true, ".venv": true, "vendor": true}
+
+// Prepare returns n sandboxes for root under
+// tools.CacheDir("cull")/evidence/<sha256(root)[:12]>/w<N>. Each holds a
+// copy of every file `git ls-files -co --exclude-standard` lists, with
+// heavy dependency directories (node_modules, venv, .venv, and vendor when
+// untracked) symlinked to root's instead. Existing sandboxes are
+// refreshed: changed files are rewritten, and anything not in the listing
+// (stale files, build output) is removed.
+func Prepare(root string, n int) ([]Sandbox, error) {
+	if n < 1 {
+		n = 1
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := planCopy(abs)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(abs))
+	base := filepath.Join(tools.CacheDir("cull"), "evidence", hex.EncodeToString(sum[:])[:12])
+	if err := tools.EnsureDir(base); err != nil {
+		return nil, err
+	}
+	out := make([]Sandbox, 0, n)
+	for i := 0; i < n; i++ {
+		dir := filepath.Join(base, fmt.Sprintf("w%d", i))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+		if err := plan.sync(abs, dir); err != nil {
+			return nil, fmt.Errorf("evidence: sandbox %s: %w", dir, err)
+		}
+		out = append(out, Sandbox{Dir: dir})
+	}
+	return out, nil
+}
+
+// copyPlan is the set of root-relative ('/'-separated) paths a sandbox
+// holds: files copied, heavy directories symlinked, and every directory
+// that is an ancestor of one of them.
+type copyPlan struct {
+	files map[string]bool
+	heavy map[string]bool
+	dirs  map[string]bool
+}
+
+func gitList(root string, args ...string) ([]string, error) {
+	cmd := exec.Command("git", append([]string{"ls-files", "-z"}, args...)...)
+	cmd.Dir = root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("evidence: git ls-files %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+func planCopy(root string) (*copyPlan, error) {
+	listed, err := gitList(root, "-co", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	tracked, err := gitList(root)
+	if err != nil {
+		return nil, err
+	}
+	ignoredDirs, err := gitList(root, "-oi", "--exclude-standard", "--directory")
+	if err != nil {
+		return nil, err
+	}
+	trackedDirs := map[string]bool{}
+	for _, p := range tracked {
+		for d := path.Dir(p); d != "."; d = path.Dir(d) {
+			trackedDirs[d] = true
+		}
+	}
+	// heavyPrefix returns the outermost heavy directory containing p (or p
+	// itself), or "" if there is none.
+	heavyPrefix := func(p string) string {
+		parts := strings.Split(strings.TrimSuffix(p, "/"), "/")
+		for i, c := range parts {
+			if !heavyDirs[c] {
+				continue
+			}
+			d := strings.Join(parts[:i+1], "/")
+			if c == "vendor" && trackedDirs[d] {
+				continue
+			}
+			return d
+		}
+		return ""
+	}
+
+	plan := &copyPlan{files: map[string]bool{}, heavy: map[string]bool{}, dirs: map[string]bool{}}
+	addDirs := func(p string) {
+		for d := path.Dir(p); d != "."; d = path.Dir(d) {
+			plan.dirs[d] = true
+		}
+	}
+	addHeavy := func(d string) {
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(d))); err != nil {
+			return
+		}
+		plan.heavy[d] = true
+		addDirs(d)
+	}
+	for _, p := range listed {
+		if h := heavyPrefix(p); h != "" {
+			addHeavy(h)
+			continue
+		}
+		if plan.files[p] {
+			continue
+		}
+		fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil || fi.IsDir() {
+			continue // deleted but still tracked, or a submodule
+		}
+		plan.files[p] = true
+		addDirs(p)
+	}
+	for _, p := range ignoredDirs {
+		if !strings.HasSuffix(p, "/") {
+			continue
+		}
+		if h := heavyPrefix(p); h != "" {
+			addHeavy(h)
+		}
+	}
+	return plan, nil
+}
+
+// sync makes dir match the plan: prune anything the plan doesn't hold,
+// then copy changed files and (re)link heavy directories.
+func (p *copyPlan) sync(root, dir string) error {
+	err := filepath.WalkDir(dir, func(abs string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if abs == dir {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, abs)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		keep := false
+		switch {
+		case p.heavy[rel]:
+			keep = d.Type()&fs.ModeSymlink != 0
+		case p.files[rel]:
+			keep = !d.IsDir()
+		case p.dirs[rel]:
+			keep = d.IsDir()
+		}
+		if keep {
+			return nil
+		}
+		if err := os.RemoveAll(abs); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for rel := range p.files {
+		if err := syncFile(filepath.Join(root, filepath.FromSlash(rel)), filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+			return err
+		}
+	}
+	for rel := range p.heavy {
+		src := filepath.Join(root, filepath.FromSlash(rel))
+		dst := filepath.Join(dir, filepath.FromSlash(rel))
+		if t, err := os.Readlink(dst); err == nil && t == src {
+			continue
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.Symlink(src, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncFile copies src to dst unless dst already has identical content (a
+// symlink is recreated with the same target, never followed).
+func syncFile(src, dst string) error {
+	fi, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		if t, err := os.Readlink(dst); err == nil && t == target {
+			return nil
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		return os.Symlink(target, dst)
+	}
+	want, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if dfi, err := os.Lstat(dst); err == nil && dfi.Mode().IsRegular() && dfi.Size() == int64(len(want)) {
+		if have, err := os.ReadFile(dst); err == nil && bytes.Equal(have, want) {
+			if dfi.Mode().Perm() != fi.Mode().Perm() {
+				return os.Chmod(dst, fi.Mode().Perm())
+			}
+			return nil
+		}
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, want, fi.Mode().Perm())
+}
+
+// copiedFile reports whether rel is a regular file copied into sandbox dir
+// (no path component is a symlink), i.e. safe to mutate there.
+func copiedFile(dir, rel string) bool {
+	clean := path.Clean(filepath.ToSlash(rel))
+	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." || path.IsAbs(clean) {
+		return false
+	}
+	cur := dir
+	parts := strings.Split(clean, "/")
+	for i, c := range parts {
+		cur = filepath.Join(cur, c)
+		fi, err := os.Lstat(cur)
+		if err != nil || fi.Mode()&fs.ModeSymlink != 0 {
+			return false
+		}
+		if i == len(parts)-1 {
+			return fi.Mode().IsRegular()
+		}
+	}
+	return false
+}
