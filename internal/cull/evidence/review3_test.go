@@ -182,3 +182,26 @@ func TestGoAmbiguousMethodSpansAll(t *testing.T) {
 		t.Errorf("ambiguity not logged:\n%s", log.String())
 	}
 }
+
+// A measured test that passes a valid canary run provably doesn't load
+// this copy of the module: it leaves the module's measured set.
+func TestCanaryPasserUnmeasured(t *testing.T) {
+	needPython(t)
+	root := newRepo(t, map[string]string{
+		"calc.py":   pyCalc,
+		"test_a.py": "def test_add():\n    from calc import add\n    assert add(2, 3) == 5\n",
+		"test_b.py": "def test_b():\n    assert True\n",
+	})
+	a, b := "py:test_a.py:test_add", "py:test_b.py:test_b"
+	mod := Module{Rel: "calc.py", Lang: "python", TestFiles: []string{"test_a.py", "test_b.py"}, Tests: []string{a, b}}
+	m, err := RunMatrix(context.Background(), root, []Module{mod}, opts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.MeasuredByModule["calc.py"]; !reflect.DeepEqual(got, map[string]bool{a: true}) {
+		t.Errorf("measured = %v, want only %s", got, a)
+	}
+	if !reflect.DeepEqual(m.Unloaded["calc.py"], []string{b}) {
+		t.Errorf("Unloaded = %v", m.Unloaded)
+	}
+}

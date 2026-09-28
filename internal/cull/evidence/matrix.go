@@ -64,6 +64,8 @@ type Mutant struct {
 // treated like Shadowed ones.
 // Dropped maps a module to the test files (sorted) left out of it because
 // they did not run cleanly on their own (see modPlan.isolate).
+// Unloaded maps a module to the tests (sorted) that passed a valid canary
+// run of it: they don't load this copy, so they are not measured there.
 type Matrix struct {
 	Mutants  []Mutant        `json:"mutants"`
 	Baseline map[string]bool `json:"baseline"`
@@ -74,6 +76,7 @@ type Matrix struct {
 	Shadowed         []string                   `json:"shadowed"`
 	Unconfirmed      []string                   `json:"unconfirmed"`
 	Dropped          map[string][]string        `json:"dropped"`
+	Unloaded         map[string][]string        `json:"unloaded"`
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
@@ -110,6 +113,7 @@ type modPlan struct {
 	measured map[string]bool // passed both baseline runs
 	failed   map[string]bool // failed at least one baseline run
 	dropped  []string        // test files that did not run cleanly alone
+	unloaded []string        // measured tests that passed a valid canary run
 	unmapped int
 	slowest  time.Duration // the slower baseline run (all groups)
 }
@@ -202,6 +206,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 			if err != nil {
 				return err
 			}
+			if len(p.unloaded) > 0 {
+				logf("canary %s: passed by %s; they don't load this copy", p.mod.Rel, strings.Join(p.unloaded, ", "))
+			}
 			switch st {
 			case canaryLoaded:
 				logf("canary %s: loaded (%s)", p.mod.Rel, why)
@@ -253,7 +260,7 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		return Matrix{}, err
 	}
 
-	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}, Dropped: map[string][]string{}}
+	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}, Dropped: map[string][]string{}, Unloaded: map[string][]string{}}
 	flaky := map[string]bool{}
 	for _, p := range plans {
 		m.Unmapped += p.unmapped
@@ -270,6 +277,9 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		}
 		if len(p.dropped) > 0 {
 			m.Dropped[p.mod.Rel] = p.dropped
+		}
+		if len(p.unloaded) > 0 {
+			m.Unloaded[p.mod.Rel] = p.unloaded
 		}
 		if !p.ok || p.shadowed || p.unsure || len(p.sites) == 0 {
 			continue
@@ -756,7 +766,9 @@ const (
 )
 
 // canary plants a module-breaking change (see canarySource) in sb, runs
-// the groups holding measured tests once, and restores the module. The
+// the groups holding measured tests once, and restores the module. A
+// measured test that passes a valid run doesn't load this copy: it moves
+// from p.measured to p.unloaded. The
 // status is canaryLoaded when a measured test failed (even in a run that
 // then timed out) or a run was Invalid (a Go build failure, a pytest
 // collection error); else canaryUnconfirmed when a run timed out or
@@ -773,12 +785,23 @@ func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration)
 		return 0, "", fmt.Errorf("evidence: plant canary in %s: %w", file, err)
 	}
 	st = canaryShadowed
+	var passed []string
 	for _, g := range p.groups {
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
 		p.clearBytecode(sb)
 		o := g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
+		if badRun(o) == "" {
+			for id := range o.Passed {
+				if p.measured[id] {
+					passed = append(passed, id)
+				}
+			}
+		}
+		if st == canaryLoaded {
+			continue
+		}
 		for id := range o.Failed {
 			if p.measured[id] {
 				st, why = canaryLoaded, id+" failed"
@@ -786,11 +809,11 @@ func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration)
 			}
 		}
 		if st == canaryLoaded {
-			break
+			continue
 		}
 		if o.Invalid && !o.TimedOut && o.Err == "" {
 			st, why = canaryLoaded, badRun(o)
-			break
+			continue
 		}
 		if r := badRun(o); r != "" {
 			st, why = canaryUnconfirmed, r
@@ -799,6 +822,11 @@ func (p *modPlan) canary(ctx context.Context, sb Sandbox, timeout time.Duration)
 	if err := os.WriteFile(file, p.src, 0o644); err != nil {
 		return 0, "", fmt.Errorf("evidence: restore %s: %w", file, err)
 	}
+	sort.Strings(passed)
+	for _, id := range passed {
+		delete(p.measured, id)
+	}
+	p.unloaded = passed
 	return st, why, nil
 }
 

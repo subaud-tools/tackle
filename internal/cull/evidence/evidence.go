@@ -512,6 +512,7 @@ type evidenceFile struct {
 	Shadowed    []string            `json:"shadowed"`
 	Unconfirmed []string            `json:"unconfirmed"`
 	Dropped     map[string][]string `json:"dropped"`
+	Unloaded    map[string][]string `json:"unloaded"`
 }
 
 type moduleJSON struct {
@@ -522,7 +523,7 @@ type moduleJSON struct {
 }
 
 func writeEvidenceJSON(root string, mods []Module, m Matrix) error {
-	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Unconfirmed: m.Unconfirmed, Dropped: m.Dropped}
+	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Unconfirmed: m.Unconfirmed, Dropped: m.Dropped, Unloaded: m.Unloaded}
 	for _, mod := range mods {
 		f.Modules = append(f.Modules, moduleJSON{mod.Rel, mod.Lang, mod.TestFiles, mod.Tests})
 	}
