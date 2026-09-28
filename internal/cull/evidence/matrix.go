@@ -66,6 +66,8 @@ type Mutant struct {
 // they did not run cleanly on their own (see modPlan.isolate).
 // Unloaded maps a module to the tests (sorted) that passed a valid canary
 // run of it: they don't load this copy, so they are not measured there.
+// NoSites lists (sorted) the modules skipped for having no mutation site
+// (inside the targets' callees, when given).
 type Matrix struct {
 	Mutants  []Mutant        `json:"mutants"`
 	Baseline map[string]bool `json:"baseline"`
@@ -77,6 +79,7 @@ type Matrix struct {
 	Unconfirmed      []string                   `json:"unconfirmed"`
 	Dropped          map[string][]string        `json:"dropped"`
 	Unloaded         map[string][]string        `json:"unloaded"`
+	NoSites          []string                   `json:"no_sites"`
 }
 
 // Options tunes RunMatrix and Run. Zero values take defaults: Workers = runtime.NumCPU(),
@@ -179,9 +182,14 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 	}
 
 	var plans []*modPlan
+	var noSites []string
 	for _, mod := range mods {
-		if p := planModule(abs, sbs[0].Dir, mod, opt.MaxMutants, logf); p != nil {
+		p, empty := planModule(abs, sbs[0].Dir, mod, opt.MaxMutants, logf)
+		if p != nil {
 			plans = append(plans, p)
+		}
+		if empty {
+			noSites = append(noSites, mod.Rel)
 		}
 	}
 
@@ -260,7 +268,8 @@ func RunMatrix(ctx context.Context, root string, mods []Module, opt Options) (Ma
 		return Matrix{}, err
 	}
 
-	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}, Dropped: map[string][]string{}, Unloaded: map[string][]string{}}
+	m := Matrix{Mutants: mutants, Baseline: map[string]bool{}, MeasuredByModule: map[string]map[string]bool{}, Dropped: map[string][]string{}, Unloaded: map[string][]string{}, NoSites: noSites}
+	sort.Strings(m.NoSites)
 	flaky := map[string]bool{}
 	for _, p := range plans {
 		m.Unmapped += p.unmapped
@@ -373,26 +382,27 @@ func runJobs(ctx context.Context, pool chan Sandbox, workers int, jobs []func(Sa
 
 // planModule reads mod's source, samples its sites, and groups its test
 // files by Runner. It returns nil (with a progress line) for a module that
-// can't be measured at all.
-func planModule(root, sbDir string, mod Module, max int, logf func(string, ...any)) *modPlan {
+// can't be measured at all; noSites is true when that's because it has no
+// mutation site.
+func planModule(root, sbDir string, mod Module, max int, logf func(string, ...any)) (p *modPlan, noSites bool) {
 	if !copiedFile(sbDir, mod.Rel) {
 		logf("%s: not a copied project file; skipped", mod.Rel)
-		return nil
+		return nil, false
 	}
 	mut := mutate.For(mod.Lang)
 	if mut == nil {
 		logf("%s: no mutator for %q; skipped", mod.Rel, mod.Lang)
-		return nil
+		return nil, false
 	}
 	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(mod.Rel)))
 	if err != nil {
 		logf("%s: %v; skipped", mod.Rel, err)
-		return nil
+		return nil, false
 	}
 	sites, err := mut.Sites(root, mod.Rel, src)
 	if err != nil {
 		logf("%s: %v; skipped", mod.Rel, err)
-		return nil
+		return nil, false
 	}
 	if len(mod.Callees) > 0 {
 		sites = targetSites(mod.Rel, src, sites, mod.Callees, logf)
@@ -402,9 +412,9 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 	}
 	if len(sites) == 0 {
 		logf("%s: no mutation sites; skipped", mod.Rel)
-		return nil
+		return nil, true
 	}
-	p := &modPlan{mod: mod, src: src, sites: sites}
+	p = &modPlan{mod: mod, src: src, sites: sites}
 
 	byKey := map[string][]*group{}
 	var keys []string
@@ -443,9 +453,9 @@ func planModule(root, sbDir string, mod Module, max int, logf func(string, ...an
 	}
 	if len(p.groups) == 0 {
 		logf("%s: no runnable tests; skipped", mod.Rel)
-		return nil
+		return nil, false
 	}
-	return p
+	return p, false
 }
 
 // targetSites keeps the sites fully inside each callee's definition

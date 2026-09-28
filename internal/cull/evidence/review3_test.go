@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,7 +52,7 @@ func planBaseline(t *testing.T, root string, mod Module) *modPlan {
 		t.Fatal(err)
 	}
 	abs, _ := filepath.Abs(root)
-	p := planModule(abs, sbs[0].Dir, mod, 30, func(string, ...any) {})
+	p, _ := planModule(abs, sbs[0].Dir, mod, 30, func(string, ...any) {})
 	if p == nil {
 		t.Fatal("no plan")
 	}
@@ -203,5 +204,83 @@ func TestCanaryPasserUnmeasured(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.Unloaded["calc.py"], []string{b}) {
 		t.Errorf("Unloaded = %v", m.Unloaded)
+	}
+}
+
+// A target measured in one module but unmeasured in another it exercises
+// (here util.py is shadowed) is unmeasured, never settled on the first
+// module alone: its sole catch could be in the unmeasured one.
+func TestPartialMeasurementUnmeasured(t *testing.T) {
+	needPython(t)
+	outside := t.TempDir()
+	write(t, outside, "util.py", "def dbl(x):\n    return x * 2\n")
+	root := newRepo(t, map[string]string{
+		"calc.py":     pyCalc,
+		"util.py":     "def dbl(x):\n    return x * 2\n",
+		"conftest.py": "import sys\nsys.path.insert(0, " + pyQuote(outside) + ")\n",
+		"tests/test_calc.py": "from calc import add\nfrom util import dbl\n\n\n" +
+			"def test_both():\n    assert add(2, 3) == 5\n    assert dbl(2) == 4\n\n\n" +
+			"def test_add_only():\n    assert add(2, 3) == 5\n",
+	})
+	writeLast(t, root, []string{"tests/test_calc.py"}, map[string]verdict{"test_both": {"review", "review_band"}})
+	res, err := Run(context.Background(), root, settleOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "py:tests/test_calc.py:test_both"
+	if len(res.Settled) != 0 {
+		t.Errorf("Settled = %v", res.Settled)
+	}
+	if res.Reasons[id] != reasonShadowed {
+		t.Errorf("reason = %q", res.Reasons[id])
+	}
+	_, by := loadLast(t, root)
+	if tr := by["test_both"]; tr.Verdict != "review" || tr.Rule != RuleUnmeasured {
+		t.Errorf("test_both: %s/%s %v", tr.Verdict, tr.Rule, tr.Reasons)
+	}
+}
+
+// moduleGap: any module the target exercises that is unmeasured for it
+// gives the reason; a module with no sites to plant says nothing.
+func TestModuleGapTable(t *testing.T) {
+	const id, file = "py:t.py:test_x", "t.py"
+	ok := []Mutant{mu("a.py", "m", id)}
+	excl := []Mutant{{Module: "a.py"}}
+	yes := map[string]map[string]bool{"a.py": {id: true}}
+	none := map[string]map[string]bool{}
+	for _, c := range []struct {
+		name string
+		v    matrixView
+		want string
+	}{
+		{"measured", matrixView{byModule: map[string][]Mutant{"a.py": ok}, measuredBy: yes}, ""},
+		{"shadowed", matrixView{shadowed: map[string]string{"a.py": reasonShadowed}, measuredBy: none}, reasonShadowed},
+		{"unconfirmed", matrixView{shadowed: map[string]string{"a.py": reasonUnconfirmed}, measuredBy: none}, reasonUnconfirmed},
+		{"dropped", matrixView{dropped: map[string][]string{"a.py": {file}}, measuredBy: none}, reasonDropped},
+		{"unloaded", matrixView{unloaded: map[string][]string{"a.py": {id}}, measuredBy: none}, reasonShadowed},
+		{"all excluded", matrixView{byModule: map[string][]Mutant{"a.py": excl}, measuredBy: yes}, reasonExcluded},
+		{"no baseline", matrixView{measuredBy: none}, reasonNoBaseline},
+		{"flaky", matrixView{measuredBy: none, flaky: map[string]bool{id: true}}, reasonFlaky},
+		{"no sites", matrixView{measuredBy: none, noSites: map[string]bool{"a.py": true}}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := moduleGap(id, file, "a.py", c.v); got != c.want {
+				t.Errorf("moduleGap = %q, want %q", got, c.want)
+			}
+			// A second, fully measured module doesn't hide the gap.
+			v := c.v
+			v.byModule = map[string][]Mutant{"a.py": v.byModule["a.py"], "b.py": {mu("b.py", "n", id)}}
+			mb := map[string]map[string]bool{"b.py": {id: true}}
+			maps.Copy(mb, v.measuredBy)
+			v.measuredBy = mb
+			ev := measure(id, []string{"a.py", "b.py"}, v.byModule, v.measuredBy, map[string]bool{id: true})
+			if !ev.Measured {
+				t.Fatalf("b.py alone not measured: %+v", ev)
+			}
+			ev = gateModules(ev, id, file, []string{"a.py", "b.py"}, v)
+			if want := c.want == ""; ev.Measured != want || ev.Reason != c.want {
+				t.Errorf("gated: measured %v reason %q, want %q", ev.Measured, ev.Reason, c.want)
+			}
+		})
 	}
 }

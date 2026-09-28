@@ -78,7 +78,9 @@ var afterMatrixHook func()
 // definitions they call (at most 15 mutants each), runs every test in
 // those modules' test files against each mutant, and settles each target:
 // sole guard of any bug → keep; measured with no sole guard → cut;
-// unmeasured → stays review (rule evidence_unmeasured). No other test is
+// unmeasured → stays review (rule evidence_unmeasured). A target is
+// unmeasured if any module it exercises is unmeasured for it (see
+// gateModules), whatever the others show. No other test is
 // touched. It refuses if .cull/last.json itself changed since it was
 // loaded. It writes .cull/evidence.json (the matrix) and rewrites
 // .cull/last.json, both atomically and 0600. No target: nothing is run or
@@ -221,6 +223,11 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	for _, rel := range m.Unconfirmed {
 		shadowed[rel] = reasonUnconfirmed
 	}
+	view := matrixView{byModule: byModule, measuredBy: m.MeasuredByModule, flaky: flaky, shadowed: shadowed,
+		dropped: m.Dropped, unloaded: m.Unloaded, noSites: map[string]bool{}}
+	for _, rel := range m.NoSites {
+		view.noSites[rel] = true
+	}
 	sites := map[string]bool{} // module → has mutation sites (computed lazily)
 	hasSites := func(rel string) bool {
 		if v, ok := sites[rel]; ok {
@@ -240,7 +247,8 @@ func Run(ctx context.Context, root string, opt Options) (Result, error) {
 	for _, i := range targets {
 		t := &rep.Tests[i]
 		ev := measure(t.ID, testMods[t.ID], byModule, m.MeasuredByModule, m.Baseline)
-		if !ev.Measured {
+		ev = gateModules(ev, t.ID, t.File, testMods[t.ID], view)
+		if !ev.Measured && ev.Reason == "" {
 			ev.Reason = unmeasuredReason(root, t.ID, byID, testMods[t.ID], byModule, m.Baseline, flaky, shadowed, m.Dropped, hasSites)
 		}
 		t.Verdict, t.Rule = settle(ev)
@@ -513,6 +521,7 @@ type evidenceFile struct {
 	Unconfirmed []string            `json:"unconfirmed"`
 	Dropped     map[string][]string `json:"dropped"`
 	Unloaded    map[string][]string `json:"unloaded"`
+	NoSites     []string            `json:"no_sites"`
 }
 
 type moduleJSON struct {
@@ -523,7 +532,7 @@ type moduleJSON struct {
 }
 
 func writeEvidenceJSON(root string, mods []Module, m Matrix) error {
-	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Unconfirmed: m.Unconfirmed, Dropped: m.Dropped, Unloaded: m.Unloaded}
+	f := evidenceFile{Mutants: m.Mutants, Baseline: m.Baseline, Flaky: m.Flaky, Unmapped: m.Unmapped, Shadowed: m.Shadowed, Unconfirmed: m.Unconfirmed, Dropped: m.Dropped, Unloaded: m.Unloaded, NoSites: m.NoSites}
 	for _, mod := range mods {
 		f.Modules = append(f.Modules, moduleJSON{mod.Rel, mod.Lang, mod.TestFiles, mod.Tests})
 	}
@@ -554,4 +563,60 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// matrixView is what the matrix says about each module, for moduleGap.
+type matrixView struct {
+	byModule   map[string][]Mutant
+	measuredBy map[string]map[string]bool
+	flaky      map[string]bool     // test ids
+	shadowed   map[string]string   // module → shadowed/unconfirmed reason
+	dropped    map[string][]string // module → dropped test files
+	unloaded   map[string][]string // module → tests that passed its canary
+	noSites    map[string]bool     // modules with no site to plant a bug in
+}
+
+// moduleGap says why module rel is unmeasured for test id (in test file
+// file), or "" when it is measured for id or has no site to plant a bug
+// in (so it can hide no catch).
+func moduleGap(id, file, rel string, v matrixView) string {
+	switch {
+	case v.shadowed[rel] != "":
+		return v.shadowed[rel]
+	case slices.Contains(v.dropped[rel], file):
+		return reasonDropped
+	case slices.Contains(v.unloaded[rel], id):
+		return reasonShadowed
+	case v.noSites[rel]:
+		return ""
+	case !v.measuredBy[rel][id]:
+		if v.flaky[id] {
+			return reasonFlaky
+		}
+		return reasonNoBaseline
+	}
+	for _, mu := range v.byModule[rel] {
+		if mu.KilledBy != nil {
+			return ""
+		}
+	}
+	return reasonExcluded
+}
+
+// gateModules leaves a measured ev measured only if every module in mods
+// is measured for id (see moduleGap): a catch the target alone makes in
+// an unmeasured module would go unseen, so it is never settled on the
+// other modules alone. Otherwise ev becomes unmeasured with the first
+// such module's reason (its counts are kept).
+func gateModules(ev Evidence, id, file string, mods []string, v matrixView) Evidence {
+	if !ev.Measured {
+		return ev
+	}
+	for _, rel := range mods {
+		if r := moduleGap(id, file, rel, v); r != "" {
+			ev.Measured, ev.Reason = false, r
+			return ev
+		}
+	}
+	return ev
 }
