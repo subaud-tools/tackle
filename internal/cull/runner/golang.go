@@ -122,6 +122,68 @@ func runGoGroups(ctx context.Context, dir string, groups map[string]map[string]b
 	return out
 }
 
+// RunEach builds each package's test binary once (go test -c, which
+// vets like go test) and runs it once per test file, with that file's
+// top-level tests (see EachRunner).
+func (golangRunner) RunEach(ctx context.Context, dir string, testFiles []string, index map[string]string, timeout time.Duration) Outcome {
+	files := append([]string(nil), testFiles...)
+	sort.Strings(files)
+	tmp, err := os.MkdirTemp("", "cull-gorun-*")
+	if err != nil {
+		o := newOutcome()
+		o.Err = err.Error()
+		return o
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	bins := map[string]string{} // package dir -> its test binary
+	return runEach(ctx, files, timeout, func(ctx context.Context, f string) Outcome {
+		out := newOutcome()
+		names, err := goTopLevelTestNames(filepath.Join(dir, filepath.FromSlash(f)))
+		if err != nil || len(names) == 0 {
+			return out
+		}
+		sub := path.Dir(filepath.ToSlash(f))
+		pkg := "./"
+		if sub != "." {
+			pkg = "./" + sub
+		}
+		bin, ok := bins[sub]
+		if !ok {
+			bin = filepath.Join(tmp, fmt.Sprintf("p%d.test", len(bins)))
+			bins[sub] = bin
+			res := runProcess(ctx, dir, []string{"go", "test", "-c", "-o", bin, pkg}, timeout)
+			switch {
+			case res.StartErr != nil:
+				out.Err = res.StartErr.Error()
+				return out
+			case res.TimedOut:
+				out.TimedOut = true
+				return out
+			case res.ExitCode != 0:
+				out.Invalid = true
+				out.InvalidReason = fmt.Sprintf("go: package %s failed to build", pkg)
+				return out
+			}
+		}
+		argv := []string{"go", "tool", "test2json", "-t", "-p", pkg, bin, "-test.v=test2json",
+			"-test.count=1", "-test.run", "^(" + strings.Join(names, "|") + ")$"}
+		res := runProcess(ctx, filepath.Join(dir, filepath.FromSlash(sub)), argv, timeout)
+		switch {
+		case res.StartErr != nil:
+			out.Err = res.StartErr.Error()
+			return out
+		case res.TimedOut:
+			out.TimedOut = true
+			return out
+		}
+		if sawTest, _ := parseGoEvents(res.Stdout, index, &out); !sawTest && res.ExitCode != 0 {
+			out.Invalid = true
+			out.InvalidReason = fmt.Sprintf("go: %s's test binary exited %d before any test ran", pkg, res.ExitCode)
+		}
+		return out
+	})
+}
+
 // goTopLevelTestNames returns the top-level `func TestXxx(t *testing.T)`
 // names declared in file (TestMain excluded: it's not a test).
 func goTopLevelTestNames(file string) ([]string, error) {

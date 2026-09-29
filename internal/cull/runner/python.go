@@ -83,6 +83,15 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	return out
 }
 
+// RunEach runs one pytest per test file (see EachRunner).
+func (r pythonRunner) RunEach(ctx context.Context, dir string, testFiles []string, index map[string]string, timeout time.Duration) Outcome {
+	files := append([]string(nil), testFiles...)
+	sort.Strings(files)
+	return runEach(ctx, files, timeout, func(ctx context.Context, f string) Outcome {
+		return r.Run(ctx, dir, []string{f}, index, timeout)
+	})
+}
+
 // readPyJUnit adds the results of pytest's junitxml report at path to
 // out (nothing when it's missing or unreadable).
 func readPyJUnit(dir, path string, index map[string]string, out *Outcome) {

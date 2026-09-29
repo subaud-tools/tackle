@@ -931,7 +931,7 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 		if all {
 			files = g.files
 		}
-		o := g.r.Run(ctx, sb.Dir, files, g.index, timeout)
+		o := runSelected(ctx, g, sb.Dir, files, all, timeout)
 		if why = badRun(o); why != "" {
 			break
 		}
@@ -949,6 +949,18 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 	}
 	sort.Strings(killed)
 	return killed, "", nil
+}
+
+// runSelected runs files of g for a mutant: every file together, as in
+// the full run, or (a selection) each file in its own process where the
+// runner can, as the coverage cross-file check verified it: files run
+// together in one process could meet a state neither the full run nor
+// the check saw (a file between them not selected).
+func runSelected(ctx context.Context, g *group, dir string, files []string, all bool, timeout time.Duration) runner.Outcome {
+	if e, ok := g.r.(runner.EachRunner); ok && !all {
+		return e.RunEach(ctx, dir, files, g.index, timeout)
+	}
+	return g.r.Run(ctx, dir, files, g.index, timeout)
 }
 
 // coverage measures, per group, what each test executes of the module
@@ -1034,7 +1046,7 @@ func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duratio
 // code runs for every test), else every test file (whole, in g's order)
 // holding a test whose coverage includes it (none: skip g). A test may
 // catch a mutant through state an earlier test of its file left, so a
-// file runs whole, as in the full run.
+// file runs whole, in its own process (see runSelected).
 func (p *modPlan) selection(g *group, s mutate.Site) (files []string, all bool) {
 	if !p.selective || g.cov == nil || !p.inFunc(s) || g.cov.Global(s.Start, s.End) {
 		return nil, true

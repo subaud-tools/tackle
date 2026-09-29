@@ -121,3 +121,54 @@ func runProcessEnv(ctx context.Context, dir string, argv, env []string, timeout 
 		StartErr: raw.StartErr,
 	}
 }
+
+// EachRunner is a Runner that can run test files one per process.
+type EachRunner interface {
+	// RunEach runs each of testFiles in its own process and merges the
+	// results per test id: a test file then runs as it does alone,
+	// whatever else is selected. One timeout covers every run; an
+	// Invalid or timed-out run ends it.
+	RunEach(ctx context.Context, dir string, testFiles []string, index map[string]string, timeout time.Duration) Outcome
+}
+
+// runEach runs each file with run, under one deadline for all of them,
+// merging the Outcomes (see EachRunner).
+func runEach(ctx context.Context, files []string, timeout time.Duration, run func(ctx context.Context, file string) Outcome) Outcome {
+	out := newOutcome()
+	dctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			out.Err = err.Error()
+			break
+		}
+		if dctx.Err() != nil {
+			out.TimedOut = true
+			break
+		}
+		mergeOutcome(&out, run(dctx, f))
+		if out.TimedOut || out.Invalid || out.Err != "" {
+			break
+		}
+	}
+	return out
+}
+
+// mergeOutcome adds o's results to dst (a failure wins, as in
+// markResult).
+func mergeOutcome(dst *Outcome, o Outcome) {
+	for id := range o.Passed {
+		markResult(dst, id, true)
+	}
+	for id := range o.Failed {
+		markResult(dst, id, false)
+	}
+	dst.Unmapped += o.Unmapped
+	dst.TimedOut = dst.TimedOut || o.TimedOut
+	if o.Invalid && !dst.Invalid {
+		dst.Invalid, dst.InvalidReason = true, o.InvalidReason
+	}
+	if dst.Err == "" {
+		dst.Err = o.Err
+	}
+}
