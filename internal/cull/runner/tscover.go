@@ -168,7 +168,12 @@ if (mark && inTest) {
   for (const n of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
     const orig = cp[n];
     if (typeof orig !== 'function') continue;
-    cp[n] = function (...args) { hit(); return orig.apply(this, args); };
+    const w = function (...args) { hit(); return orig.apply(this, args); };
+    // Keep the original's own properties (util.promisify.custom too).
+    for (const k of Reflect.ownKeys(orig)) {
+      try { Object.defineProperty(w, k, Object.getOwnPropertyDescriptor(orig, k)); } catch {}
+    }
+    cp[n] = w;
   }
   const wt = require('node:worker_threads');
   const W = wt.Worker;

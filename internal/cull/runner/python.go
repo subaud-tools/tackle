@@ -14,7 +14,8 @@ import (
 )
 
 // pythonRunner runs pytest with a JUnit XML report: `<interp> -m pytest -q
-// -p no:cacheprovider --junitxml=<tmp> <files>`.
+// -p no:cacheprovider -p no:randomly --junitxml=<tmp> <files>` (pytest-randomly
+// off: every run keeps the files' order).
 type pythonRunner struct{}
 
 // junitTestSuites is the root <testsuites> element pytest's --junitxml
@@ -58,7 +59,7 @@ func (pythonRunner) Run(ctx context.Context, dir string, testFiles []string, ind
 	sort.Strings(files)
 
 	interp := verify.PythonInterpreter(dir)
-	argv := append([]string{interp, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--junitxml=" + tmpPath}, files...)
+	argv := append([]string{interp, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:randomly", "--junitxml=" + tmpPath}, files...)
 
 	res := runProcessEnv(ctx, dir, argv, pythonEnv(dir), timeout)
 	if res.StartErr != nil {

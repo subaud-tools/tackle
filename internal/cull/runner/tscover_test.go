@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -141,5 +142,31 @@ func TestTSCoverIsolationOffFallsBack(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "isolation") {
 			t.Errorf("%q NODE_OPTIONS=%q: err %v, want an isolation fallback", c.cmd, c.opts, err)
 		}
+	}
+}
+
+// The preload's wrappers keep the originals' own properties, symbols
+// included: promisify(exec) still resolves to {stdout, stderr}.
+func TestTSSpawnPreloadKeepsProps(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("no node")
+	}
+	dir := t.TempDir()
+	preload := filepath.Join(dir, "p.cjs")
+	if err := os.WriteFile(preload, []byte(tsSpawnPreload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mark := filepath.Join(dir, "mark")
+	script := "const cp = require('node:child_process');\n" +
+		"require('node:util').promisify(cp.exec)('echo hi').then((r) => {\n" +
+		"  if (typeof r !== 'object' || r.stdout !== 'hi\\n') { console.error(JSON.stringify(r)); process.exit(1); }\n" +
+		"});\n"
+	cmd := exec.Command("node", "--require", preload, "-e", script)
+	cmd.Env = append(os.Environ(), "NODE_TEST_CONTEXT=child", "CULL_TS_SPAWNED="+mark)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("promisify(exec) under the preload: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(mark); err != nil {
+		t.Error("the spawn wasn't marked")
 	}
 }

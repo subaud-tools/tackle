@@ -239,3 +239,37 @@ func TestPythonEnvSandboxFirst(t *testing.T) {
 		t.Fatalf("got %v, want %s", got, want)
 	}
 }
+
+// pytest-randomly is disabled in Run and Cover: every run keeps the
+// files' order.
+func TestPythonRandomlyBlocked(t *testing.T) {
+	requirePython3(t)
+	if v := os.Getenv("CULL_PYCOV"); v != "" {
+		t.Setenv("VIRTUAL_ENV", v)
+	}
+	dir := t.TempDir()
+	files := map[string]string{
+		"calc.py":   "def f(x):\n    return x > 3\n",
+		"test_r.py": "from calc import f\n\n\ndef test_r(request):\n    assert f(5)\n    assert request.config.pluginmanager.is_blocked('randomly')\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx := map[string]string{"test_r": "py:test_r.py:test_r"}
+	r := pythonRunner{}
+	if out := r.Run(context.Background(), dir, []string{"test_r.py"}, idx, time.Minute); !out.Passed["py:test_r.py:test_r"] {
+		t.Errorf("Run: randomly not blocked: %+v", out)
+	}
+	if os.Getenv("CULL_PYCOV") == "" {
+		return
+	}
+	cov, err := r.Cover(context.Background(), dir, map[string]map[string]string{"test_r.py": idx}, "calc.py", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cov.Passed["py:test_r.py:test_r"] {
+		t.Error("Cover: randomly not blocked")
+	}
+}

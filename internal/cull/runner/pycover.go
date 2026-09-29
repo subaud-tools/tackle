@@ -449,8 +449,8 @@ type pyCovData struct {
 // passes over the files: each test isolated in a forked child, and all
 // tests in order in one process. A test covers a line if either pass
 // says so, and passed only if it passed in both. A unit is a test
-// function (all its parametrizations, selected by its node id without
-// the [...] suffix); lines are compared by the statement holding them
+// function (all its parametrizations; a mutant it covers runs its whole
+// file, see EachRunner); lines are compared by the statement holding them
 // (coverage.py's statement starts), so a continuation line counts with
 // its statement. Lines run outside any test's call phase (imports,
 // collection, fixture setup and teardown) are global.
@@ -498,7 +498,7 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 		if !fork {
 			mode = "CULL_COV_FORK=0"
 		}
-		argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "cull_cov_plugin", "--junitxml=" + junit}, testFiles...)
+		argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:randomly", "-p", "cull_cov_plugin", "--junitxml=" + junit}, testFiles...)
 		res := runProcessEnv(ctx, dir, argv, append(slices.Clone(env), "CULL_COV_OUT="+outPath, mode), timeout)
 		var d pyCovData
 		switch {
