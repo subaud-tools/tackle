@@ -48,7 +48,7 @@ import (
 // phase ran outside a forked child, or if a fork failed or a child died
 // without its data. The ctrace core is forced: sys.monitoring stops
 // reporting a line after its first hit, which breaks per-test contexts.
-const pyCovPlugin = `import json, os, pickle, re, sys, threading, warnings
+const pyCovPlugin = `import json, os, pickle, re, shlex, sys, threading, warnings
 
 _target = os.path.realpath(os.environ["CULL_COV_TARGET"])
 _root = os.path.realpath(os.environ["CULL_COV_ROOT"])
@@ -126,19 +126,38 @@ def _embeds(p):
 
 def _argv_runs(argv, cwd):
     """Whether any argv element may run code: a launcher's name, a .py
-    file, -m, or an existing path inside the project root."""
+    file, -m, or an existing path inside the project root. An element
+    with whitespace (a command string, as tmux, flock -c and ssh pass
+    one to a native binary that isn't itself a launcher) is split with
+    shlex and its tokens are scanned the same way; a split that fails is
+    itself treated as running code, since it can't be ruled out."""
     for a in argv or ():
         try:
             s = os.fsdecode(a)
         except TypeError:
             s = str(a)
-        if s == "-m" or s.lower().endswith(".py") or _launcher(os.path.basename(s)):
+        if _token_runs(s, cwd):
             return True
-        p = os.path.join(cwd, s)
-        if os.path.exists(p):
-            r = os.path.realpath(p)
-            if r == _root or r.startswith(os.path.join(_root, "")):
+        if any(c.isspace() for c in s):
+            try:
+                toks = shlex.split(s)
+            except ValueError:
                 return True
+            if any(_token_runs(t, cwd) for t in toks):
+                return True
+    return False
+
+
+def _token_runs(s, cwd):
+    """Whether one token (an argv element, or a token split from one) may
+    run code."""
+    if s == "-m" or s.lower().endswith(".py") or _launcher(os.path.basename(s)):
+        return True
+    p = os.path.join(cwd, s)
+    if os.path.exists(p):
+        r = os.path.realpath(p)
+        if r == _root or r.startswith(os.path.join(_root, "")):
+            return True
     return False
 
 

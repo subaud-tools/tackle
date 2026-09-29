@@ -112,6 +112,17 @@ func TestCoverageNativeScriptArgFallsBack(t *testing.T) {
 	settleExpect(t, root, "spawned")
 }
 
+// A native tool outside the project given a command-string argument
+// ("python -m srv", one argv element, as tmux/flock/ssh -c pass it)
+// falls back: the scan must split it to see the launcher inside.
+func TestCoverageNativeCommandStringArgFallsBack(t *testing.T) {
+	needCoverage(t)
+	tool := nativeTool(t, t.TempDir())
+	root := pySettleRepo(t, soundCalcFG, soundFGTests)
+	write(t, root, "conftest.py", configureSpawn(pyQuote(tool)+", 'python -m srv'", ""))
+	settleExpect(t, root, "spawned")
+}
+
 // A native binary embedding Python (its bytes name Py_Initialize) falls
 // back.
 func TestCoverageEmbeddedPythonSetupSpawnFallsBack(t *testing.T) {
