@@ -28,11 +28,14 @@ type goBlock struct {
 // Cover measures per-test coverage of module with Go's coverage
 // instrumentation: per package directory, the test binary is built once
 // (go test -c -coverpkg=<module's package>) and run once per top-level
-// test with its own coverprofile. A unit is a top-level test (its
-// subtests share its coverage). Code in no coverage block (package-level
+// test with its own coverprofile (isolated), and once per test file
+// with that file's top-level tests together, in order (a coverprofile
+// can't tell those tests apart: each covers the file's union). A unit
+// is a top-level test (its subtests share its coverage), covering what
+// either run ran. Code in no coverage block (package-level
 // declarations and var initializers, signatures) is global; init bodies
 // run in every test binary run, so every test covers them. A test
-// passed only if its run exited 0. Every test of a package whose test
+// passed only if both its runs exited 0. Every test of a package whose test
 // binary can start a process (see goTestsSpawn) covers every line: the
 // child's work isn't in the test's profile. When that can't be told
 // (go list fails), Cover fails: the module runs every test.
@@ -90,26 +93,44 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 		if err := procErr(ctx, res, "go test -c"); err != nil {
 			return nil, err
 		}
-		for j, tc := range bySub[sub] {
-			prof := filepath.Join(tmp, fmt.Sprintf("p%d-%d.out", i, j))
+		// profile runs the named top-level tests together, in the
+		// binary's order, with their own coverprofile.
+		k := 0
+		profile := func(names []string) ([]goBlock, bool, error) {
+			k++
+			prof := filepath.Join(tmp, fmt.Sprintf("p%d-%d.out", i, k))
 			res := runProcess(dctx, filepath.Join(dir, filepath.FromSlash(sub)),
-				[]string{bin, "-test.run", "^" + tc.name + "$", "-test.count=1", "-test.coverprofile=" + prof}, timeout)
+				[]string{bin, "-test.run", "^(" + strings.Join(names, "|") + ")$", "-test.count=1", "-test.coverprofile=" + prof}, timeout)
 			if err := procErr(ctx, res, ""); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			blocks, err := readGoProfile(prof, module, starts)
+			return blocks, res.ExitCode == 0, err
+		}
+		// The in-order pass: each file's tests together, in order.
+		byFile := map[string][]string{}
+		for _, tc := range bySub[sub] {
+			byFile[tc.file] = append(byFile[tc.file], tc.name)
+		}
+		inOrder := map[string][]goBlock{}
+		inOrderOK := map[string]bool{}
+		for _, f := range sortedKeys(byFile) {
+			blocks, ok, err := profile(byFile[f])
+			if err != nil {
+				return nil, err
+			}
+			inOrder[f], inOrderOK[f] = hitBlocks(blocks), ok
+		}
+		// The isolated pass: each test alone.
+		for _, tc := range bySub[sub] {
+			blocks, ok, err := profile([]string{tc.name})
 			if err != nil {
 				return nil, err
 			}
 			if all == nil {
 				all = blocks
 			}
-			var hit []goBlock
-			for _, b := range blocks {
-				if b.count > 0 {
-					hit = append(hit, b)
-				}
-			}
+			hit := append(hitBlocks(blocks), inOrder[tc.file]...)
 			u := Unit{Sel: tc.name, File: tc.file, hit: func(start, end int) bool {
 				for _, b := range hit {
 					if b.start < max(end, start+1) && start < b.end {
@@ -127,7 +148,7 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 				}
 			}
 			sort.Strings(u.IDs)
-			if res.ExitCode == 0 {
+			if ok && inOrderOK[tc.file] {
 				for _, id := range u.IDs {
 					cov.Passed[id] = true
 				}
@@ -147,6 +168,26 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 		return true
 	}
 	return cov, nil
+}
+
+// hitBlocks are the blocks that ran.
+func hitBlocks(blocks []goBlock) []goBlock {
+	var out []goBlock
+	for _, b := range blocks {
+		if b.count > 0 {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // goTestsSpawn reports whether the test binary of package directory pkg

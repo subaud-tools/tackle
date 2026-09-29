@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ import (
 // and exits: no test changes the parent's state, so a
 // memoized or lazily imported line counts for every test that runs it,
 // not only the first. Collection runs once, in the parent (global).
+// With CULL_COV_FORK=0 the tests run in order in one process instead
+// (still one context per test phase): a test's lines then include what
+// it ran because of the tests before it.
 //
 // An audit hook (and a wrap of multiprocessing's Process.start, whose
 // spawn and forkserver methods raise no audit event) sees every process
@@ -49,6 +53,7 @@ const pyCovPlugin = `import json, os, pickle, re, sys, threading, warnings
 _target = os.path.realpath(os.environ["CULL_COV_TARGET"])
 _root = os.path.realpath(os.environ["CULL_COV_ROOT"])
 _out = os.environ["CULL_COV_OUT"]
+_fork = os.environ.get("CULL_COV_FORK") != "0"
 _err = None
 _cov = None
 _tests = set()
@@ -234,7 +239,7 @@ def pytest_collection_finish(session):
 
 def _enter(item, phase):
     global _phase, _err
-    if _cov is not None and not _child and _err is None:
+    if _cov is not None and _fork and not _child and _err is None:
         _err = "%s ran outside a forked child (another plugin ran the test protocol)" % _sel(item)
     _phase = (_sel(item), phase)
     _switch(_sel(item) + "|" + phase)
@@ -312,7 +317,7 @@ def _run_child(item, res):
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_protocol(item, nextitem):
     global _err, _own, _child, _n
-    if _cov is None or _err is not None:
+    if _cov is None or _err is not None or not _fork:
         return None
     if not hasattr(os, "fork"):
         _err = "per-test isolation needs os.fork"
@@ -398,11 +403,14 @@ type pyCovData struct {
 	Ignored  []string         `json:"ignored"`
 }
 
-// Cover measures per-test coverage of module with pyCovPlugin. A unit
-// is a test function (all its parametrizations, selected by its node id
-// without the [...] suffix); lines are compared by the statement holding
-// them (coverage.py's statement starts), so a continuation line counts
-// with its statement. Lines run outside any test's call phase (imports,
+// Cover measures per-test coverage of module with pyCovPlugin, in two
+// passes over the files: each test isolated in a forked child, and all
+// tests in order in one process. A test covers a line if either pass
+// says so, and passed only if it passed in both. A unit is a test
+// function (all its parametrizations, selected by its node id without
+// the [...] suffix); lines are compared by the statement holding them
+// (coverage.py's statement starts), so a continuation line counts with
+// its statement. Lines run outside any test's call phase (imports,
 // collection, fixture setup and teardown) are global.
 func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if err := ctx.Err(); err != nil {
@@ -425,7 +433,6 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 	if err := os.WriteFile(filepath.Join(tmp, "cull_cov_plugin.py"), []byte(pyCovPlugin), 0o600); err != nil {
 		return nil, err
 	}
-	outPath := filepath.Join(tmp, "out.json")
 	var env []string
 	for _, kv := range pythonEnv(dir) {
 		if old, ok := strings.CutPrefix(kv, "PYTHONPATH="); ok {
@@ -433,44 +440,91 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "CULL_COV_TARGET="+target, "CULL_COV_OUT="+outPath, "CULL_COV_ROOT="+absDir)
-	junit := filepath.Join(tmp, "junit.xml")
-	argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "cull_cov_plugin", "--junitxml=" + junit}, sortedFiles(files)...)
-	res := runProcessEnv(ctx, dir, argv, env, timeout)
-	switch {
-	case res.StartErr != nil:
-		return nil, res.StartErr
-	case ctx.Err() != nil:
-		return nil, ctx.Err()
-	case res.TimedOut:
-		return nil, fmt.Errorf("the coverage run timed out")
-	case res.ExitCode == 2 || res.ExitCode == 3 || res.ExitCode == 4:
-		return nil, fmt.Errorf("pytest exited %d in the coverage run", res.ExitCode)
-	}
-	b, err := os.ReadFile(outPath)
-	if err != nil {
-		return nil, fmt.Errorf("the coverage plugin wrote no data (%s)", lastLineOf(res.Stderr, res.Stdout))
-	}
-	var d pyCovData
-	if err := json.Unmarshal(b, &d); err != nil {
-		return nil, fmt.Errorf("unreadable coverage data: %v", err)
-	}
-	if d.Error != nil {
-		return nil, fmt.Errorf("%s", *d.Error)
-	}
-	if len(d.Contexts) == 0 {
-		return nil, fmt.Errorf("no line of %s ran in the coverage run", module)
-	}
-	cov := pyCoverage(src, files, d)
+	env = append(env, "CULL_COV_TARGET="+target, "CULL_COV_ROOT="+absDir)
 	index := map[string]string{}
 	for _, idx := range files {
 		maps.Copy(index, idx)
 	}
-	o := newOutcome()
-	readPyJUnit(dir, junit, index, &o)
-	cov.Passed = o.Passed
+	n := 0
+	// pass runs the plugin over testFiles, forking per test or in order
+	// (each pass with its own timeout).
+	pass := func(testFiles []string, fork bool) (pyCovData, map[string]bool, error) {
+		n++
+		outPath := filepath.Join(tmp, fmt.Sprintf("out%d.json", n))
+		junit := filepath.Join(tmp, fmt.Sprintf("junit%d.xml", n))
+		mode := "CULL_COV_FORK=1"
+		if !fork {
+			mode = "CULL_COV_FORK=0"
+		}
+		argv := append([]string{verify.PythonInterpreter(dir), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "cull_cov_plugin", "--junitxml=" + junit}, testFiles...)
+		res := runProcessEnv(ctx, dir, argv, append(slices.Clone(env), "CULL_COV_OUT="+outPath, mode), timeout)
+		var d pyCovData
+		switch {
+		case res.StartErr != nil:
+			return d, nil, res.StartErr
+		case ctx.Err() != nil:
+			return d, nil, ctx.Err()
+		case res.TimedOut:
+			return d, nil, fmt.Errorf("the coverage run timed out")
+		case res.ExitCode == 2 || res.ExitCode == 3 || res.ExitCode == 4:
+			return d, nil, fmt.Errorf("pytest exited %d in the coverage run", res.ExitCode)
+		}
+		b, err := os.ReadFile(outPath)
+		if err != nil {
+			return d, nil, fmt.Errorf("the coverage plugin wrote no data (%s)", lastLineOf(res.Stderr, res.Stdout))
+		}
+		if err := json.Unmarshal(b, &d); err != nil {
+			return d, nil, fmt.Errorf("unreadable coverage data: %v", err)
+		}
+		if d.Error != nil {
+			return d, nil, fmt.Errorf("%s", *d.Error)
+		}
+		if len(d.Contexts) == 0 {
+			return d, nil, fmt.Errorf("no line of %s ran in the coverage run", module)
+		}
+		o := newOutcome()
+		readPyJUnit(dir, junit, index, &o)
+		return d, o.Passed, nil
+	}
+	names := sortedFiles(files)
+	iso, isoPassed, err := pass(names, true)
+	if err != nil {
+		return nil, err
+	}
+	ord, ordPassed, err := pass(names, false)
+	if err != nil {
+		return nil, err
+	}
+	d := mergePyCov(iso, ord)
+	cov := pyCoverage(src, files, d)
+	cov.Passed = map[string]bool{}
+	for id := range isoPassed {
+		if ordPassed[id] {
+			cov.Passed[id] = true
+		}
+	}
 	cov.Ignored = d.Ignored
 	return cov, nil
+}
+
+// mergePyCov is the union of two passes' data.
+func mergePyCov(a, b pyCovData) pyCovData {
+	union := func(x, y []string) []string {
+		set := map[string]bool{}
+		for _, s := range append(slices.Clone(x), y...) {
+			set[s] = true
+		}
+		out := slices.Collect(maps.Keys(set))
+		sort.Strings(out)
+		return out
+	}
+	d := pyCovData{Contexts: map[string][]int{}, Stmts: a.Stmts, Tests: union(a.Tests, b.Tests), Spawned: union(a.Spawned, b.Spawned), Ignored: union(a.Ignored, b.Ignored)}
+	for _, src := range []map[string][]int{a.Contexts, b.Contexts} {
+		for c, ls := range src {
+			d.Contexts[c] = append(d.Contexts[c], ls...)
+		}
+	}
+	return d
 }
 
 // pyCoverage builds a Coverage from the plugin's data.

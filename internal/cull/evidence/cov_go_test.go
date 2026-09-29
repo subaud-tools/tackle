@@ -31,6 +31,13 @@ func TestAdd(t *testing.T) {
 		t.Fatal("add")
 	}
 }
+`, log)
+}
+
+// covGoPosTest is a second test file of the package.
+const covGoPosTest = `package calc
+
+import "testing"
 
 func TestPosA(t *testing.T) {
 	logRun("TestPosA")
@@ -47,10 +54,9 @@ func TestPosB(t *testing.T) {
 		}
 	})
 }
-`, log)
-}
+`
 
-// Go: per-test coverprofiles select the tests each mutant runs (a
+// Go: coverprofiles select the test files each mutant runs (whole: a
 // subtest runs with its top-level test); a package-level var runs every
 // test; an unused function's mutants are uncovered. Same matrix as the
 // full run.
@@ -61,9 +67,10 @@ func TestGoCoverageSelectsTests(t *testing.T) {
 		"go.mod":       "module fixture\n\ngo 1.22\n",
 		"calc.go":      covGoSrc,
 		"calc_test.go": covGoTest(l.path),
+		"pos_test.go":  covGoPosTest,
 	})
-	mod := Module{Rel: "calc.go", Lang: "go", TestFiles: []string{"calc_test.go"},
-		Tests: []string{"go:calc_test.go:TestAdd", "go:calc_test.go:TestPosA", "go:calc_test.go:TestPosB"}}
+	mod := Module{Rel: "calc.go", Lang: "go", TestFiles: []string{"calc_test.go", "pos_test.go"},
+		Tests: []string{"go:calc_test.go:TestAdd", "go:pos_test.go:TestPosA", "go:pos_test.go:TestPosB"}}
 	var log bytes.Buffer
 	o := opts(1)
 	o.Stderr = &log
