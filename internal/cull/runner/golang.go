@@ -165,8 +165,14 @@ func (golangRunner) RunEach(ctx context.Context, dir string, testFiles []string,
 				return out
 			}
 		}
+		// go test always passes these two flags to the test binary; a
+		// bare `go tool test2json <bin>` invocation does not, so match
+		// them here or the binary's own behavior diverges from what the
+		// full run does (notably: os.Exit(0) mid-test silently exits
+		// instead of failing, without -test.paniconexit0).
 		argv := []string{"go", "tool", "test2json", "-t", "-p", pkg, bin, "-test.v=test2json",
-			"-test.count=1", "-test.run", "^(" + strings.Join(names, "|") + ")$"}
+			"-test.count=1", "-test.paniconexit0", "-test.timeout=10m0s",
+			"-test.run", "^(" + strings.Join(names, "|") + ")$"}
 		res := runProcess(ctx, filepath.Join(dir, filepath.FromSlash(sub)), argv, timeout)
 		switch {
 		case res.StartErr != nil:

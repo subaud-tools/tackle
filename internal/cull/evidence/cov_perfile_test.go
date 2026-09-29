@@ -25,6 +25,12 @@ func TestCoverageSelectedFilesSeparatePython(t *testing.T) {
 
 const modeGoSrc = "package calc\n\nvar mode int\n\nfunc SetMode(m int) { mode = m }\n\nfunc F(x int) bool {\n\treturn x > 0\n}\n"
 
+// The reviewer's os.Exit repro: a per-file `go tool test2json` invocation
+// that skips go test's own binary flags (-test.paniconexit0 in
+// particular) lets a mutant's os.Exit(0) look like a pass instead of the
+// kill the full run would record, wrongly cutting the guarding test.
+const exitGoSrc = "package calc\n\nimport \"os\"\n\nfunc Stop(x int) {\n\tif x > 100 {\n\t\tos.Exit(0)\n\t}\n}\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+
 func TestCoverageSelectedFilesSeparateGo(t *testing.T) {
 	needTools(t)
 	root := newRepo(t, map[string]string{
@@ -38,4 +44,24 @@ func TestCoverageSelectedFilesSeparateGo(t *testing.T) {
 	writeLast(t, root, []string{"a_test.go", "b_test.go", "c_test.go"}, map[string]verdict{"TestA": band, "TestB": band, "TestC": band})
 	settleExpect(t, root, "")
 	wantSole(t, root, "TestC")
+}
+
+// The reviewer's os.Exit repro: a mutant that makes Stop's guard trip on
+// Stop(5) calls os.Exit(0) mid-test. go test always passes
+// -test.paniconexit0 to the test binary, which turns that os.Exit(0)
+// into a failure instead of a silent, successful-looking process exit.
+// A per-file `go tool test2json` invocation that omits the flag misses
+// that failure and wrongly cuts TestS.
+func TestCoverageSelectedFilesSeparateGoPanicOnExit0(t *testing.T) {
+	needTools(t)
+	root := newRepo(t, map[string]string{
+		"go.mod":    "module fixture\n\ngo 1.22\n",
+		"calc.go":   exitGoSrc,
+		"s_test.go": "package calc\n\nimport \"testing\"\n\nfunc TestS(t *testing.T) {\n\tStop(5)\n}\n",
+		"a_test.go": "package calc\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal(\"a\")\n\t}\n}\n",
+	})
+	band := verdict{"review", "review_band"}
+	writeLast(t, root, []string{"s_test.go", "a_test.go"}, map[string]verdict{"TestS": band, "TestA": band})
+	settleExpect(t, root, "")
+	wantSole(t, root, "TestS")
 }
