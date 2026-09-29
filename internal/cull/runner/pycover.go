@@ -638,7 +638,7 @@ func pyCoverage(src []byte, files map[string]map[string]string, d pyCovData) *Co
 		if spawned[sel] {
 			hit = func(int, int) bool { return true }
 		}
-		cov.Units = append(cov.Units, Unit{Sel: sel, File: file, IDs: []string{id}, hit: hit})
+		cov.Units = append(cov.Units, Unit{File: file, IDs: []string{id}, hit: hit})
 	}
 	return cov
 }
@@ -662,19 +662,6 @@ func pyUnitID(index map[string]string, rest string) (string, bool) {
 	}
 	id, ok := index[native]
 	return id, ok
-}
-
-// RunUnits runs the units' node ids (deduplicated) like Run.
-func (r pythonRunner) RunUnits(ctx context.Context, dir string, units []Unit, index map[string]string, timeout time.Duration) Outcome {
-	seen := map[string]bool{}
-	var sels []string
-	for _, u := range units {
-		if !seen[u.Sel] {
-			seen[u.Sel] = true
-			sels = append(sels, u.Sel)
-		}
-	}
-	return r.Run(ctx, dir, sels, index, timeout)
 }
 
 func cutLast(s, sep string) (before, after string, found bool) {

@@ -135,7 +135,7 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 				all = blocks
 			}
 			hit := append(hitBlocks(blocks), hitBlocks(inOrder[tc.file])...)
-			u := Unit{Sel: tc.name, File: tc.file, hit: func(start, end int) bool {
+			u := Unit{File: tc.file, hit: func(start, end int) bool {
 				for _, b := range hit {
 					if b.start < max(end, start+1) && start < b.end {
 						return true
@@ -402,17 +402,4 @@ func readGoProfile(prof, module string, starts []int) ([]goBlock, error) {
 		out = append(out, goBlock{s, e, count})
 	}
 	return out, nil
-}
-
-// RunUnits runs the units' top-level tests, per package directory.
-func (golangRunner) RunUnits(ctx context.Context, dir string, units []Unit, index map[string]string, timeout time.Duration) Outcome {
-	groups := map[string]map[string]bool{}
-	for _, u := range units {
-		sub := path.Dir(filepath.ToSlash(u.File))
-		if groups[sub] == nil {
-			groups[sub] = map[string]bool{}
-		}
-		groups[sub][u.Sel] = true
-	}
-	return runGoGroups(ctx, dir, groups, index, timeout)
 }

@@ -98,7 +98,7 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		if err != nil {
 			return nil, err
 		}
-		u := Unit{Sel: f, File: f, hit: func(int, int) bool { return false }}
+		u := Unit{File: f, hit: func(int, int) bool { return false }}
 		for _, id := range files[f] {
 			u.IDs = append(u.IDs, id)
 		}
@@ -380,17 +380,4 @@ func utf16Offsets(src []byte) []int {
 	}
 	out[len(src)] = u
 	return out
-}
-
-// RunUnits runs the units' test files like Run.
-func (r *tsRunner) RunUnits(ctx context.Context, dir string, units []Unit, index map[string]string, timeout time.Duration) Outcome {
-	seen := map[string]bool{}
-	var files []string
-	for _, u := range units {
-		if !seen[u.File] {
-			seen[u.File] = true
-			files = append(files, u.File)
-		}
-	}
-	return r.Run(ctx, dir, files, index, timeout)
 }

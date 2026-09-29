@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -57,5 +58,25 @@ func TestCoverageDeterminismPython(t *testing.T) {
 	root := covPyRepo(t, filepath.Join(t.TempDir(), "runs"), map[string]string{})
 	band := verdict{"review", "review_band"}
 	writeLast(t, root, []string{"test_calc.py"}, map[string]verdict{"test_f": band, "test_g1": band, "test_g2": band})
+	settleBoth(t, root)
+}
+
+func TestCoverageDeterminismTS(t *testing.T) {
+	needTools(t)
+	if os.Getenv("CULL_TS") == "" {
+		t.Skip("CULL_TS not set")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH")
+	}
+	log := filepath.Join(t.TempDir(), "runs")
+	root := newRepo(t, map[string]string{
+		"package.json": `{"type": "module", "scripts": {"test": "node --test"}}`,
+		"calc.ts":      covTSSrc,
+		"a.test.ts":    covTSTest(log, "f", map[string]string{"fa": "assert.equal(f(1), 2)", "fb": "f(0)"}),
+		"b.test.ts":    covTSTest(log, "g", map[string]string{"g1": "assert.ok(g(5))", "g2": "assert.ok(!g(1))"}),
+	})
+	band := verdict{"review", "review_band"}
+	writeLast(t, root, []string{"a.test.ts", "b.test.ts"}, map[string]verdict{"fa": band, "fb": band, "g1": band, "g2": band})
 	settleBoth(t, root)
 }

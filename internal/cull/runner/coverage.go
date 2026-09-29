@@ -37,7 +37,6 @@ func (c *Coverage) Global(start, end int) bool {
 
 // Unit is one selectable test (see Coverage.Units).
 type Unit struct {
-	Sel  string   // what RunUnits runs: a pytest node id, a Go test name, a TS test file
 	File string   // the test file holding it, relative to dir
 	IDs  []string // the cull ids its results map to
 	hit  func(start, end int) bool
@@ -46,8 +45,9 @@ type Unit struct {
 // Covers reports whether u executed any of [start, end).
 func (u Unit) Covers(start, end int) bool { return u.hit != nil && u.hit(start, end) }
 
-// Coverer is a Runner that can measure per-test coverage of a module and
-// run a subset of its tests.
+// Coverer is a Runner that can measure per-test coverage of a module.
+// A mutant then runs, with Run, the whole test files holding a test
+// that covers it.
 type Coverer interface {
 	// Cover runs the test files (the keys of files, each mapped to its
 	// own native-name → cull-id index) once, unmutated, in dir, and
@@ -55,9 +55,6 @@ type Coverer interface {
 	// says why coverage couldn't be collected (tool missing, a bad run,
 	// no data at all): the caller then runs every test on every mutant.
 	Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error)
-	// RunUnits runs only units (from Cover over the same files) in dir
-	// once, like Run.
-	RunUnits(ctx context.Context, dir string, units []Unit, index map[string]string, timeout time.Duration) Outcome
 }
 
 // lineStarts returns the byte offset of each line's start (line 1 at
