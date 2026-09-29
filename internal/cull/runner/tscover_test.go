@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // V8 offsets are UTF-16 units; the innermost range decides; the script
@@ -116,6 +117,29 @@ func TestTSFileSpawnsTransitive(t *testing.T) {
 		got, err := tsFileSpawns(filepath.Join(dir, "p", f))
 		if err != nil || got != want {
 			t.Errorf("%s: got %v, %v; want %v", f, got, err, want)
+		}
+	}
+}
+
+// With node's test isolation off (in the test command or NODE_OPTIONS),
+// test files share one process: Cover refuses, so the module runs every
+// test file per mutant.
+func TestTSCoverIsolationOffFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "calc.js"), []byte("exports.f = (x) => x > 3;\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]map[string]string{"calc.test.js": {}}
+	for _, c := range []struct{ cmd, opts string }{
+		{"node --test --test-isolation=none", ""},
+		{"node --test --experimental-test-isolation=none", ""},
+		{"node --test", "--test-isolation=none"},
+	} {
+		t.Setenv("NODE_OPTIONS", c.opts)
+		r := &tsRunner{kind: "node", nodeCmd: c.cmd}
+		_, err := r.Cover(t.Context(), dir, files, "calc.js", time.Minute)
+		if err == nil || !strings.Contains(err.Error(), "isolation") {
+			t.Errorf("%q NODE_OPTIONS=%q: err %v, want an isolation fallback", c.cmd, c.opts, err)
 		}
 	}
 }

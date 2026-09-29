@@ -43,7 +43,8 @@ type v8Range struct {
 // innermost V8 range of any of its bytes ran; otherwise any file that
 // loaded the module covers all of it. A test file that can start a
 // process (see tsFileSpawns), or did start one while its tests ran (see
-// tsSpawnPreload), covers all of it too. Nothing is global:
+// tsSpawnPreload), covers all of it too. With node's test isolation off
+// (files share one process), Cover fails. Nothing is global:
 // module-level code runs in every file that loads the module.
 func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[string]string, module string, timeout time.Duration) (*Coverage, error) {
 	if r.kind != "node" {
@@ -51,6 +52,11 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if nodeIsolationOff(r.nodeCmd) || nodeIsolationOff(os.Getenv("NODE_OPTIONS")) {
+		// Every test file then runs in one process: a file's coverage
+		// alone isn't what it runs after the others.
+		return nil, fmt.Errorf("node test isolation is off (--test-isolation=none): test files share one process")
 	}
 	target := filepath.Join(dir, filepath.FromSlash(module))
 	src, err := os.ReadFile(target)
@@ -127,6 +133,23 @@ func (r *tsRunner) Cover(ctx context.Context, dir string, files map[string]map[s
 		return nil, fmt.Errorf("no test file loaded %s in the coverage runs", module)
 	}
 	return cov, nil
+}
+
+// nodeIsolationOff reports whether args (a command or NODE_OPTIONS)
+// turn node --test's per-file process isolation off.
+func nodeIsolationOff(args string) bool {
+	f := strings.Fields(args)
+	for i, a := range f {
+		switch a {
+		case "--test-isolation=none", "--experimental-test-isolation=none":
+			return true
+		case "--test-isolation", "--experimental-test-isolation":
+			if i+1 < len(f) && f[i+1] == "none" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // tsSpawnPreload is loaded (NODE_OPTIONS --require) into every node
