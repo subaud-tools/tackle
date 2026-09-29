@@ -12,9 +12,15 @@ import (
 // CGO_ENABLED=0) in dir and returns its path.
 func nativeTool(t *testing.T, dir string) string {
 	t.Helper()
+	return nativeToolMain(t, dir, "package main\n\nfunc main() {}\n")
+}
+
+// nativeToolMain is nativeTool with main.go's source.
+func nativeToolMain(t *testing.T, dir, main string) string {
+	t.Helper()
 	src := t.TempDir()
 	write(t, src, "go.mod", "module culltool\n\ngo 1.22\n")
-	write(t, src, "main.go", "package main\n\nfunc main() {}\n")
+	write(t, src, "main.go", main)
 	out := filepath.Join(dir, "culltool")
 	cmd := exec.Command("go", "build", "-o", out, ".")
 	cmd.Dir = src
@@ -84,5 +90,34 @@ func TestCoverageShellSetupSpawnFallsBack(t *testing.T) {
 	needCoverage(t)
 	root := pySettleRepo(t, soundCalcFG, soundFGTests)
 	write(t, root, "conftest.py", configureSpawn("'/bin/sh', '-c', 'true'", ""))
+	settleExpect(t, root, "spawned")
+}
+
+// A wrapper (nice) running the project's Python outside any test (the
+// reviewer's session fixture) falls back.
+func TestCoverageWrapperSetupSpawnFallsBack(t *testing.T) {
+	needCoverage(t)
+	root := pySettleRepo(t, soundCalcFG, soundFGTests)
+	write(t, root, "conftest.py", "import subprocess, sys\n\nimport pytest\n\n\n@pytest.fixture(scope='session', autouse=True)\n"+
+		"def spawned(tmp_path_factory):\n    subprocess.run(['nice', sys.executable, '-c', 'import calc; calc.f(10)'], check=True)\n")
+	settleExpect(t, root, "spawned")
+}
+
+// A native tool outside the project given a .py script falls back.
+func TestCoverageNativeScriptArgFallsBack(t *testing.T) {
+	needCoverage(t)
+	tool := nativeTool(t, t.TempDir())
+	root := pySettleRepo(t, soundCalcFG, soundFGTests)
+	write(t, root, "conftest.py", configureSpawn(pyQuote(tool)+", 'x.py'", ""))
+	settleExpect(t, root, "spawned")
+}
+
+// A native binary embedding Python (its bytes name Py_Initialize) falls
+// back.
+func TestCoverageEmbeddedPythonSetupSpawnFallsBack(t *testing.T) {
+	needCoverage(t)
+	tool := nativeToolMain(t, t.TempDir(), "package main\n\nimport \"os\"\n\nfunc main() {\n\tif len(os.Args) > 5 {\n\t\tprintln(\"Py_Initialize\")\n\t}\n}\n")
+	root := pySettleRepo(t, soundCalcFG, soundFGTests)
+	write(t, root, "conftest.py", configureSpawn(pyQuote(tool), ""))
 	settleExpect(t, root, "spawned")
 }

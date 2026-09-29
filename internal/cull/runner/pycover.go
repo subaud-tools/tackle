@@ -67,10 +67,15 @@ _child = False  # this process is a test's forked child
 _ctxs = {}  # context -> lines, from the children
 _n = 0
 _SPAWN = frozenset(["subprocess.Popen", "os.fork", "os.forkpty", "os.posix_spawn", "os.posix_spawnp", "os.system", "os.startfile"])
-# Interpreters, shells and launchers: native, but they run anything.
+# Interpreters, shells, launchers and wrappers: native, but they run
+# anything.
 _LAUNCHERS = frozenset(
-    "python pypy node deno bun go sh bash zsh dash fish env make uv uvx poetry pipx pip tox nox npm npx pnpm yarn pytest git".split()
+    "python pypy node deno bun go sh bash zsh dash fish env make uv uvx poetry pipx pip tox nox npm npx pnpm yarn pytest git"
+    " nice nohup timeout gtimeout time xargs sudo doas stdbuf caffeinate pixi micromamba mamba conda rye hatch pdm"
+    " docker podman nix just task bazel cargo".split()
 )
+# Bytes of a native program that embeds Python.
+_EMBEDS = (b"Py_Initialize", b"Py_Main", b"libpython")
 
 
 def _find(name, path, cwd):
@@ -103,6 +108,40 @@ def _native(p):
     return h[:2] == b"MZ"
 
 
+def _embeds(p):
+    """Whether file p's bytes name Python's embedding API (read, never
+    run)."""
+    keep = max(len(e) for e in _EMBEDS) - 1
+    tail = b""
+    with open(p, "rb") as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                return False
+            buf = tail + chunk
+            if any(e in buf for e in _EMBEDS):
+                return True
+            tail = buf[-keep:]
+
+
+def _argv_runs(argv, cwd):
+    """Whether any argv element may run code: a launcher's name, a .py
+    file, -m, or an existing path inside the project root."""
+    for a in argv or ():
+        try:
+            s = os.fsdecode(a)
+        except TypeError:
+            s = str(a)
+        if s == "-m" or s.lower().endswith(".py") or _launcher(os.path.basename(s)):
+            return True
+        p = os.path.join(cwd, s)
+        if os.path.exists(p):
+            r = os.path.realpath(p)
+            if r == _root or r.startswith(os.path.join(_root, "")):
+                return True
+    return False
+
+
 def _launcher(name):
     b = name.lower()
     if b.endswith(".exe"):
@@ -114,23 +153,24 @@ def _benign(event, args):
     """The real path of the program a spawn outside a call phase runs, if
     it can't run the project's Python: a native executable (by magic
     bytes) outside the project root (symlinks resolved), not an
-    interpreter, shell or launcher. None if it may, or can't be told."""
+    interpreter, shell, launcher or wrapper, not embedding Python, and
+    given no argument that may run code (see _argv_runs). None if it
+    may, or can't be told."""
     try:
         cwd = os.getcwd()
         if event == "subprocess.Popen":
-            exe, _, pcwd, env = args
+            exe, argv, pcwd, env = args
             name = os.fsdecode(exe)
             if pcwd is not None:
                 cwd = os.path.join(cwd, os.fsdecode(pcwd))
             found = _find(name, os.get_exec_path(env), cwd)
         elif event == "os.posix_spawn":
-            name = os.fsdecode(args[0])
+            name, argv = os.fsdecode(args[0]), args[1]
             found = _find(name, None, cwd)
         elif event == "os.posix_spawnp":
             # The C library searches this process's PATH; require the
             # passed env's PATH (if any) to find the same file.
-            name = os.fsdecode(args[0])
-            env = args[2]
+            name, argv, env = os.fsdecode(args[0]), args[1], args[2]
             found = _find(name, os.get_exec_path(), cwd)
             if env is not None and _find(name, os.get_exec_path(env), cwd) != found:
                 return None
@@ -143,7 +183,9 @@ def _benign(event, args):
             return None
         if any(_launcher(os.path.basename(p)) for p in (name, found, real)):
             return None
-        return real if _native(real) else None
+        if isinstance(argv, (str, bytes)) or _argv_runs(argv, cwd):
+            return None
+        return real if _native(real) and not _embeds(real) else None
     except Exception:
         return None
 
