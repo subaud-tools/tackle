@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,15 @@ const orderPyTests = "from calc import all_ok, register\n\n\ndef test_a():\n    
 const orderGoSrc = "package calc\n\nvar reg []int\n\nfunc Register(x int) { reg = append(reg, x) }\n\nfunc check(x int) bool { return x > 0 }\n\nfunc AllOK() bool {\n\tfor _, x := range reg {\n\t\tif !check(x) {\n\t\t\treturn false\n\t\t}\n\t}\n\treturn true\n}\n"
 
 const orderGoTests = "package calc\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tif !AllOK() {\n\t\tt.Fatal(\"a\")\n\t}\n}\n\nfunc TestB(t *testing.T) { Register(5) }\n\nfunc TestC(t *testing.T) {\n\tif !AllOK() {\n\t\tt.Fatal(\"c\")\n\t}\n}\n"
+
+// wantSole fails t unless the last settle left name a sole guard.
+func wantSole(t *testing.T, root, name string) {
+	t.Helper()
+	_, by := loadLast(t, root)
+	if by[name].Rule != RuleSoleGuard {
+		t.Errorf("%s: %s/%s, want a sole guard", name, by[name].Verdict, by[name].Rule)
+	}
+}
 
 // The in-order coverage pass: a test covers what it ran after the tests
 // before it, not only what it runs alone.
@@ -55,5 +65,53 @@ func checkCovered(t *testing.T, root, lang, file, module string, ids []string, s
 				t.Errorf("%s doesn't cover %q", id, frag)
 			}
 		}
+	}
+}
+
+// The reviewer's repro: verdicts equal the full run's; test_c, alone
+// catching check()'s mutants, stays a sole guard.
+func TestCoverageOrderStatePython(t *testing.T) {
+	needCoverage(t)
+	root := newRepo(t, map[string]string{"calc.py": orderPySrc, "test_calc.py": orderPyTests})
+	band := verdict{"review", "review_band"}
+	writeLast(t, root, []string{"test_calc.py"}, map[string]verdict{"test_a": band, "test_b": band, "test_c": band})
+	settleExpect(t, root, "")
+	wantSole(t, root, "test_c")
+}
+
+// Go: a package-level registry shared by the tests of one file.
+func TestCoverageOrderStateGo(t *testing.T) {
+	needTools(t)
+	root := newRepo(t, map[string]string{"go.mod": "module fixture\n\ngo 1.22\n", "calc.go": orderGoSrc, "calc_test.go": orderGoTests})
+	band := verdict{"review", "review_band"}
+	writeLast(t, root, []string{"calc_test.go"}, map[string]verdict{"TestA": band, "TestB": band, "TestC": band})
+	settleExpect(t, root, "")
+	wantSole(t, root, "TestC")
+}
+
+// A mutant runs every test of each file holding a test that covers its
+// line (test_h0 covers nothing, yet runs with test_f), and no file
+// holding none.
+func TestCoverageSelectsWholeFiles(t *testing.T) {
+	needCoverage(t)
+	l := newRunLog(t, covPySrc)
+	root := newRepo(t, map[string]string{
+		"calc.py": covPySrc,
+		"test_f.py": "from calc import f\n\n\n" +
+			pyLogTest(l.path, "test_f", "assert f(1) == 2") +
+			pyLogTest(l.path, "test_h0", "assert True"),
+		"test_g.py": "from calc import g\n\n\n" +
+			pyLogTest(l.path, "test_g1", "assert g(5)") +
+			pyLogTest(l.path, "test_g2", "assert not g(1)"),
+	})
+	mod := Module{Rel: "calc.py", Lang: "python", TestFiles: []string{"test_f.py", "test_g.py"},
+		Tests: []string{"py:test_f.py:test_f", "py:test_f.py:test_h0", "py:test_g.py:test_g1", "py:test_g.py:test_g2"}}
+	o := opts(1)
+	if _, err := RunMatrix(context.Background(), root, []Module{mod}, o); err != nil {
+		t.Fatal(err)
+	}
+	want := map[int][]string{1: {"test_f", "test_g1", "test_g2", "test_h0"}, 5: {"test_f", "test_h0"}, 9: {"test_g1", "test_g2"}}
+	if got := l.byLine(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("tests run per mutated line:\n got %v\nwant %v", got, want)
 	}
 }

@@ -919,8 +919,8 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
-		units, all := p.selection(g, s)
-		if !all && len(units) == 0 {
+		files, all := p.selection(g, s)
+		if !all && len(files) == 0 {
 			continue // no test of this group runs the mutated code
 		}
 		if ctx.Err() != nil {
@@ -928,12 +928,10 @@ func (p *modPlan) mutant(ctx context.Context, sb Sandbox, s mutate.Site, timeout
 			break
 		}
 		p.clearBytecode(sb)
-		var o runner.Outcome
 		if all {
-			o = g.r.Run(ctx, sb.Dir, g.files, g.index, timeout)
-		} else {
-			o = g.r.(runner.Coverer).RunUnits(ctx, sb.Dir, units, g.index, timeout)
+			files = g.files
 		}
+		o := g.r.Run(ctx, sb.Dir, files, g.index, timeout)
 		if why = badRun(o); why != "" {
 			break
 		}
@@ -1033,18 +1031,26 @@ func (p *modPlan) coverage(ctx context.Context, sb Sandbox, timeout time.Duratio
 
 // selection is what a mutant at s runs of g: all (every test file: the
 // module isn't selective, s is outside every function or method, or its
-// code runs for every test), else the units whose coverage includes it
-// (none: skip g).
-func (p *modPlan) selection(g *group, s mutate.Site) (units []runner.Unit, all bool) {
+// code runs for every test), else every test file (whole, in g's order)
+// holding a test whose coverage includes it (none: skip g). A test may
+// catch a mutant through state an earlier test of its file left, so a
+// file runs whole, as in the full run.
+func (p *modPlan) selection(g *group, s mutate.Site) (files []string, all bool) {
 	if !p.selective || g.cov == nil || !p.inFunc(s) || g.cov.Global(s.Start, s.End) {
 		return nil, true
 	}
+	hit := map[string]bool{}
 	for _, u := range g.cov.Units {
-		if u.Covers(s.Start, s.End) && slices.ContainsFunc(u.IDs, func(id string) bool { return p.measured[id] }) {
-			units = append(units, u)
+		if u.Covers(s.Start, s.End) {
+			hit[u.File] = true
 		}
 	}
-	return units, false
+	for _, f := range g.files {
+		if hit[f] {
+			files = append(files, f)
+		}
+	}
+	return files, false
 }
 
 // uncovered reports whether no group holding measured tests would run
@@ -1054,7 +1060,7 @@ func (p *modPlan) uncovered(s mutate.Site) bool {
 		if !holdsMeasured(g, p.measured) {
 			continue
 		}
-		if units, all := p.selection(g, s); all || len(units) > 0 {
+		if files, all := p.selection(g, s); all || len(files) > 0 {
 			return false
 		}
 	}

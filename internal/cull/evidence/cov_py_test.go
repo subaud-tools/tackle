@@ -112,7 +112,8 @@ func covPyModule() Module {
 		Tests: []string{"py:test_calc.py:test_f", "py:test_calc.py:test_g1", "py:test_calc.py:test_g2"}}
 }
 
-// Each mutant runs only the tests whose coverage includes its line; a
+// Each mutant runs the whole file of the tests whose coverage includes
+// its line (see TestCoverageSelectsWholeFiles for a file it skips); a
 // module-level mutant runs them all; a mutant on a line no test runs is
 // not run (uncovered, killed by nobody). The kill matrix equals the one
 // running every test on every mutant.
@@ -128,7 +129,7 @@ func TestCoverageSelectsTests(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := []string{"test_f", "test_g1", "test_g2"}
-	want := map[int][]string{1: all, 5: {"test_f"}, 9: {"test_g1", "test_g2"}}
+	want := map[int][]string{1: all, 5: all, 9: all}
 	if got := l.byLine(t); !reflect.DeepEqual(got, want) {
 		t.Errorf("tests run per mutated line:\n got %v\nwant %v\n%s", got, want, log.String())
 	}
