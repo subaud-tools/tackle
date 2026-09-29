@@ -495,16 +495,58 @@ func (r pythonRunner) Cover(ctx context.Context, dir string, files map[string]ma
 	if err != nil {
 		return nil, err
 	}
+	// Cross-file check: each file alone, in order, must run the same
+	// lines per test as after the files before it; its tests must pass.
+	alonePassed := ordPassed
+	if len(names) > 1 {
+		alonePassed = map[string]bool{}
+		for _, f := range names {
+			alone, passed, err := pass([]string{f}, false)
+			if err != nil {
+				return nil, err
+			}
+			if t := pyCallDiff(ord, alone, f); t != "" {
+				return nil, fmt.Errorf("%s runs other lines alone than after the test files before it", t)
+			}
+			maps.Copy(alonePassed, passed)
+		}
+	}
 	d := mergePyCov(iso, ord)
 	cov := pyCoverage(src, files, d)
 	cov.Passed = map[string]bool{}
 	for id := range isoPassed {
-		if ordPassed[id] {
+		if ordPassed[id] && alonePassed[id] {
 			cov.Passed[id] = true
 		}
 	}
 	cov.Ignored = d.Ignored
 	return cov, nil
+}
+
+// pyCallDiff is the first test of file whose call phase ran other lines
+// in a than in b ("" if none).
+func pyCallDiff(a, b pyCovData, file string) string {
+	calls := func(d pyCovData) map[string][]int {
+		out := map[string][]int{}
+		for c, ls := range d.Contexts {
+			sel, phase, _ := cutLast(c, "|")
+			if phase == "call" && strings.HasPrefix(sel, file+"::") {
+				ls = slices.Clone(ls)
+				sort.Ints(ls)
+				out[sel] = slices.Compact(ls)
+			}
+		}
+		return out
+	}
+	ca, cb := calls(a), calls(b)
+	for _, m := range []map[string][]int{ca, cb} {
+		for _, sel := range sortedKeys(m) {
+			if !slices.Equal(ca[sel], cb[sel]) {
+				return sel
+			}
+		}
+	}
+	return ""
 }
 
 // mergePyCov is the union of two passes' data.

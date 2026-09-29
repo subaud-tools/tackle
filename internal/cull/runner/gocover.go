@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -89,7 +90,7 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 		if err != nil {
 			return nil, err
 		}
-		res := runProcess(dctx, dir, []string{"go", "test", "-c", "-o", bin, "-covermode=count", "-coverpkg=" + coverPkg, pkg}, timeout)
+		res := runProcess(dctx, dir, []string{"go", "test", "-c", "-o", bin, "-covermode=atomic", "-coverpkg=" + coverPkg, pkg}, timeout)
 		if err := procErr(ctx, res, "go test -c"); err != nil {
 			return nil, err
 		}
@@ -119,7 +120,10 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 			if err != nil {
 				return nil, err
 			}
-			inOrder[f], inOrderOK[f] = hitBlocks(blocks), ok
+			inOrder[f], inOrderOK[f] = blocks, ok
+		}
+		if err := goCrossFile(dir, byFile, inOrder, profile); err != nil {
+			return nil, err
 		}
 		// The isolated pass: each test alone.
 		for _, tc := range bySub[sub] {
@@ -130,7 +134,7 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 			if all == nil {
 				all = blocks
 			}
-			hit := append(hitBlocks(blocks), inOrder[tc.file]...)
+			hit := append(hitBlocks(blocks), hitBlocks(inOrder[tc.file])...)
 			u := Unit{Sel: tc.name, File: tc.file, hit: func(start, end int) bool {
 				for _, b := range hit {
 					if b.start < max(end, start+1) && start < b.end {
@@ -168,6 +172,70 @@ func (golangRunner) Cover(ctx context.Context, dir string, files map[string]map[
 		return true
 	}
 	return cov, nil
+}
+
+// goCrossFile checks that each test file of one package directory runs
+// the same blocks alone (alone, from profile(its tests)) as after the
+// files the test binary runs before it: the blocks whose count grows
+// from profile(the tests of the files up to it) to profile(those before
+// it). A file that doesn't may depend on (or be changed by) another
+// file's state; the error names it and its tests.
+func goCrossFile(dir string, byFile map[string][]string, alone map[string][]goBlock, profile func([]string) ([]goBlock, bool, error)) error {
+	if len(byFile) < 2 {
+		return nil
+	}
+	// The binary runs the package's own test files, then its external
+	// (package x_test) ones, each set in file name order.
+	var own, ext []string
+	for _, f := range sortedKeys(byFile) {
+		pf, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, filepath.FromSlash(f)), nil, parser.PackageClauseOnly)
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(pf.Name.Name, "_test") {
+			ext = append(ext, f)
+		} else {
+			own = append(own, f)
+		}
+	}
+	counts := func(blocks []goBlock) map[[2]int]int {
+		m := map[[2]int]int{}
+		for _, b := range blocks {
+			m[[2]int{b.start, b.end}] += b.count
+		}
+		return m
+	}
+	ran := func(m map[[2]int]int) map[[2]int]bool {
+		out := map[[2]int]bool{}
+		for k, n := range m {
+			if n > 0 {
+				out[k] = true
+			}
+		}
+		return out
+	}
+	prev := map[[2]int]int{}
+	var names []string
+	for k, f := range append(own, ext...) {
+		names = append(names, byFile[f]...)
+		cur := counts(alone[f])
+		if k > 0 {
+			blocks, _, err := profile(names)
+			if err != nil {
+				return err
+			}
+			cur = counts(blocks)
+		}
+		after := map[[2]int]int{}
+		for key, n := range cur {
+			after[key] = n - prev[key]
+		}
+		if !maps.Equal(ran(after), ran(counts(alone[f]))) {
+			return fmt.Errorf("%s (%s) runs other lines after the test files before it than alone", f, strings.Join(byFile[f], ", "))
+		}
+		prev = cur
+	}
+	return nil
 }
 
 // hitBlocks are the blocks that ran.

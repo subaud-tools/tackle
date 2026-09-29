@@ -89,6 +89,33 @@ func TestCoverageOrderStateGo(t *testing.T) {
 	wantSole(t, root, "TestC")
 }
 
+// File 1 registers; file 2's test reaches check() only after it: the
+// module falls back, naming the file and the test.
+func TestCoverageOrderCrossFilePython(t *testing.T) {
+	needCoverage(t)
+	root := newRepo(t, map[string]string{
+		"calc.py":   orderPySrc,
+		"test_1.py": "from calc import register\n\n\ndef test_reg():\n    register(5)\n",
+		"test_2.py": "from calc import all_ok\n\n\ndef test_c():\n    assert all_ok()\n",
+	})
+	band := verdict{"review", "review_band"}
+	writeLast(t, root, []string{"test_1.py", "test_2.py"}, map[string]verdict{"test_reg": band, "test_c": band})
+	settleExpect(t, root, "test_2.py::test_c")
+}
+
+func TestCoverageOrderCrossFileGo(t *testing.T) {
+	needTools(t)
+	root := newRepo(t, map[string]string{
+		"go.mod":    "module fixture\n\ngo 1.22\n",
+		"calc.go":   orderGoSrc,
+		"a_test.go": "package calc\n\nimport \"testing\"\n\nfunc TestReg(t *testing.T) { Register(5) }\n",
+		"b_test.go": "package calc\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) {\n\tif !AllOK() {\n\t\tt.Fatal(\"c\")\n\t}\n}\n",
+	})
+	band := verdict{"review", "review_band"}
+	writeLast(t, root, []string{"a_test.go", "b_test.go"}, map[string]verdict{"TestReg": band, "TestC": band})
+	settleExpect(t, root, "b_test.go (TestC)")
+}
+
 // A mutant runs every test of each file holding a test that covers its
 // line (test_h0 covers nothing, yet runs with test_f), and no file
 // holding none.
