@@ -456,7 +456,7 @@ func decisionVocab() DecisionVocabView {
 		}
 		var choices []ChoiceVocab
 		for _, c := range item.Choices(k) {
-			choices = append(choices, ChoiceVocab{Disposition: string(c.Disposition), Label: c.Label, Says: c.Says, Outward: c.Outward, NeedsUntil: c.NeedsUntil, Many: c.Many})
+			choices = append(choices, ChoiceVocab{Disposition: string(c.Disposition), Label: c.Label, Says: c.Says, Outward: c.Outward, NeedsUntil: c.NeedsUntil, Many: c.Many, Done: c.Done, DoneMany: c.DoneMany})
 		}
 		vocab.Kinds[i] = KindVocab{Kind: string(k), Allowed: strs, NeedsUntil: needsUntil, Question: item.Question(k), Choices: nonNil(choices)}
 	}
@@ -539,55 +539,89 @@ func (s *Server) postClearDecision(w http.ResponseWriter, r *http.Request) {
 	reply(w, ClearResult{Cleared: true, PushedLater: true}, nil)
 }
 
-// postUndoDecision handles POST /api/decisions/undo: the page's undo of a
-// decision it made. Under the store lock, when the item's decision is still
-// expect (the decision the page's decide or accept committed, compared in
-// every field), it decides restore (the decision the item had before) or,
-// when restore is null, removes the decision. Otherwise 409 and nothing
-// changes. Then the background push and the rebuild, as a decide does.
+// postUndoDecision handles POST /api/decisions/undo: the page's undo of
+// decisions it made, one item or a batch ({items: [{key, expect,
+// restore}]}). For each item, under the store lock, when its decision is
+// still expect (the decision the page's decide or accept committed,
+// compared in every field), it decides restore (the decision the item had
+// before) or, when restore is null, removes the decision. An item decided
+// since elsewhere is left as it is and named in errors; when that leaves
+// nothing undone the answer is 409. Then one rebuild, one "cleared" event
+// and one "decided" event per restored disposition, and the background
+// push, as a decide does.
 func (s *Server) postUndoDecision(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Key     string     `json:"key"`
-		Expect  *Committed `json:"expect"`
-		Restore *Committed `json:"restore"`
+		Items []struct {
+			Key     string     `json:"key"`
+			Expect  *Committed `json:"expect"`
+			Restore *Committed `json:"restore"`
+		} `json:"items"`
 	}
 	if err := decode(r, &in); err != nil {
 		reply(w, nil, err)
 		return
 	}
-	k, err := item.ParseKey(in.Key)
-	if err != nil {
-		reply(w, nil, bad("%v", err))
+	if len(in.Items) == 0 {
+		reply(w, nil, bad("items required"))
 		return
 	}
-	if in.Expect == nil || in.Expect.Disposition == "" || in.Expect.DecidedAt.IsZero() {
-		reply(w, nil, bad("expect needs the decision's disposition and decided_at"))
-		return
-	}
-	var restore *app.Revision
-	if in.Restore != nil {
-		rv := in.Restore.revision()
-		restore = &rv
+	for _, it := range in.Items {
+		if _, err := item.ParseKey(it.Key); err != nil {
+			reply(w, nil, bad("%v", err))
+			return
+		}
+		if it.Expect == nil || it.Expect.Disposition == "" || it.Expect.DecidedAt.IsZero() {
+			reply(w, nil, bad("%s: expect needs the decision's disposition and decided_at", it.Key))
+			return
+		}
 	}
 	ctx := r.Context()
-	d, err := s.App.Undo(ctx, k.String(), in.Expect.revision(), restore, app.DecideOptions{By: s.App.Cfg.User})
-	switch {
-	case errors.Is(err, app.ErrStaleDecision):
-		reply(w, nil, httpError{code: http.StatusConflict, msg: err.Error()})
-		return
-	case err != nil:
-		reply(w, nil, bad("%v", err))
+	out := DecisionUndoResult{Errors: []string{}}
+	var cleared []string
+	restored := map[string][]string{}
+	var order []string
+	stale := 0
+	for _, it := range in.Items {
+		k, _ := item.ParseKey(it.Key)
+		var restore *app.Revision
+		if it.Restore != nil {
+			rv := it.Restore.revision()
+			restore = &rv
+		}
+		d, err := s.App.Undo(ctx, k.String(), it.Expect.revision(), restore, app.DecideOptions{By: s.App.Cfg.User})
+		if err != nil {
+			if errors.Is(err, app.ErrStaleDecision) {
+				stale++
+			}
+			out.Errors = append(out.Errors, err.Error())
+			continue
+		}
+		out.Undone++
+		if d == nil {
+			cleared = append(cleared, k.String())
+			continue
+		}
+		disp := string(d.Disposition)
+		if _, ok := restored[disp]; !ok {
+			order = append(order, disp)
+		}
+		restored[disp] = append(restored[disp], k.String())
+	}
+	if out.Undone == 0 {
+		code := http.StatusBadRequest
+		if stale > 0 {
+			code = http.StatusConflict
+		}
+		reply(w, nil, httpError{code: code, msg: strings.Join(out.Errors, "; ")})
 		return
 	}
-	out := DecisionUndoResult{Undone: true}
-	if d == nil {
-		s.publish(ctx, "cleared", map[string]any{"keys": []string{k.String()}, "by": s.App.Cfg.User})
-	} else {
-		c := committedOf(app.RevisionOf(*d))
-		out.Decision = &c
-		s.publish(ctx, "decided", map[string]any{"keys": []string{k.String()}, "disposition": c.Disposition, "by": s.App.Cfg.User})
+	if len(cleared) > 0 {
+		s.publish(ctx, "cleared", map[string]any{"keys": cleared, "by": s.App.Cfg.User})
 	}
-	_ = s.finishDecides(ctx, 1, nil)
+	for _, disp := range order {
+		s.publish(ctx, "decided", map[string]any{"keys": restored[disp], "disposition": disp, "by": s.App.Cfg.User})
+	}
+	_ = s.finishDecides(ctx, out.Undone, nil)
 	reply(w, out, nil)
 }
 

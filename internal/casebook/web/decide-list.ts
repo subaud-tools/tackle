@@ -2241,15 +2241,19 @@ export function makeDecide(ctx: Ctx): Section {
     deciding = u.key;
     try {
       await ctx.api.post<DecisionUndoResult>('/decisions/undo', {
-        key: u.key,
-        expect: u.expect,
-        restore: u.prev
-          ? {
-              disposition: u.prev.disposition,
-              until: u.prev.until ?? '',
-              note: u.prev.note ?? '',
-            }
-          : null,
+        items: [
+          {
+            key: u.key,
+            expect: u.expect,
+            restore: u.prev
+              ? {
+                  disposition: u.prev.disposition,
+                  until: u.prev.until ?? '',
+                  note: u.prev.note ?? '',
+                }
+              : null,
+          },
+        ],
       });
       lastUndo = null;
       openKey(u.key);

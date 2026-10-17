@@ -6689,13 +6689,17 @@ function makeDecide(ctx) {
     deciding = u.key;
     try {
       await ctx.api.post("/decisions/undo", {
-        key: u.key,
-        expect: u.expect,
-        restore: u.prev ? {
-          disposition: u.prev.disposition,
-          until: u.prev.until ?? "",
-          note: u.prev.note ?? ""
-        } : null
+        items: [
+          {
+            key: u.key,
+            expect: u.expect,
+            restore: u.prev ? {
+              disposition: u.prev.disposition,
+              until: u.prev.until ?? "",
+              note: u.prev.note ?? ""
+            } : null
+          }
+        ]
       });
       lastUndo = null;
       openKey(u.key);

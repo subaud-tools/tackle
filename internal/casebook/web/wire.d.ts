@@ -259,8 +259,8 @@ export interface ClearResult {
 }
 
 export interface DecisionUndoResult {
-  undone: boolean;
-  decision: Committed | null;
+  undone: number;
+  errors: string[] | null;
 }
 
 export interface JobStepResult {
@@ -494,6 +494,8 @@ export interface ChoiceVocab {
   outward: boolean;
   needs_until: boolean;
   many: string;
+  done: string;
+  done_many: string;
 }
 
 export interface NotNowForm {

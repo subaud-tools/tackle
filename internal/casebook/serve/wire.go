@@ -188,11 +188,12 @@ type Committed struct {
 }
 
 // DecisionUndoResult is the response body of POST /api/decisions/undo:
-// Decision is the decision the undo restored, null when it removed one.
-// Like DecideResult it doesn't wait for the push.
+// how many of the items were undone, and why each other one was not (one
+// decided since elsewhere is named and left as it is). Like DecideResult it
+// doesn't wait for the push.
 type DecisionUndoResult struct {
-	Undone   bool       `json:"undone"`
-	Decision *Committed `json:"decision"`
+	Undone int      `json:"undone"`
+	Errors []string `json:"errors"`
 }
 
 // Push states, as the "push" live event says them.
@@ -547,9 +548,10 @@ type KindVocab struct {
 	Choices    []ChoiceVocab `json:"choices"`
 }
 
-// ChoiceVocab is one answer card: its disposition, label and what choosing
-// it does (Says). Outward choices only go to To apply. NeedsUntil choices
-// (Not now) need a condition from DecisionVocabView.NotNow.
+// ChoiceVocab is one decision button: its disposition, label and what
+// choosing it does and when (Says, its hover). Outward choices only go to
+// apply. NeedsUntil choices (Not now) need a condition from
+// DecisionVocabView.NotNow.
 type ChoiceVocab struct {
 	Disposition string `json:"disposition"`
 	Label       string `json:"label"`
@@ -558,6 +560,11 @@ type ChoiceVocab struct {
 	NeedsUntil  bool   `json:"needs_until"`
 	// Many is the choice for several items ({n}: the count word).
 	Many string `json:"many"`
+	// Done is what the choice did ("Closed it"); DoneMany for several
+	// items ("Closed {n}", {n}: the count word). The strip after a
+	// decision shows it.
+	Done     string `json:"done"`
+	DoneMany string `json:"done_many"`
 }
 
 // NotNowForm is one Not now condition. Template is an until form with one
