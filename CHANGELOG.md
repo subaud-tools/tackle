@@ -4,6 +4,18 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [casebook 0.12.0] - 2026-10-17
+
+### Added
+- A rule field for repos, `ownership`: `yours`, `org` or `fork` (on the page: yours, an org's, a fork). A fork under an org counts as the org's.
+- Two starter rules, on: "Your old repos" (kind is repo; ownership is yours; archived is false; updated older-than 52w) recommends Archive it on GitHub, and "Your old forks" (kind is repo; ownership is fork; updated older-than 52w) recommends Delete it. Old repos in orgs have no starter rule; they are decided by hand.
+
+### Changed
+- The next write to an existing casebook-data replaces the shipped "Repos not pushed in a year" rule (`rules/dormant-repos.toml`) with "Your old repos" and "Your old forks", in one commit ("replace dormant-repos with your-old-repos and your-old-forks"), and the rebuild after it withdraws the old rule's "Stop tracking it" recommendations. This happens only when that file is still exactly as casebook shipped it: a dormant-repos you renamed, turned off, edited or added an exclusion to is left as it is, and a rule you already have named your-old-repos or your-old-forks is kept.
+
+### Removed
+- The `fork` rule field (true/false); use `ownership is fork`.
+
 ## [casebook 0.11.0] - 2026-10-17
 
 ### Added
