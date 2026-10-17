@@ -61,7 +61,9 @@ func (r *Repo) replaceDormantRepos(ctx context.Context) error {
 	if !isShippedDormantRepos(b) {
 		return nil // edited (or not a rule casebook can read): Court's
 	}
-	files, err := exampleRuleFiles(time.Now().UTC())
+	// A fixed time, not now: two machines that both replace it before
+	// syncing write the same files, so their sync goes through.
+	files, err := exampleRuleFiles(replacedAt)
 	if err != nil {
 		return err
 	}
@@ -83,6 +85,10 @@ func (r *Repo) replaceDormantRepos(ctx context.Context) error {
 	}
 	return r.commitOnly(ctx, tidyDormantMsg, paths...)
 }
+
+// replacedAt is when your-old-repos and your-old-forks say they were made
+// when they replace dormant-repos: the release that brought them.
+var replacedAt = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 
 // isShippedDormantRepos reports whether b is rules.ShippedDormantRepos as
 // seeded: the same name, author, status, conditions and recommendation, and

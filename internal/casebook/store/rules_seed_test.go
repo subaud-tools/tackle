@@ -192,3 +192,32 @@ func TestTidyKeepsAnEditedDormantReposRule(t *testing.T) {
 		})
 	}
 }
+
+// TestTwoMachinesReplaceDormantReposAndStillSync (review 2026-10-17): two
+// machines that both replace the shipped dormant-repos before either syncs
+// write the same files, so the sync after it goes through.
+func TestTwoMachinesReplaceDormantReposAndStillSync(t *testing.T) {
+	a, remote := newStore(t)
+	olderRules(t, a, shippedDormantRepos)
+	if _, err := a.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Init(ctx, filepath.Join(t.TempDir(), "casebook-b"), remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, a.Decide(ctx, item.IssueKey("a/b", 1), dec(item.Keep, "court@a", time.Now())))
+	time.Sleep(1100 * time.Millisecond) // the machines migrate a second apart
+	must(t, b.Decide(ctx, item.IssueKey("a/b", 2), dec(item.Keep, "court@b", time.Now())))
+	if _, err := a.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Sync(ctx); err != nil {
+		t.Fatalf("b's sync after both migrated: %v", err)
+	}
+	for _, id := range []string{"your-old-repos", "your-old-forks"} {
+		if ru, err := b.ReadRule(id); err != nil || ru == nil {
+			t.Fatalf("%s: %+v %v", id, ru, err)
+		}
+	}
+}
