@@ -23,8 +23,8 @@ func Tools() []channelmcp.Tool {
 			InputSchema: schema(`{"type":"object","properties":{}}`)},
 		{Name: "casebook_open", Description: "Open the casebook page in the user's browser, straight at one item (key), or at the front without one. The page opens attached to this session: the user's messages from it come to you. Only when they ask, or when you hand them something to review; never repeatedly.",
 			InputSchema: schema(`{"type":"object","properties":{"key":{"type":"string","description":"an item key: open at that item"}}}`)},
-		{Name: "casebook_attention", Description: "List items needing attention, newest first. view: new (undecided), due (due/drift/conflict), proposed (a proposal is pending), all. The reply ends with the saved filters casebook knows.",
-			InputSchema: schema(`{"type":"object","properties":{"view":{"type":"string","enum":["new","due","proposed","all"]},"filters":{"type":"array","items":{"type":"string"},"description":"saved filter ids: every item matching all of them, whatever its status (view is then ignored)"},"kind":{"type":"string","enum":["repo","pr","issue","branch","worktree"]},"repo":{"type":"string","description":"owner/name or owner"},"q":{"type":"string","description":"substring of key or title"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`)},
+		{Name: "casebook_attention", Description: "List items needing attention, newest first. view: new (undecided), due (due/drift/conflict), proposed (a proposal is pending), all. A message attached to a list (attached: list filters a,b · rule x · search \"q\" · group none) is the list the user is looking at: pass its filters, rule, q and group. The reply ends with the saved filters casebook knows.",
+			InputSchema: schema(`{"type":"object","properties":{"view":{"type":"string","enum":["new","due","proposed","all"]},"filters":{"type":"array","items":{"type":"string"},"description":"saved filter ids: every item matching all of them, whatever its status (view is then ignored)"},"kind":{"type":"string","enum":["repo","pr","issue","branch","worktree"]},"repo":{"type":"string","description":"owner/name or owner"},"q":{"type":"string","description":"substring of key or title"},"rule":{"type":"string","description":"a rule id: only the items it matches"},"group":{"type":"string","description":"one group of the list: none (not recommended yet), came-back, or a group id"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`)},
 		{Name: "casebook_show", Description: "One item: its observation, decision, pending proposal, evidence and recent history.",
 			InputSchema: schema(`{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}`)},
 		{Name: "casebook_history", Description: "Every journaled action and decision commit for an item.",
@@ -78,6 +78,8 @@ func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) 
 		Question    string   `json:"question"`
 		FromNext    bool     `json:"from_next"`
 		Filters     []string `json:"filters"`
+		Rule        string   `json:"rule"`
+		Group       string   `json:"group"`
 	}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &a); err != nil {
@@ -136,7 +138,7 @@ func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) 
 		}
 		return "opened the casebook page" + note, nil
 	case "casebook_attention":
-		return ch.attention(ctx, serve.Query{View: a.View, Kind: a.Kind, Repo: a.Repo, Text: a.Q, Offset: a.Offset, Limit: a.Limit}, a.Filters)
+		return ch.attention(ctx, serve.Query{View: a.View, Kind: a.Kind, Repo: a.Repo, Text: a.Q, Rule: a.Rule, Group: a.Group, Offset: a.Offset, Limit: a.Limit}, a.Filters)
 	case "casebook_show":
 		return ch.show(ctx, a.Key)
 	case "casebook_history":
@@ -322,6 +324,7 @@ func (ch *Channel) attention(ctx context.Context, qy serve.Query, filters []stri
 		Items []serve.ItemView `json:"items"`
 	}
 	_, err := ch.Client.Do(ctx, http.MethodGet, "/api/items?"+q("view", qy.View, "kind", qy.Kind, "repo", qy.Repo, "q", qy.Text,
+		"rule", qy.Rule, "group", qy.Group,
 		"filters", strings.Join(filters, ","), "offset", strconv.Itoa(qy.Offset), "limit", strconv.Itoa(qy.Limit)), nil, &out)
 	if err != nil {
 		return "", err
@@ -331,6 +334,12 @@ func (ch *Channel) attention(ctx context.Context, qy serve.Query, filters []stri
 		fmt.Fprintf(&b, "%d item(s) matching filters %s", out.Total, strings.Join(filters, ", "))
 	} else {
 		fmt.Fprintf(&b, "%d item(s) in %s", out.Total, qy.View)
+	}
+	if qy.Rule != "" {
+		b.WriteString(" · rule " + qy.Rule)
+	}
+	if qy.Group != "" {
+		b.WriteString(" · group " + qy.Group)
 	}
 	if len(out.Items) < out.Total {
 		fmt.Fprintf(&b, " (showing %d from offset %d)", len(out.Items), qy.Offset)
