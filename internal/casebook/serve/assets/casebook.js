@@ -1398,6 +1398,29 @@ function observations(builtAt, intervalMs, now) {
     return { text: "observations fresh", stale: false };
   return { text: `observations ${ageText(age)} old`, stale: true };
 }
+var STEP_DISPOSITION = {
+  "branch-delete-local": "delete",
+  "branch-delete-remote": "delete",
+  "worktree-remove": "delete",
+  "repo-archive": "archive",
+  "repo-delete": "delete",
+  "pr-close": "close",
+  "pr-merge": "merge",
+  "issue-close": "close"
+};
+function stepGroup(s) {
+  return `${STEP_DISPOSITION[s.action] ?? ""}|${s.key.slice(0, s.key.indexOf(":"))}`;
+}
+function heldOutside(jobs, id, loaded) {
+  const held = /* @__PURE__ */ new Set();
+  for (const j of jobs) {
+    if (!["planned", "approved", "running", "paused"].includes(j.state))
+      continue;
+    for (const s of j.steps ?? [])
+      if (!loaded.has(s.key) && stepGroup(s) === id) held.add(s.key);
+  }
+  return held.size;
+}
 
 // time-utils.ts
 function ageMs(ts) {
@@ -1447,19 +1470,6 @@ var STEPS_PAGE = 200;
 var RUNNING = "running";
 var PLANS = "plans";
 var DONE = "done";
-var STEP_DISPOSITION = {
-  "branch-delete-local": "delete",
-  "branch-delete-remote": "delete",
-  "worktree-remove": "delete",
-  "repo-archive": "archive",
-  "repo-delete": "delete",
-  "pr-close": "close",
-  "pr-merge": "merge",
-  "issue-close": "close"
-};
-function stepGroup(s) {
-  return `${STEP_DISPOSITION[s.action] ?? ""}|${s.key.slice(0, s.key.indexOf(":"))}`;
-}
 function message(err) {
   return err instanceof Error ? err.message : String(err);
 }
@@ -1576,14 +1586,7 @@ function makeApply(ctx) {
     let held = items.filter(
       (it) => it.group === g.id && inPlan().has(it.key)
     ).length;
-    if (itemsTotal > items.length) {
-      for (const j of jobs) {
-        if (!["planned", "approved", "running", "paused"].includes(j.state))
-          continue;
-        for (const s of j.steps ?? [])
-          if (!loaded.has(s.key) && stepGroup(s) === g.id) held++;
-      }
-    }
+    if (itemsTotal > items.length) held += heldOutside(jobs, g.id, loaded);
     return Math.max(0, g.total - held);
   }
   const tickedIn = (g) => {
@@ -1704,6 +1707,7 @@ function makeApply(ctx) {
       }
     }
     paintObs();
+    drawOverview();
     focusGroup();
   }
   function placeHeads(ps, els) {
@@ -1761,7 +1765,10 @@ function makeApply(ctx) {
         isOpen ? "▼" : "▶"
       ),
       box,
-      h4(
+      // A waiting group's header is its button (planning call): its name
+      // is "Delete 3 branches…", which opens the plan. Other parts' headers
+      // are their name, which folds them.
+      g ? h4("div", { class: "cb-group-acts cb-apply-head-acts" }) : h4(
         "span",
         { class: "cb-group-name", onclick: toggleOpen },
         h4(
@@ -1772,7 +1779,7 @@ function makeApply(ctx) {
       ),
       h4("span", { class: "cb-group-n" }, String(p.n))
     );
-    const acts = g ? h4("div", { class: "cb-group-acts" }) : null;
+    const acts = g ? top.querySelector(".cb-apply-head-acts") : null;
     const el = h4(
       "div",
       {
@@ -1780,8 +1787,7 @@ function makeApply(ctx) {
         role: "presentation",
         dataset: { part: p.id }
       },
-      top,
-      acts
+      top
     );
     const paint = () => {
       if (!g || !acts) return;

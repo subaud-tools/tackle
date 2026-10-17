@@ -445,12 +445,12 @@ async function listScenario(context, t, serveHandle) {
       pg.$$eval('.cb-apply-list .cb-apply-part', (els) =>
         els.map(
           (e) =>
-            `${e.dataset.part} ${e.querySelector('.cb-group-label').textContent} ${e.querySelector('.cb-group-n').textContent}${e.classList.contains('collapsed') ? ' collapsed' : ''}${e.querySelector('.cb-group-plan') ? ` [${e.querySelector('.cb-group-plan').textContent}]` : ''}`,
+            `${e.dataset.part} ${(e.querySelector('.cb-group-label') ?? e.querySelector('.cb-group-plan'))?.textContent} ${e.querySelector('.cb-group-n').textContent}${e.classList.contains('collapsed') ? ' collapsed' : ''}${e.querySelector('.cb-group-plan') && e.querySelector('.cb-group-label') ? ' [label and button]' : ''}`,
         ),
       );
     const want = [
       'running Running 1',
-      'delete|branch Delete 3 branches 3 [Delete 3 branches\u2026]',
+      'delete|branch Delete 3 branches\u2026 3',
       'done Done 1 collapsed',
     ];
     await until(
@@ -459,7 +459,7 @@ async function listScenario(context, t, serveHandle) {
       want.length,
     );
     checkList(
-      'one list: Running, the waiting group under its button, Done collapsed and last',
+      'one list: Running, the waiting group whose header is its button, Done collapsed and last',
       await parts(),
       want,
     );

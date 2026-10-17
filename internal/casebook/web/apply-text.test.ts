@@ -24,6 +24,7 @@ import {
   plannedKeys,
   ageText,
   observations,
+  heldOutside,
 } from './apply-text.ts';
 import type { Job, JobStep, NeedsYou } from './wire.d.ts';
 
@@ -337,5 +338,38 @@ describe('observations', () => {
     assert.equal(ageText(40e3), '40s');
     assert.equal(ageText(3 * 3600e3), '3h');
     assert.equal(ageText(50 * 3600e3), '2d');
+  });
+});
+
+// Review 2026-10-17: a held item not on the list's loaded pages counts once,
+// however many steps its job has for it (a branch: local and remote).
+describe('heldOutside', () => {
+  const job = (state: string, steps: Array<[string, string]>): Job =>
+    ({
+      id: 1,
+      state,
+      steps: steps.map(([key, action], i) => ({ id: i + 1, key, action })),
+    }) as unknown as Job;
+  const B = 'branch:o/r@x';
+  test('a branch with two steps counts once', () => {
+    const jobs = [
+      job('planned', [
+        [B, 'branch-delete-local'],
+        [B, 'branch-delete-remote'],
+      ]),
+    ];
+    assert.equal(heldOutside(jobs, 'delete|branch', new Set()), 1);
+  });
+  test('a loaded item and a finished job count nothing', () => {
+    const jobs = [
+      job('planned', [[B, 'branch-delete-local']]),
+      job('done', [['branch:o/r@y', 'branch-delete-local']]),
+    ];
+    assert.equal(heldOutside(jobs, 'delete|branch', new Set([B])), 0);
+  });
+  test("only the group the step's item is in", () => {
+    const jobs = [job('running', [['repo:o/r', 'repo-archive']])];
+    assert.equal(heldOutside(jobs, 'delete|branch', new Set()), 0);
+    assert.equal(heldOutside(jobs, 'archive|repo', new Set()), 1);
   });
 });

@@ -101,6 +101,7 @@ import {
   stepMark,
   applyLabel,
   applyOrder,
+  heldOutside,
   isFinished,
   isRunning,
   type StepGroup,
@@ -120,22 +121,6 @@ const STEPS_PAGE = 200;
 const RUNNING = 'running';
 const PLANS = 'plans';
 const DONE = 'done';
-
-// STEP_DISPOSITION is the decision a step carries out: with its key's kind,
-// the waiting group (serve's to-apply group id) its item was in.
-const STEP_DISPOSITION: Record<string, string> = {
-  'branch-delete-local': 'delete',
-  'branch-delete-remote': 'delete',
-  'worktree-remove': 'delete',
-  'repo-archive': 'archive',
-  'repo-delete': 'delete',
-  'pr-close': 'close',
-  'pr-merge': 'merge',
-  'issue-close': 'close',
-};
-function stepGroup(s: Step): string {
-  return `${STEP_DISPOSITION[s.action] ?? ''}|${s.key.slice(0, s.key.indexOf(':'))}`;
-}
 
 type Row =
   | { t: 'job'; job: Job }
@@ -350,20 +335,13 @@ export function makeApply(ctx: Ctx): Section {
   const waiting = (g: GroupView) =>
     items.filter((it) => it.group === g.id && !inPlan().has(it.key));
   // waitingCount is how many of g's items wait: serve's count less those a
-  // job holds (every loaded one; one not loaded is counted by its step).
+  // job holds (every loaded one; one not loaded counts once, by its key).
   function waitingCount(g: GroupView): number {
     const loaded = new Set(items.map((i) => i.key));
     let held = items.filter(
       (it) => it.group === g.id && inPlan().has(it.key),
     ).length;
-    if (itemsTotal > items.length) {
-      for (const j of jobs) {
-        if (!['planned', 'approved', 'running', 'paused'].includes(j.state))
-          continue;
-        for (const s of j.steps ?? [])
-          if (!loaded.has(s.key) && stepGroup(s) === g.id) held++;
-      }
-    }
+    if (itemsTotal > items.length) held += heldOutside(jobs, g.id, loaded);
     return Math.max(0, g.total - held);
   }
   const tickedIn = (g: GroupView) => {
@@ -517,6 +495,9 @@ export function makeApply(ctx: Ctx): Section {
       }
     }
     paintObs();
+    // With nothing open, the overview's counts follow the list (a job
+    // planned or finished elsewhere).
+    drawOverview();
     focusGroup();
   }
 
@@ -585,18 +566,25 @@ export function makeApply(ctx: Ctx): Section {
         isOpen ? '\u25bc' : '\u25b6',
       ),
       box,
-      h(
-        'span',
-        { class: 'cb-group-name', onclick: toggleOpen },
-        h(
-          'span',
-          { class: 'cb-group-line' },
-          h('span', { class: 'cb-group-label' }, p.label),
-        ),
-      ),
+      // A waiting group's header is its button (planning call): its name
+      // is "Delete 3 branches…", which opens the plan. Other parts' headers
+      // are their name, which folds them.
+      g
+        ? h('div', { class: 'cb-group-acts cb-apply-head-acts' })
+        : h(
+            'span',
+            { class: 'cb-group-name', onclick: toggleOpen },
+            h(
+              'span',
+              { class: 'cb-group-line' },
+              h('span', { class: 'cb-group-label' }, p.label),
+            ),
+          ),
       h('span', { class: 'cb-group-n' }, String(p.n)),
     );
-    const acts = g ? h('div', { class: 'cb-group-acts' }) : null;
+    const acts = g
+      ? top.querySelector<HTMLElement>('.cb-apply-head-acts')
+      : null;
     const el = h(
       'div',
       {
@@ -605,7 +593,6 @@ export function makeApply(ctx: Ctx): Section {
         dataset: { part: p.id },
       },
       top,
-      acts,
     );
     const paint = (): void => {
       if (!g || !acts) return;

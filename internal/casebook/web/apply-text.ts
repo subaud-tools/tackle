@@ -370,3 +370,39 @@ export function observations(
     return { text: 'observations fresh', stale: false };
   return { text: `observations ${ageText(age)} old`, stale: true };
 }
+
+// STEP_DISPOSITION is the decision a step carries out: with its key's kind,
+// the waiting group (serve's to-apply group id) its item was in.
+const STEP_DISPOSITION: Record<string, string> = {
+  'branch-delete-local': 'delete',
+  'branch-delete-remote': 'delete',
+  'worktree-remove': 'delete',
+  'repo-archive': 'archive',
+  'repo-delete': 'delete',
+  'pr-close': 'close',
+  'pr-merge': 'merge',
+  'issue-close': 'close',
+};
+export function stepGroup(s: Step): string {
+  return `${STEP_DISPOSITION[s.action] ?? ''}|${s.key.slice(0, s.key.indexOf(':'))}`;
+}
+
+/**
+ * heldOutside counts the items of waiting group id that an unfinished job
+ * holds and the list hasn't loaded: each item once, however many steps its
+ * job has for it (a branch's local and remote delete).
+ */
+export function heldOutside(
+  jobs: Job[],
+  id: string,
+  loaded: Set<string>,
+): number {
+  const held = new Set<string>();
+  for (const j of jobs) {
+    if (!['planned', 'approved', 'running', 'paused'].includes(j.state))
+      continue;
+    for (const s of j.steps ?? [])
+      if (!loaded.has(s.key) && stepGroup(s) === id) held.add(s.key);
+  }
+  return held.size;
+}

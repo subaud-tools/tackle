@@ -2799,3 +2799,14 @@ button.cb-cond-menu-row[aria-disabled='true'] {
   text-transform: uppercase;
   color: var(--kit-muted);
 }
+
+/* apply: a waiting group's header is its button. */
+.cb-apply-part .cb-apply-head-acts {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
