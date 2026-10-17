@@ -58,8 +58,7 @@ func (r *Repo) replaceDormantRepos(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ru, err := rules.Decode(b)
-	if err != nil || !isShippedDormantRepos(ru) {
+	if !isShippedDormantRepos(b) {
 		return nil // edited (or not a rule casebook can read): Court's
 	}
 	files, err := exampleRuleFiles(time.Now().UTC())
@@ -85,12 +84,13 @@ func (r *Repo) replaceDormantRepos(ctx context.Context) error {
 	return r.commitOnly(ctx, tidyDormantMsg, paths...)
 }
 
-// isShippedDormantRepos reports whether ru is rules.ShippedDormantRepos as
+// isShippedDormantRepos reports whether b is rules.ShippedDormantRepos as
 // seeded: the same name, author, status, conditions and recommendation, and
 // no exclusions (its times are whenever it was seeded).
-func isShippedDormantRepos(ru rules.Rule) bool {
+func isShippedDormantRepos(b []byte) bool {
+	ru, err := rules.Decode(b)
 	want := rules.ShippedDormantRepos()
-	return ru.ID == want.ID && ru.Name == want.Name && ru.Status == want.Status &&
+	return err == nil && ru.ID == want.ID && ru.Name == want.Name && ru.Status == want.Status &&
 		ru.CreatedBy == want.CreatedBy && slices.Equal(ru.Match, want.Match) &&
 		ru.Propose == want.Propose && len(ru.Exclude) == 0
 }
