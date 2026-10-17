@@ -251,8 +251,14 @@ func matches(q Query, it engine.Item, group string) bool {
 func (x *Index) listed(q Query, pending map[string]propose.Proposal) ([]ItemView, []GroupView) {
 	src := x.res.Items
 	if q.Filtered {
+		// Narrowed by filters or a rule: what came back still leads.
 		src = slices.Clone(x.res.Items)
-		sort.SliceStable(src, func(i, j int) bool { return engine.NewerFirst(src[i], src[j]) })
+		sort.SliceStable(src, func(i, j int) bool {
+			if a, b := cameBack(src[i]), cameBack(src[j]); a != b {
+				return a
+			}
+			return engine.NewerFirst(src[i], src[j])
+		})
 	} else if grouped(q.View) {
 		src = slices.Clone(x.res.Attention())
 		// What came back leads, grouped (its group is listed first) or flat.

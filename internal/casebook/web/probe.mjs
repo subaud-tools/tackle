@@ -2412,6 +2412,76 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
         8000,
       ),
     );
+    // Review 2026-10-17: editing keeps a Not now rule's decision and until,
+    // and a save over a copy someone else changed is refused, not silent.
+    {
+      await agent.api('POST', '/api/rules/save?create=1', {
+        id: 'r8-wait',
+        name: 'Issues later',
+        match: [{ field: 'kind', op: 'is', value: 'issue' }],
+        propose: { disposition: 'wait', until: 'date(2030-01-01)' },
+      });
+      const ED = '[data-testid="rule-editor"]';
+      const NAME = `${ED} .cb-filter-name:not(.cb-rule-propose-note)`;
+      const openEditor = async () => {
+        await pg.goto(serveHandle.url + '#/decide?rule=r8-wait', {
+          waitUntil: 'domcontentloaded',
+        });
+        await pg.reload({ waitUntil: 'domcontentloaded' });
+        await pg.waitForSelector('.cb-rule-actions button', { timeout: 8000 });
+        await pg.click('.cb-rule-actions button:text-is("edit")');
+        await pg.waitForSelector(NAME, { timeout: 8000 });
+        await pg.waitForTimeout(800);
+      };
+      await openEditor();
+      const chosen = await pg.$eval(
+        `${ED} .cb-rule-disps`,
+        (e) =>
+          e.querySelector('.cb-cond-pick.on')?.getAttribute('data-value') ?? '',
+      );
+      check(
+        `editing a Not now rule shows its decision chosen (${chosen})`,
+        chosen === 'wait',
+      );
+      await pg.fill(NAME, 'Issues, later');
+      await pg.click(`${ED} .cb-filter-save`);
+      await pg.waitForTimeout(1200);
+      const saved = (await agent.api('GET', '/api/rules')).rules.find(
+        (r) => r.rule.id === 'r8-wait',
+      )?.rule;
+      check(
+        `renaming it keeps "wait until date(2030-01-01)" (${saved?.propose?.disposition} ${saved?.propose?.until})`,
+        saved?.name === 'Issues, later' &&
+          saved?.propose?.disposition === 'wait' &&
+          saved?.propose?.until === 'date(2030-01-01)',
+      );
+      await openEditor();
+      await agent.api('POST', '/api/rules/save', {
+        ...saved,
+        propose: { ...saved.propose, note: 'changed elsewhere' },
+      });
+      await pg.fill(NAME, 'Issues, mine');
+      await pg.click(`${ED} .cb-filter-save`);
+      const refused = await until(
+        pg,
+        (ed) =>
+          /changed since you read it/.test(
+            document.querySelector(`${ed} .cb-filter-name-err`)?.textContent ??
+              '',
+          ),
+        ED,
+        6000,
+      );
+      const after = (await agent.api('GET', '/api/rules')).rules.find(
+        (r) => r.rule.id === 'r8-wait',
+      )?.rule;
+      check(
+        `a save over a copy changed elsewhere is refused and keeps theirs (${after?.name}, ${after?.propose?.note})`,
+        refused &&
+          after?.name === 'Issues, later' &&
+          after?.propose?.note === 'changed elsewhere',
+      );
+    }
     check('no page errors', errors.length === 0);
     if (errors.length) console.error(errors);
   } catch (err) {
@@ -2524,7 +2594,7 @@ const applyHelpers = { check, checkList, until, eventually };
 // run() below is the scenario list. A full run (no PROBE_ONLY) must pass at
 // least MIN_CHECKS checks: a scenario that stops early, or is skipped, can't
 // leave the probe green. Raise it whenever checks are added.
-const MIN_CHECKS = 856;
+const MIN_CHECKS = 859;
 
 // PROBE_ONLY runs one group of scenarios, for working on them: a partial
 // run. It has to say so: under CI (the CI env var) it is refused outright,

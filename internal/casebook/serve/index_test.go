@@ -361,3 +361,23 @@ func TestCameBackItemIsNotInItsRecommendationGroup(t *testing.T) {
 		t.Fatalf("rule group keys %v", keys)
 	}
 }
+
+// TestCameBackFirstWhenFiltered: a filter or a rule narrows the list but
+// "Came back" still leads it, grouped and flat (review 2026-10-17).
+func TestCameBackFirstWhenFiltered(t *testing.T) {
+	idx, pending := cameBackFixture()
+	all := map[string]bool{}
+	for _, it := range idx.res.Items {
+		all[it.ID] = true
+	}
+	q := Query{View: ViewAll, Filtered: true, MatchSet: all}
+	gs := idx.Groups(q, pending)
+	if len(gs) == 0 || gs[0].ID != GroupCameBack {
+		t.Fatalf("filtered groups %+v, want came-back first", gs)
+	}
+	q.Flat = true
+	items, _ := idx.List(q, pending)
+	if got := ids(items)[:2]; !slices.Equal(got, []string{"pr:schuettc/hail#4", "pr:schuettc/hail#1"}) {
+		t.Fatalf("filtered flat list starts %v", got)
+	}
+}

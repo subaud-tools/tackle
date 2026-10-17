@@ -542,6 +542,15 @@ export function makeDecide(ctx: Ctx): Section {
       const v = await ctx.api.get<RulesView>('/rules');
       ruleRows = v.rules ?? [];
       paintRules();
+      // A rule named by the address (#/decide?rule=<id>) shows once the
+      // rules are in.
+      if (
+        filters.rule &&
+        currentOpenKey === null &&
+        draft === null &&
+        !readEl.querySelector('.cb-rule')
+      )
+        showReadEmpty();
     } catch {
       // non-fatal: the chips stay as they were
     }

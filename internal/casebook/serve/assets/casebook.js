@@ -4521,7 +4521,9 @@ function ruleEditor(ctx, row, seed, hooks) {
         match: done
       });
       if (mine !== seq) return;
-      offered = (p.dispositions ?? []).filter(OFFERED);
+      offered = (p.dispositions ?? []).filter(
+        (d) => OFFERED(d) || d === row?.rule.propose.disposition
+      );
       kinds = p.kinds ?? null;
       if (disposition && !offered.includes(disposition)) disposition = "";
       paintDisps();
@@ -4576,14 +4578,15 @@ function ruleEditor(ctx, row, seed, hooks) {
       proposeErr.hidden = false;
       return;
     }
+    const until = row && disposition === row.rule.propose.disposition ? row.rule.propose.until : void 0;
     try {
       await ctx.api.post(
-        row ? "/rules/save" : "/rules/save?create=1",
+        row ? `/rules/save${version ? `?version=${encodeURIComponent(version)}` : ""}` : "/rules/save?create=1",
         {
           id,
           name: n,
           match,
-          propose: { disposition, note: note.value.trim() }
+          propose: { disposition, note: note.value.trim(), until }
         }
       );
       hooks.onSaved(id);
@@ -4666,6 +4669,12 @@ function ruleEditor(ctx, row, seed, hooks) {
     paintDisps();
   });
   void refreshOffered();
+  let version = "";
+  if (row)
+    void ctx.api.get("/rule", { id: row.rule.id }).then((d) => {
+      version = d.version;
+    }).catch(() => {
+    });
   return { el, showError };
 }
 
@@ -5430,6 +5439,8 @@ function makeDecide(ctx) {
       const v = await ctx.api.get("/rules");
       ruleRows = v.rules ?? [];
       paintRules();
+      if (filters.rule && currentOpenKey === null && draft === null && !readEl.querySelector(".cb-rule"))
+        showReadEmpty();
     } catch {
     }
   }

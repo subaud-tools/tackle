@@ -25,7 +25,8 @@ import { getVocab, DANGER_DISPS } from './decide.ts';
 import { menuNav } from './menu-nav.ts';
 
 const KINDS = ['repo', 'pr', 'issue', 'branch', 'worktree'];
-// Not now and watch need an until; this editor doesn't offer them yet.
+// Not now and watch need an until; this editor doesn't offer them for a new
+// choice, but a rule that already has one keeps it (with its until).
 const OFFERED = (d: string) => d !== 'wait' && d !== 'watch';
 
 function message(err: unknown): string {
@@ -282,7 +283,9 @@ export function ruleEditor(
         match: done,
       });
       if (mine !== seq) return;
-      offered = (p.dispositions ?? []).filter(OFFERED);
+      offered = (p.dispositions ?? []).filter(
+        (d) => OFFERED(d) || d === row?.rule.propose.disposition,
+      );
       kinds = p.kinds ?? null;
       if (disposition && !offered.includes(disposition)) disposition = '';
       paintDisps();
@@ -342,14 +345,21 @@ export function ruleEditor(
       proposeErr.hidden = false;
       return;
     }
+    // The until goes with the decision it was set for.
+    const until =
+      row && disposition === row.rule.propose.disposition
+        ? row.rule.propose.until
+        : undefined;
     try {
       await ctx.api.post<RuleDetailView>(
-        row ? '/rules/save' : '/rules/save?create=1',
+        row
+          ? `/rules/save${version ? `?version=${encodeURIComponent(version)}` : ''}`
+          : '/rules/save?create=1',
         {
           id,
           name: n,
           match,
-          propose: { disposition, note: note.value.trim() },
+          propose: { disposition, note: note.value.trim(), until },
         },
       );
       hooks.onSaved(id);
@@ -433,5 +443,15 @@ export function ruleEditor(
     paintDisps();
   });
   void refreshOffered();
+  // The copy being edited: a save over one changed since is refused (409),
+  // never silently replaces it.
+  let version = '';
+  if (row)
+    void ctx.api
+      .get<RuleDetailView>('/rule', { id: row.rule.id })
+      .then((d) => {
+        version = d.version;
+      })
+      .catch(() => {});
   return { el, showError };
 }
