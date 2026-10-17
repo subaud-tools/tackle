@@ -1768,6 +1768,7 @@ textarea.cb-needs-edit:focus {
   color: var(--kit-signal);
 }
 .cb-decide-list .kit-lh > .kit-eyebrow:empty,
+.cb-apply-list .kit-lh > .kit-eyebrow:empty,
 .cb-decide-list .kit-chips[data-group=view]:empty {
   display: none;
 }

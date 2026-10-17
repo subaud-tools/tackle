@@ -2223,8 +2223,10 @@ textarea.cb-needs-edit:focus {
  * count written up it, and the reading column takes the room. The rail (or
  * ») brings the list back.
  */
-/* decide's list names no section: no eyebrow, no view chips. */
+/* decide's and apply's lists name no section (the bar does): no eyebrow,
+ * no view chips. */
 .cb-decide-list .kit-lh > .kit-eyebrow:empty,
+.cb-apply-list .kit-lh > .kit-eyebrow:empty,
 .cb-decide-list .kit-chips[data-group='view']:empty {
   display: none;
 }

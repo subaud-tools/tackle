@@ -256,7 +256,6 @@ export function makeApply(ctx: Ctx): Section {
   let sessions: Session[] = [];
   let items: ItemView[] = [];
   let itemsTotal = 0;
-  let machine = '';
   // serve's waiting groups (GET /api/items?view=to-apply), in its order.
   let groups: GroupView[] = [];
   // serve's decision vocabulary: a group's words for a count.
@@ -375,7 +374,7 @@ export function makeApply(ctx: Ctx): Section {
   };
 
   const handle: ListHandle<Row> = list<Row>({
-    label: 'apply',
+    label: '',
     openOnMove: false,
     row(r: Row) {
       if (r.t === 'more') {
@@ -968,7 +967,6 @@ export function makeApply(ctx: Ctx): Section {
   async function loadSummary(): Promise<void> {
     try {
       const s = await ctx.api.get<SummaryView>('/summary');
-      machine = s.machine;
       builtAt = Date.parse(s.built_at) || 0;
       intervalMs = s.sync_interval_ms;
       syncing = s.syncing;
@@ -1206,11 +1204,6 @@ export function makeApply(ctx: Ctx): Section {
     const doc = h(
       'article',
       { class: 'cb-apply-doc', 'data-testid': 'apply-overview' },
-      h(
-        'p',
-        { class: 'kit-kick' },
-        `apply${machine ? ` \u00b7 ${machine}` : ''}`,
-      ),
       h(
         'h1',
         { class: 'kit-h1' },

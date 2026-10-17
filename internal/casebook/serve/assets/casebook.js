@@ -1514,7 +1514,6 @@ function makeApply(ctx) {
   let sessions = [];
   let items = [];
   let itemsTotal = 0;
-  let machine = "";
   let groups = [];
   let vocab2 = null;
   const collapsed = /* @__PURE__ */ new Set([DONE]);
@@ -1592,7 +1591,7 @@ function makeApply(ctx) {
     return waiting(g).map((it) => it.key).filter((k) => sel.has(k));
   };
   const handle = list({
-    label: "apply",
+    label: "",
     openOnMove: false,
     row(r) {
       if (r.t === "more") {
@@ -2091,7 +2090,6 @@ function makeApply(ctx) {
   async function loadSummary() {
     try {
       const s = await ctx.api.get("/summary");
-      machine = s.machine;
       builtAt = Date.parse(s.built_at) || 0;
       intervalMs = s.sync_interval_ms;
       syncing = s.syncing;
@@ -2287,11 +2285,6 @@ function makeApply(ctx) {
     const doc = h4(
       "article",
       { class: "cb-apply-doc", "data-testid": "apply-overview" },
-      h4(
-        "p",
-        { class: "kit-kick" },
-        `apply${machine ? ` · ${machine}` : ""}`
-      ),
       h4(
         "h1",
         { class: "kit-h1" },
