@@ -5808,6 +5808,19 @@ function makeDecide(ctx) {
     );
     return { el, acts };
   }
+  function groupSays(g) {
+    for (const k of vocab2?.kinds ?? []) {
+      const c = (k.choices ?? []).find(
+        (x) => x.disposition === g.disposition && x.label === g.label
+      );
+      if (c) return c.says;
+    }
+    return "";
+  }
+  function withSays(el, says) {
+    if (says) el.title = says;
+    return el;
+  }
   function groupButton(id, cls, label, run, off = false) {
     return h11(
       "button",
@@ -5898,7 +5911,10 @@ function makeDecide(ctx) {
       const looked = scoped ? ticked.every((k) => rows.some((it) => it.key === k && it.looking)) : rows.length >= g.total && rows.every((it) => !!it.looking);
       acts.replaceChildren(
         ...[
-          button("fill cb-group-act", w.act, () => actGroup(g)),
+          withSays(
+            button("fill cb-group-act", w.act, () => actGroup(g)),
+            groupSays(g)
+          ),
           t ? button("cb-group-look", w.look, () => lookGroup(g), looked) : null,
           g.source.startsWith("rule:") ? null : button("cb-group-discard", w.discard, () => discardGroup(g)),
           n > 0 ? h11(
@@ -6034,7 +6050,7 @@ function makeDecide(ctx) {
       selection.deselect(keys);
       lastUndo = Object.entries(r.decisions ?? {}).map(([key, expect]) => ({
         key,
-        prev: loadedItems.find((it) => it.key === key)?.decision ?? null,
+        prev: r.previous?.[key] ?? null,
         expect
       }));
       if (g.outward && vocab2)
@@ -6362,9 +6378,9 @@ function makeDecide(ctx) {
       void reload();
     }
   }
-  function remember(key, prev, made) {
+  function remember(key, made, previous) {
     const expect = made?.[key];
-    lastUndo = expect ? [{ key, prev, expect }] : [];
+    lastUndo = expect ? [{ key, prev: previous?.[key] ?? null, expect }] : [];
   }
   const strip = h11("div", {
     class: "cb-strip",
@@ -6458,8 +6474,13 @@ function makeDecide(ctx) {
     if (deciding) return;
     deciding = key;
     const order = await orderFor(key);
-    const prev = shownDetail?.item.key === key ? shownDetail.item.decision ?? null : null;
-    const p = shownProposal();
+    let p = shownProposal();
+    try {
+      const now = await ctx.api.get("/item", { key });
+      const fresh = now.item.proposal;
+      p = fresh && fresh.state === "pending" ? fresh : null;
+    } catch {
+    }
     const route = decideRoute(
       p && p.key === key ? p : null,
       disposition,
@@ -6467,6 +6488,7 @@ function makeDecide(ctx) {
     );
     try {
       let made = null;
+      let previous = null;
       if (route.path === "accept") {
         const body = { ids: [route.id] };
         if (note) body["note"] = note;
@@ -6476,6 +6498,7 @@ function makeDecide(ctx) {
           return;
         }
         made = r.decisions;
+        previous = r.previous;
       } else {
         const payload = route.path === "change" ? { id: route.id, disposition } : { keys: [key], disposition };
         if (until) payload["until"] = until;
@@ -6489,9 +6512,10 @@ function makeDecide(ctx) {
           return;
         }
         made = r.decisions;
+        previous = r.previous;
       }
       selection.deselect([key]);
-      remember(key, prev, made);
+      remember(key, made, previous);
       if (outwardChoice(key, disposition) && vocab2)
         waited(doneWords(vocab2, disposition, { key }));
       else hideStrip();

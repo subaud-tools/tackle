@@ -3929,9 +3929,42 @@ async function itemPageScenario(context, t, s) {
     )),
   );
 
+  // ---- a recommendation that comes while Court is picking a Not now ------
+  // (review 2026-10-17): the decision still counts against it, not over it.
+  {
+    const S = 'probe-item-late';
+    await agent.presence(S, 'pi \u00b7 late', '/home/court/late', 'pi');
+    await row(pg, IPPR(5)).click();
+    await opened(t, pg, IPPR(5));
+    await pg.click(`${READ} .cb-choice[data-d="wait"]`);
+    await pg.waitForSelector(`${READ} .cb-notnow:not([hidden]) .kit-chip`, {
+      timeout: 8000,
+    });
+    await agent.propose(S, [IPPR(5)], 'close', 'superseded upstream');
+    await pg.waitForTimeout(800);
+    posts.length = 0;
+    await pg.click(
+      `${READ} .cb-notnow:not([hidden]) .kit-chip[data-id="in-1w"]`,
+    );
+    check(
+      'a recommendation that came while picking a Not now counts as decided differently (posts change)',
+      (await eventually(
+        async () => posts.includes('/api/proposals/change'),
+        8000,
+      )) && !posts.includes('/api/decide'),
+    );
+  }
+
   // ---- a group act and its undo -------------------------------------------
   const OLD = `.kit-app > .kit-list:not([hidden]) .cb-group[data-rule="${IP_OLD.id}"]`;
   await pg.waitForSelector(`${OLD} .cb-group-act`, { timeout: 8000 });
+  {
+    const says = await pg.$eval(`${OLD} .cb-group-act`, (e) => e.title);
+    check(
+      `the group's button says what it does on hover ("${says}")`,
+      /until you run it in apply\.$/.test(says),
+    );
+  }
   await pg.click(`${OLD} .cb-group-act`);
   await until(
     pg,

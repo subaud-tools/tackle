@@ -167,6 +167,9 @@ type DecideResult struct {
 	// Decisions is, per decided key, the decision this request committed:
 	// what an undo of it expects to find (POST /api/decisions/undo).
 	Decisions map[string]Committed `json:"decisions"`
+	// Previous is, per decided key, the decision it had before (null when
+	// none): what an undo puts back.
+	Previous map[string]*Committed `json:"previous"`
 }
 
 // AcceptResult is the response body of POST /api/proposals/accept. Like
@@ -176,6 +179,9 @@ type AcceptResult struct {
 	Errors   []string `json:"errors"`
 	// Decisions is, per decided key, the decision this request committed.
 	Decisions map[string]Committed `json:"decisions"`
+	// Previous is, per decided key, the decision it had before (null when
+	// none).
+	Previous map[string]*Committed `json:"previous"`
 }
 
 // Committed is a decision as a request committed it, decided_at to the

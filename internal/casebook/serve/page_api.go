@@ -331,18 +331,26 @@ func nonNil[T any](s []T) []T {
 // proposals for the key except keep (the proposal being accepted), and returns
 // the normalized key and the decision it committed. By defaults to
 // s.App.Cfg.User.
-func (s *Server) decideOneKey(ctx context.Context, key, disposition string, o app.DecideOptions, keep int64) (string, Committed, error) {
+func (s *Server) decideOneKey(ctx context.Context, key, disposition string, o app.DecideOptions, keep int64) (string, Committed, *Committed, error) {
 	o.NoPush = true
 	if o.By == "" {
 		o.By = s.App.Cfg.User
 	}
+	// What the item had, for an undo to put back.
+	var prev *Committed
+	if k, err := item.ParseKey(key); err == nil {
+		if old, err := s.App.Repo.ReadDecision(k); err == nil && old != nil {
+			c := committedOf(app.RevisionOf(*old))
+			prev = &c
+		}
+	}
 	d, _, err := s.App.Decide(ctx, key, disposition, o)
 	if err != nil {
-		return "", Committed{}, err
+		return "", Committed{}, nil, err
 	}
 	k, _ := item.ParseKey(key)
 	_ = s.Props.SupersedeKey(ctx, k.String(), keep)
-	return k.String(), committedOf(app.RevisionOf(d)), nil
+	return k.String(), committedOf(app.RevisionOf(d)), prev, nil
 }
 
 func committedOf(r app.Revision) Committed {
@@ -374,7 +382,7 @@ func (s *Server) finishDecides(ctx context.Context, n int, errs []string) []stri
 // decideAll records decisions (one commit each), retires the pending
 // proposals for those keys (except keep, the one being accepted), asks for
 // the push and rebuilds the index (finishDecides).
-func (s *Server) decideAll(ctx context.Context, keys []string, disposition string, o app.DecideOptions, keep int64) (int, []string, []string, map[string]Committed) {
+func (s *Server) decideAll(ctx context.Context, keys []string, disposition string, o app.DecideOptions, keep int64) (int, []string, []string, map[string]Committed, map[string]*Committed) {
 	if o.By == "" {
 		o.By = s.App.Cfg.User
 	}
@@ -382,21 +390,23 @@ func (s *Server) decideAll(ctx context.Context, keys []string, disposition strin
 	var errs []string
 	var done []string
 	made := map[string]Committed{}
+	prev := map[string]*Committed{}
 	for _, key := range keys {
-		k, c, err := s.decideOneKey(ctx, key, disposition, o, keep)
+		k, c, p, err := s.decideOneKey(ctx, key, disposition, o, keep)
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue
 		}
 		done = append(done, k)
 		made[k] = c
+		prev[k] = p
 		n++
 	}
 	if n > 0 {
 		s.publish(ctx, "decided", map[string]any{"keys": done, "disposition": disposition, "by": o.By, "proposed_by": o.ProposedBy})
 	}
 	errs = s.finishDecides(ctx, n, errs)
-	return n, done, errs, made
+	return n, done, errs, made, prev
 }
 
 // decisionVocab is the decision vocabulary: GET /api/decisions/vocabulary
@@ -662,11 +672,11 @@ func (s *Server) postDecide(w http.ResponseWriter, r *http.Request) {
 				errs = append(errs, err.Error())
 			}
 		}
-		reply(w, DecideResult{Decided: 0, DecidedKeys: []string{}, Errors: nonNil(errs), Decisions: map[string]Committed{}}, nil)
+		reply(w, DecideResult{Decided: 0, DecidedKeys: []string{}, Errors: nonNil(errs), Decisions: map[string]Committed{}, Previous: map[string]*Committed{}}, nil)
 		return
 	}
-	n, done, errs, made := s.decideAll(r.Context(), in.Keys, in.Disposition, app.DecideOptions{Until: in.Until, Note: in.Note}, 0)
-	reply(w, DecideResult{Decided: n, DecidedKeys: nonNil(done), Errors: nonNil(errs), Decisions: made}, nil)
+	n, done, errs, made, prev := s.decideAll(r.Context(), in.Keys, in.Disposition, app.DecideOptions{Until: in.Until, Note: in.Note}, 0)
+	reply(w, DecideResult{Decided: n, DecidedKeys: nonNil(done), Errors: nonNil(errs), Decisions: made, Previous: prev}, nil)
 }
 
 // proposalOpts is how a proposal is decided when it is accepted. Its note is
@@ -703,6 +713,7 @@ func (s *Server) postAccept(w http.ResponseWriter, r *http.Request) {
 	var errs []string
 	by := s.App.Cfg.User
 	made := map[string]Committed{}
+	prevs := map[string]*Committed{}
 	var keys []string
 	for _, id := range in.IDs {
 		p, err := s.Props.Get(ctx, id)
@@ -717,12 +728,13 @@ func (s *Server) postAccept(w http.ResponseWriter, r *http.Request) {
 		if item.Disposition(p.Disposition) == item.Close {
 			o.Note = in.Note
 		}
-		normed, c, err := s.decideOneKey(ctx, p.Key, p.Disposition, o, p.ID)
+		normed, c, prev, err := s.decideOneKey(ctx, p.Key, p.Disposition, o, p.ID)
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue
 		}
 		made[normed] = c
+		prevs[normed] = prev
 		_ = s.Props.Settle(ctx, id, propose.Accepted, "")
 		s.publish(ctx, "decided", map[string]any{
 			"keys":        []string{normed},
@@ -734,7 +746,7 @@ func (s *Server) postAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	errs = s.finishDecides(ctx, total, errs)
 	s.publish(ctx, "proposals", map[string]any{"ids": in.IDs, "keys": nonNil(keys), "state": propose.Accepted})
-	reply(w, AcceptResult{Accepted: total, Errors: nonNil(errs), Decisions: made}, nil)
+	reply(w, AcceptResult{Accepted: total, Errors: nonNil(errs), Decisions: made, Previous: prevs}, nil)
 }
 
 func (s *Server) postChange(w http.ResponseWriter, r *http.Request) {
@@ -756,12 +768,12 @@ func (s *Server) postChange(w http.ResponseWriter, r *http.Request) {
 	}
 	o := proposalOpts(p)
 	o.Until, o.Note = in.Until, in.Note
-	n, done, errs, made := s.decideAll(ctx, []string{p.Key}, in.Disposition, o, p.ID)
+	n, done, errs, made, prev := s.decideAll(ctx, []string{p.Key}, in.Disposition, o, p.ID)
 	if n == 1 {
 		_ = s.Props.Settle(ctx, p.ID, propose.Changed, changedTo(in.Disposition, in.Until, in.Note))
 		s.publish(ctx, "proposals", map[string]any{"ids": []int64{p.ID}, "keys": []string{p.Key}, "state": propose.Changed})
 	}
-	reply(w, DecideResult{Decided: n, DecidedKeys: nonNil(done), Errors: nonNil(errs), Decisions: made}, nil)
+	reply(w, DecideResult{Decided: n, DecidedKeys: nonNil(done), Errors: nonNil(errs), Decisions: made, Previous: prev}, nil)
 }
 
 func (s *Server) postReject(w http.ResponseWriter, r *http.Request) {

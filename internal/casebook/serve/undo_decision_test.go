@@ -277,3 +277,32 @@ func TestUndoRefusesOnlyTheOneThatChanged(t *testing.T) {
 		}
 	}
 }
+
+// TestDecideAndAcceptSayWhatWasThere: decide and accept answer, per key,
+// the decision the item had before (null when none), so an undo can put it
+// back without the page knowing it (review 2026-10-17: a group's items
+// aren't all loaded, and a live reload can replace what was).
+func TestDecideAndAcceptSayWhatWasThere(t *testing.T) {
+	r := newRig(t)
+	const key = "issue:schuettc/hail#5"
+	first := r.pageDecide(t, key, "wait", "date(2030-01-01)", "later")
+	var res struct {
+		Previous map[string]*committed `json:"previous"`
+	}
+	body := map[string]any{"keys": []string{key}, "disposition": "close", "note": "done"}
+	if c := r.do(t, "POST", "/api/decide", body, &res); c != 200 {
+		t.Fatalf("decide %d", c)
+	}
+	prev := res.Previous[key]
+	if prev == nil || prev.Disposition != "wait" || prev.Until != "date(2030-01-01)" || prev.Note != "later" || !prev.DecidedAt.Equal(first.DecidedAt) {
+		t.Fatalf("previous %+v, want the Not now that was there (%+v)", prev, first)
+	}
+	res.Previous = nil
+	body = map[string]any{"keys": []string{"issue:schuettc/hail#6"}, "disposition": "keep"}
+	if c := r.do(t, "POST", "/api/decide", body, &res); c != 200 {
+		t.Fatalf("decide %d", c)
+	}
+	if p, ok := res.Previous["issue:schuettc/hail#6"]; !ok || p != nil {
+		t.Fatalf("an undecided item's previous: %+v %v, want present and null", p, ok)
+	}
+}

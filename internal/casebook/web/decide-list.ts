@@ -25,7 +25,6 @@ import type {
   ItemsView,
   ItemView,
   ItemDetailView,
-  Decision,
   DecideResult,
   AcceptResult,
   Committed,
@@ -226,7 +225,7 @@ export function makeDecide(ctx: Ctx): Section {
   // (serve's reply), which undo expects to find.
   let lastUndo: {
     key: string;
-    prev: Decision | null;
+    prev: Committed | null;
     expect: Committed;
   }[] = [];
   // serve's decision vocabulary (the groups' buttons, the summary, the
@@ -1365,6 +1364,22 @@ export function makeDecide(ctx: Ctx): Section {
 
   // groupButton is one of group id's buttons: while one runs, the group's
   // buttons wait.
+  // groupSays is what a group's decision does, in serve's words (the
+  // choice whose label the group carries): its button's hover.
+  function groupSays(g: GroupView): string {
+    for (const k of vocab?.kinds ?? []) {
+      const c = (k.choices ?? []).find(
+        (x) => x.disposition === g.disposition && x.label === g.label,
+      );
+      if (c) return c.says;
+    }
+    return '';
+  }
+  function withSays(el: HTMLElement, says: string): HTMLElement {
+    if (says) el.title = says;
+    return el;
+  }
+
   function groupButton(
     id: string,
     cls: string,
@@ -1499,7 +1514,10 @@ export function makeDecide(ctx: Ctx): Section {
         : rows.length >= g.total && rows.every((it) => !!it.looking);
       acts.replaceChildren(
         ...[
-          button('fill cb-group-act', w.act, () => actGroup(g)),
+          withSays(
+            button('fill cb-group-act', w.act, () => actGroup(g)),
+            groupSays(g),
+          ),
           t
             ? button('cb-group-look', w.look, () => lookGroup(g), looked)
             : null,
@@ -1672,11 +1690,12 @@ export function makeDecide(ctx: Ctx): Section {
         return;
       }
       selection.deselect(keys);
-      // Undo puts back what each had (the list's rows; a recommended item
-      // is usually undecided, and undo then clears it).
+      // Undo puts back what each had, as serve says it was when it
+      // decided (not the list's rows: a group's items aren't all loaded,
+      // and a live reload may already show the new decisions).
       lastUndo = Object.entries(r.decisions ?? {}).map(([key, expect]) => ({
         key,
-        prev: loadedItems.find((it) => it.key === key)?.decision ?? null,
+        prev: r.previous?.[key] ?? null,
         expect,
       }));
       if (g.outward && vocab)
@@ -2122,11 +2141,11 @@ export function makeDecide(ctx: Ctx): Section {
   // committed. With no such reply, u does nothing rather than guess.
   function remember(
     key: string,
-    prev: Decision | null,
     made: Record<string, Committed> | null,
+    previous: Record<string, Committed> | null,
   ): void {
     const expect = made?.[key];
-    lastUndo = expect ? [{ key, prev, expect }] : [];
+    lastUndo = expect ? [{ key, prev: previous?.[key] ?? null, expect }] : [];
   }
 
   // ---- the strip: where an outward decision went --------------------------
@@ -2261,11 +2280,17 @@ export function makeDecide(ctx: Ctx): Section {
     if (deciding) return;
     deciding = key;
     const order = await orderFor(key);
-    const prev =
-      shownDetail?.item.key === key
-        ? (shownDetail.item.decision ?? null)
-        : null;
-    const p = shownProposal();
+    // The item's recommendation as serve has it now: one may have come (or
+    // gone) while Court was typing a closing comment or picking a Not now,
+    // and the decision must count for or against it.
+    let p = shownProposal();
+    try {
+      const now = await ctx.api.get<ItemDetailView>('/item', { key });
+      const fresh = now.item.proposal;
+      p = fresh && fresh.state === 'pending' ? fresh : null;
+    } catch {
+      // keep what the page shows
+    }
     const route = decideRoute(
       p && p.key === key ? p : null,
       disposition,
@@ -2273,6 +2298,7 @@ export function makeDecide(ctx: Ctx): Section {
     );
     try {
       let made: Record<string, Committed> | null = null;
+      let previous: Record<string, Committed> | null = null;
       if (route.path === 'accept') {
         const body: Record<string, unknown> = { ids: [route.id] };
         // A close's closing comment ('' or none: it closes without one).
@@ -2283,6 +2309,7 @@ export function makeDecide(ctx: Ctx): Section {
           return;
         }
         made = r.decisions;
+        previous = r.previous;
       } else {
         const payload: Record<string, unknown> =
           route.path === 'change'
@@ -2299,9 +2326,10 @@ export function makeDecide(ctx: Ctx): Section {
           return;
         }
         made = r.decisions;
+        previous = r.previous;
       }
       selection.deselect([key]);
-      remember(key, prev, made);
+      remember(key, made, previous);
       if (outwardChoice(key, disposition) && vocab)
         waited(doneWords(vocab, disposition, { key }));
       else hideStrip();

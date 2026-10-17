@@ -71,12 +71,14 @@ export interface DecideResult {
   decided_keys: string[] | null;
   errors: string[] | null;
   decisions: Record<string, Committed> | null;
+  previous: Record<string, Committed> | null;
 }
 
 export interface AcceptResult {
   accepted: number;
   errors: string[] | null;
   decisions: Record<string, Committed> | null;
+  previous: Record<string, Committed> | null;
 }
 
 export interface RejectResult {
