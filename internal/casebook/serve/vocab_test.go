@@ -212,3 +212,26 @@ func TestVocabularyNotNowForms(t *testing.T) {
 		}
 	}
 }
+
+// TestVocabularyWaitingStrip: the strip after an outward decision and the
+// item page's came-back fact are serve's words.
+func TestVocabularyWaitingStrip(t *testing.T) {
+	r := newRig(t)
+	var v struct {
+		Waiting struct {
+			Text  string `json:"text"`
+			Apply string `json:"apply"`
+			Undo  string `json:"undo"`
+		} `json:"waiting"`
+		CameBackFact string `json:"came_back_fact"`
+	}
+	if c := r.do(t, "GET", "/api/decisions/vocabulary", nil, &v); c != 200 {
+		t.Fatalf("vocabulary %d", c)
+	}
+	if v.Waiting.Text != "{done} \u00b7 waiting in {apply} \u00b7 {undo}" || v.Waiting.Apply != "apply" || v.Waiting.Undo != "undo" {
+		t.Errorf("waiting %+v", v.Waiting)
+	}
+	if v.CameBackFact != "came back \u00b7 {reason}" {
+		t.Errorf("came_back_fact %q", v.CameBackFact)
+	}
+}

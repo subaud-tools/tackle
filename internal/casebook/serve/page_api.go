@@ -421,7 +421,9 @@ func decisionVocab() DecisionVocabView {
 			string(item.StatusDrift):    "it changed on GitHub since you decided",
 			string(item.StatusConflict): "two decisions for it disagree",
 		},
-		Recommends: "{session} recommends",
+		CameBackFact: "came back \u00b7 {reason}",
+		Waiting:      WaitingVocab{Text: "{done} \u00b7 waiting in {apply} \u00b7 {undo}", Apply: "apply", Undo: "undo"},
+		Recommends:   "{session} recommends",
 		Nav: NavVocab{
 			Position:  "{pos} of {total} in {group}",
 			PrevItem:  "Previous item: {target} (k)",

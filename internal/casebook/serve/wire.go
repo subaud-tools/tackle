@@ -478,6 +478,11 @@ type DecisionVocabView struct {
 	// CameBack says why an item in the "Came back" group came back, by
 	// its status, when the item gives no reason of its own (due_reason).
 	CameBack map[string]string `json:"came_back"`
+	// CameBackFact leads the item page's facts line when the item came
+	// back ({reason}: its due reason, or CameBack's words for its status).
+	CameBackFact string `json:"came_back_fact"`
+	// Waiting is the strip after an outward decision.
+	Waiting WaitingVocab `json:"waiting"`
 	// Recommends is the open item's recommendation box's kicker
 	// ({session}: who recommends).
 	Recommends string `json:"recommends"`
@@ -515,6 +520,15 @@ type NavVocab struct {
 }
 
 // SummaryVocab is decide's summary, in the middle pane with nothing open:
+// WaitingVocab is the strip after an outward decision: Text with {done}
+// (the choice's done or done_many), {apply} (a link to the apply group it
+// joined, Apply its words) and {undo} (its undo button, Undo its words).
+type WaitingVocab struct {
+	Text  string `json:"text"`
+	Apply string `json:"apply"`
+	Undo  string `json:"undo"`
+}
+
 // ToDecide ({n}: everything to decide), CameBack ({n}: the items that came
 // back), Group, one line per rule's or agent's recommendations ({who}: the
 // rule's name or the session's, {decision}: the group's label, {n}: its

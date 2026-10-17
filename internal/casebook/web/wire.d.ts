@@ -240,6 +240,8 @@ export interface DecisionVocabView {
   untick: string;
   left_open: string;
   came_back: Record<string, string> | null;
+  came_back_fact: string;
+  waiting: WaitingVocab;
   recommends: string;
   nav: NavVocab;
   hide_list: string;
@@ -585,6 +587,12 @@ export interface CountWords {
   two: string;
   all: string;
   some: string;
+}
+
+export interface WaitingVocab {
+  text: string;
+  apply: string;
+  undo: string;
 }
 
 export interface NavVocab {
