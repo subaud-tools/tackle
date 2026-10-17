@@ -128,16 +128,21 @@ var nouns = map[Kind][2]string{
 	KindWorktree: {"worktree", "worktrees"},
 }
 
+// Nouns names kind k: one, several ("branch", "branches").
+func Nouns(k Kind) (one, many string) {
+	if n, ok := nouns[k]; ok {
+		return n[0], n[1]
+	}
+	return string(k), string(k)
+}
+
 // ApplyLabel names apply's group of n items of kind k decided d by what
 // will happen: the choice's Many with the count and the kind's noun ("Delete
 // 30 branches", "Close 1 PR").
 func ApplyLabel(k Kind, d Disposition, n int) string {
-	noun := nouns[k][1]
+	one, noun := Nouns(k)
 	if n == 1 {
-		noun = nouns[k][0]
-	}
-	if noun == "" {
-		noun = string(k)
+		noun = one
 	}
 	count := fmt.Sprintf("%d %s", n, noun)
 	for _, c := range choices[k] {

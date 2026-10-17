@@ -4,6 +4,20 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [casebook 0.11.0] - 2026-10-17
+
+### Added
+- A plan says, for each group of steps, where it runs ("Runs here, on ‹machine›." or "Runs on GitHub, through ‹agent›.") and whether it can be undone ("Can be undone: undo makes the branch again at the same commit."; "No undo here: unarchive it on GitHub to reverse it."). serve sends it as each plan group's `undo` and each job step's `undo_note`.
+- `GET /api/items?view=to-apply` groups the decided items by what will happen: group ids `‹disposition›|‹kind›`, labelled "Delete 30 branches", "Close 5 PRs", "Archive 10 repos", in kind order (repos, PRs, issues, branches, worktrees). The decision vocabulary names each kind (`noun`, `nouns`).
+- The waiting strip's "apply" opens the group the decision joined (`#/apply?group=close|issue`).
+
+### Changed
+- apply is one list, grouped like decide, with no view chips: running jobs on top, each with a progress bar that moves as steps finish; then plans not approved yet and the decided items waiting, each group headed by its button ("Delete 3 branches…", or for the ticked items "Delete 1 branch…"); Done, collapsed, last. A group's button opens its plan in the middle pane with each item's exact command; nothing runs from the list. An item in a plan or a job leaves its group until that finishes or is discarded.
+- A plan's button is "approve and run" in both lanes (the bar's primary "Approve and run").
+
+### Removed
+- apply's running, ready and done chips, its foot's "plan N" and "plan all N", and the overview's plan buttons.
+
 ## [casebook 0.10.0] - 2026-10-17
 
 ### Added

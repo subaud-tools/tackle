@@ -18,12 +18,10 @@ import {
   planSummary,
   progress,
   stepMark,
-  viewOf,
+  applyOrder,
+  applyLabel,
   outwardGo,
   plannedKeys,
-  plannableCount,
-  heldLabel,
-  heldWhere,
   ageText,
   observations,
 } from './apply-text.ts';
@@ -59,13 +57,51 @@ function job(state: string, steps: JobStep[]): Job {
   };
 }
 
-describe('views', () => {
-  test('a plan is ready, approved to paused is running, the rest done', () => {
-    assert.equal(viewOf(job('planned', [])), 'ready');
-    for (const s of ['approved', 'running', 'paused'])
-      assert.equal(viewOf(job(s, [])), 'running');
-    for (const s of ['done', 'failed', 'cancelled'])
-      assert.equal(viewOf(job(s, [])), 'done');
+describe('the order', () => {
+  test('approved, running and paused jobs are running; plans are plans; the rest done', () => {
+    const js = [
+      'planned',
+      'approved',
+      'running',
+      'paused',
+      'done',
+      'failed',
+      'cancelled',
+    ].map((s, i) => ({ ...job(s, []), id: i + 1 }));
+    const o = applyOrder(js);
+    assert.deepEqual(
+      o.running.map((j) => j.state),
+      ['paused', 'running', 'approved'],
+    );
+    assert.deepEqual(
+      o.plans.map((j) => j.state),
+      ['planned'],
+    );
+    assert.deepEqual(
+      o.done.map((j) => j.state),
+      ['cancelled', 'failed', 'done'],
+    );
+  });
+  test('each part is newest first', () => {
+    const js = [1, 3, 2].map((id) => ({ ...job('running', []), id }));
+    assert.deepEqual(
+      applyOrder(js).running.map((j) => j.id),
+      [3, 2, 1],
+    );
+  });
+});
+
+describe('a waiting group', () => {
+  test("is named by the choice's many, counting in the kind's nouns", () => {
+    assert.equal(
+      applyLabel('Delete {n}', 'branch', 'branches', 30),
+      'Delete 30 branches',
+    );
+    assert.equal(
+      applyLabel('Delete {n}', 'branch', 'branches', 1),
+      'Delete 1 branch',
+    );
+    assert.equal(applyLabel('Close {n}', 'PR', 'PRs', 5), 'Close 5 PRs');
   });
 });
 
@@ -246,7 +282,7 @@ describe('outwardGo', () => {
   });
 });
 
-describe('plannedKeys and plannableCount', () => {
+describe('plannedKeys', () => {
   const j = (id: number, state: string, keys: string[]): Job =>
     ({
       id,
@@ -270,7 +306,9 @@ describe('plannedKeys and plannableCount', () => {
   test('every unfinished job holds its keys; a started job before a plan, then the newest', () => {
     const m = plannedKeys(jobs);
     assert.deepEqual(
-      [...m.entries()].map(([k, v]) => `${k} ${heldLabel(v)}`).sort(),
+      [...m.entries()]
+        .map(([k, v]) => `${k} ${v.planned ? 'in plan' : 'in job'} #${v.id}`)
+        .sort(),
       [
         'pr:o/r#1 in plan #1',
         'pr:o/r#2 in plan #4',
@@ -279,26 +317,6 @@ describe('plannedKeys and plannableCount', () => {
         'pr:o/r#6 in job #6',
       ],
     );
-  });
-  test('plan all leaves out what is in a plan or a job', () => {
-    const m = plannedKeys(jobs);
-    const loaded = ['pr:o/r#1', 'pr:o/r#3', 'pr:o/r#9'];
-    assert.equal(plannableCount(3, loaded, m, true), 1);
-    // Not all loaded: a held key not seen yet is one of the total.
-    assert.equal(plannableCount(10, ['pr:o/r#9'], m, false), 5);
-    assert.equal(plannableCount(2, loaded, m, true), 0);
-  });
-  test('the foot says where the held items are', () => {
-    const m = plannedKeys(jobs);
-    assert.equal(
-      heldWhere(new Map([...m].filter(([, v]) => v.planned))),
-      'in a plan',
-    );
-    assert.equal(
-      heldWhere(new Map([...m].filter(([, v]) => !v.planned))),
-      'in a job',
-    );
-    assert.equal(heldWhere(m), 'in a plan or a job');
   });
 });
 

@@ -562,6 +562,8 @@ export interface KindVocab {
   needs_until: string[] | null;
   question: string;
   choices: ChoiceVocab[] | null;
+  noun: string;
+  nouns: string;
 }
 
 export interface UntilForm {
@@ -747,6 +749,7 @@ export interface JobStep {
   verified_at?: string;
   undone_at?: string;
   undoable?: boolean;
+  undo_note?: string;
 }
 
 export interface Conflict {
