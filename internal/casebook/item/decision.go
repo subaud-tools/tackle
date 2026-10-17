@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -117,6 +118,35 @@ func Question(k Kind) string { return questions[k] }
 
 // Choices lists the answers the decide step offers for kind k, in order.
 func Choices(k Kind) []Choice { return slices.Clone(choices[k]) }
+
+// nouns names a kind in apply's group labels: one, several.
+var nouns = map[Kind][2]string{
+	KindRepo:     {"repo", "repos"},
+	KindPR:       {"PR", "PRs"},
+	KindIssue:    {"issue", "issues"},
+	KindBranch:   {"branch", "branches"},
+	KindWorktree: {"worktree", "worktrees"},
+}
+
+// ApplyLabel names apply's group of n items of kind k decided d by what
+// will happen: the choice's Many with the count and the kind's noun ("Delete
+// 30 branches", "Close 1 PR").
+func ApplyLabel(k Kind, d Disposition, n int) string {
+	noun := nouns[k][1]
+	if n == 1 {
+		noun = nouns[k][0]
+	}
+	if noun == "" {
+		noun = string(k)
+	}
+	count := fmt.Sprintf("%d %s", n, noun)
+	for _, c := range choices[k] {
+		if c.Disposition == d {
+			return strings.Replace(c.Many, "{n}", count, 1)
+		}
+	}
+	return string(d) + " " + count
+}
 
 // NotNowForm is one condition Not now offers. Template is an until form
 // with one %s hole for what Asks names ("days": the page fills today +

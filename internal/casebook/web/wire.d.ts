@@ -629,6 +629,7 @@ export interface Plan {
 export interface Group {
   action: string;
   lane: string;
+  undo: string;
   steps: Step[] | null;
 }
 
