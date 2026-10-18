@@ -795,7 +795,8 @@ import {
   h as h4,
   facts,
   buttons as buttons2,
-  card
+  card,
+  sheet as sheet2
 } from "/_kit/kit.js";
 
 // sessions.ts
@@ -1467,6 +1468,18 @@ var TITLES = {
 function actionTitle(action) {
   return TITLES[action] ?? action;
 }
+function planTitle(job, nouns) {
+  const parts = groupSteps(job.steps ?? []).map((g) => {
+    const n = new Set(g.steps.map((s) => s.key)).size;
+    const kind = g.steps[0]?.key.slice(0, g.steps[0].key.indexOf(":")) ?? "";
+    const [one, many] = nouns(kind);
+    const words = actionTitle(g.action).split(" ");
+    const mid = words.slice(1, -1);
+    return [words[0], String(n), ...mid, n === 1 ? one : many].join(" ");
+  });
+  if (!parts.length) return `job #${job.id}`;
+  return parts.map((t, i) => i ? t.charAt(0).toLowerCase() + t.slice(1) : t).join(", ");
+}
 var PAST = {
   "branch-delete-local": "deleted",
   "branch-delete-remote": "deleted on the remote",
@@ -1787,7 +1800,22 @@ function makeApply(ctx) {
   let itemsTotal = 0;
   let groups = [];
   let vocab2 = null;
-  const collapsed = /* @__PURE__ */ new Set([DONE]);
+  const flipped = /* @__PURE__ */ new Set();
+  const startsOpen = (id) => id === RUNNING || id === PLANS;
+  const collapsed = {
+    has: (id) => startsOpen(id) === flipped.has(id),
+    delete(id) {
+      if (!this.has(id)) return false;
+      if (flipped.has(id)) flipped.delete(id);
+      else flipped.add(id);
+      return true;
+    },
+    add(id) {
+      if (this.has(id)) return;
+      if (flipped.has(id)) flipped.delete(id);
+      else flipped.add(id);
+    }
+  };
   let wantGroup = "";
   let active = false;
   let openId = null;
@@ -1834,6 +1862,10 @@ function makeApply(ctx) {
   const inPlan = () => plannedKeys(jobs);
   const listed = () => jobs.filter((j) => j.state !== "cancelled");
   const order = () => applyOrder(listed());
+  const titleOf = (j) => planTitle(j, (kind) => {
+    const kv = kindVocab(kind);
+    return kv ? [kv.noun, kv.nouns] : [kind, `${kind}s`];
+  });
   const kindVocab = (kind) => vocab2?.kinds?.find((k) => k.kind === kind);
   function labelFor(g, n) {
     const kind = g.id.slice(g.id.indexOf("|") + 1);
@@ -2607,7 +2639,7 @@ function makeApply(ctx) {
         { class: "kit-kick" },
         discarded ? `plan · job #${j.id} · ${j.machine} · discarded` : `plan · job #${j.id} · ${j.machine} · built ${builtAgo(j.created_at)}`
       ),
-      h4("h1", { class: "kit-h1" }, jobTitle(j)),
+      h4("h1", { class: "kit-h1" }, titleOf(j)),
       facts([
         ["steps", String(steps.length)],
         ["local", String(steps.filter((s) => s.lane !== "agent").length)],
@@ -2773,10 +2805,46 @@ function makeApply(ctx) {
   }
   function approve() {
     if (!open || !canApprove()) return;
-    const needs = needsSession(open.job.steps ?? []);
-    void act("/apply/approve", {
-      plan_id: open.job.id,
-      session: needs ? planSession() : ""
+    const j = open.job;
+    const steps = j.steps ?? [];
+    const run = () => {
+      if (!open || open.job.id !== j.id || !canApprove()) return;
+      void act("/apply/approve", {
+        plan_id: j.id,
+        session: needsSession(steps) ? planSession() : ""
+      });
+    };
+    const permanent = steps.filter((s) => s.permanent);
+    if (!permanent.length) return run();
+    const title = titleOf(j);
+    const keys = [...new Set(permanent.map((s) => s.key))];
+    const sh = sheet2({
+      title: `${title}?`,
+      body: h4(
+        "div",
+        { class: "cb-confirm", "data-testid": "confirm-permanent" },
+        h4(
+          "p",
+          { class: "cb-confirm-warn" },
+          "This cannot be undone. These run on GitHub as soon as you confirm:"
+        ),
+        h4(
+          "ul",
+          { class: "cb-confirm-list" },
+          ...keys.map((k) => h4("li", {}, keyWithoutKind(k)))
+        )
+      ),
+      actions: [
+        { label: "cancel", run: () => sh.close() },
+        {
+          label: title,
+          fill: true,
+          run() {
+            sh.close();
+            run();
+          }
+        }
+      ]
     });
   }
   async function discard(id) {
@@ -3409,7 +3477,7 @@ function renderItem(ctx, detail, hooks = {}) {
 }
 
 // proposals.ts
-import { sheet as sheet2, h as h6 } from "/_kit/kit.js";
+import { sheet as sheet3, h as h6 } from "/_kit/kit.js";
 function openDiscardSheet(ctx, vocab2, n, view, body, onDone) {
   let submitting = false;
   let sh = null;
@@ -3429,7 +3497,7 @@ function openDiscardSheet(ctx, vocab2, n, view, body, onDone) {
       submitting = false;
     }
   }
-  sh = sheet2({
+  sh = sheet3({
     title: vocab2.discard_title,
     body: h6(
       "div",
@@ -4897,7 +4965,7 @@ function ruleEditor(ctx, row, seed, hooks) {
 }
 
 // rules.ts
-import { h as h10, facts as facts3, buttons as buttons3, card as card2, sheet as sheet3 } from "/_kit/kit.js";
+import { h as h10, facts as facts3, buttons as buttons3, card as card2, sheet as sheet4 } from "/_kit/kit.js";
 var PREVIEW_DEBOUNCE_MS = 300;
 var PAGE2 = 200;
 function message4(err) {
@@ -5171,7 +5239,7 @@ function renderRule(ctx, detail, hooks) {
         void go2();
       }
     });
-    const sh = sheet3({
+    const sh = sheet4({
       title: `exclude ${keyWithoutKind(key)}`,
       body: h10(
         "div",
@@ -8108,7 +8176,7 @@ function openMoveSheet(ctx, delivery, targets) {
     const el2 = sessionItem(s);
     el2.onclick = () => {
       void moveDelivery(ctx, delivery.id, s.id);
-      sheet4.close();
+      sheet5.close();
     };
     return el2;
   });
@@ -8121,16 +8189,16 @@ function openMoveSheet(ctx, delivery, targets) {
     items.push(noOther);
   }
   const content = h14("div", { class: "cb-dock-pick-list" }, ...items);
-  const sheet4 = {
+  const sheet5 = {
     el: h14("div", { class: "cb-dock-pick-sheet" }, content),
     close() {
       this.el.remove();
     }
   };
-  document.body.append(sheet4.el);
+  document.body.append(sheet5.el);
   function onKey(e) {
     if (e.key === "Escape") {
-      sheet4.close();
+      sheet5.close();
       document.removeEventListener("keydown", onKey);
     }
   }
@@ -8152,7 +8220,7 @@ function openSessionMoveSheet(ctx, fromSession, targets) {
     const el2 = sessionItem(s);
     el2.onclick = () => {
       void moveSession(ctx, fromSession, s.id);
-      sheet4.close();
+      sheet5.close();
     };
     return el2;
   });
@@ -8165,16 +8233,16 @@ function openSessionMoveSheet(ctx, fromSession, targets) {
     items.push(noOther);
   }
   const content = h14("div", { class: "cb-dock-pick-list" }, ...items);
-  const sheet4 = {
+  const sheet5 = {
     el: h14("div", { class: "cb-dock-pick-sheet" }, content),
     close() {
       this.el.remove();
     }
   };
-  document.body.append(sheet4.el);
+  document.body.append(sheet5.el);
   function onKey(e) {
     if (e.key === "Escape") {
-      sheet4.close();
+      sheet5.close();
       document.removeEventListener("keydown", onKey);
     }
   }

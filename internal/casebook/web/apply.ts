@@ -52,6 +52,7 @@ import {
   facts,
   buttons,
   card,
+  sheet,
   type Button,
   type KeyBinding,
   type ListHandle,
@@ -102,6 +103,7 @@ import {
   applyLabel,
   applyOrder,
   heldOutside,
+  planTitle,
   isFinished,
   isRunning,
   type StepGroup,
@@ -245,8 +247,25 @@ export function makeApply(ctx: Ctx): Section {
   let groups: GroupView[] = [];
   // serve's decision vocabulary: a group's words for a count.
   let vocab: DecisionVocabView | null = null;
-  // The parts Court collapsed; Done starts collapsed.
-  const collapsed = new Set<string>([DONE]);
+  // The parts Court opened or closed (flipped from how they start):
+  // Running and Plans to approve start open; Done and every waiting group
+  // start collapsed (Court, 2026-10-17: what a plan is about stands out).
+  const flipped = new Set<string>();
+  const startsOpen = (id: string): boolean => id === RUNNING || id === PLANS;
+  const collapsed = {
+    has: (id: string): boolean => startsOpen(id) === flipped.has(id),
+    delete(id: string): boolean {
+      if (!this.has(id)) return false;
+      if (flipped.has(id)) flipped.delete(id);
+      else flipped.add(id);
+      return true;
+    },
+    add(id: string): void {
+      if (this.has(id)) return;
+      if (flipped.has(id)) flipped.delete(id);
+      else flipped.add(id);
+    },
+  };
   // The group the address asks for (#/apply?group=<id>) until it is shown.
   let wantGroup = '';
   let active = false;
@@ -321,6 +340,12 @@ export function makeApply(ctx: Ctx): Section {
   const order = () => applyOrder(listed());
 
   // The vocabulary's words for a kind: its choices' many and its nouns.
+  // titleOf names a plan with its counts, in serve's nouns: "Delete 7 repos".
+  const titleOf = (j: Job): string =>
+    planTitle(j, (kind) => {
+      const kv = kindVocab(kind);
+      return kv ? [kv.noun, kv.nouns] : [kind, `${kind}s`];
+    });
   const kindVocab = (kind: string) =>
     vocab?.kinds?.find((k) => k.kind === kind);
   // labelFor names n items of waiting group g in serve's words ("Delete 3
@@ -1258,7 +1283,7 @@ export function makeApply(ctx: Ctx): Section {
           ? `plan \u00b7 job #${j.id} \u00b7 ${j.machine} \u00b7 discarded`
           : `plan \u00b7 job #${j.id} \u00b7 ${j.machine} \u00b7 built ${builtAgo(j.created_at)}`,
       ),
-      h('h1', { class: 'kit-h1' }, jobTitle(j)),
+      h('h1', { class: 'kit-h1' }, titleOf(j)),
       facts([
         ['steps', String(steps.length)],
         ['local', String(steps.filter((s) => s.lane !== 'agent').length)],
@@ -1433,12 +1458,51 @@ export function makeApply(ctx: Ctx): Section {
     return !!planSession();
   }
 
+  // approve runs the open plan. One that holds a step that can never be
+  // undone (serve's permanent: a deleted repository, a merge) asks first,
+  // naming each item, on a button named for exactly what runs.
   function approve(): void {
     if (!open || !canApprove()) return;
-    const needs = needsSession(open.job.steps ?? []);
-    void act<JobView>('/apply/approve', {
-      plan_id: open.job.id,
-      session: needs ? planSession() : '',
+    const j = open.job;
+    const steps = j.steps ?? [];
+    const run = (): void => {
+      if (!open || open.job.id !== j.id || !canApprove()) return;
+      void act<JobView>('/apply/approve', {
+        plan_id: j.id,
+        session: needsSession(steps) ? planSession() : '',
+      });
+    };
+    const permanent = steps.filter((s) => s.permanent);
+    if (!permanent.length) return run();
+    const title = titleOf(j);
+    const keys = [...new Set(permanent.map((s) => s.key))];
+    const sh = sheet({
+      title: `${title}?`,
+      body: h(
+        'div',
+        { class: 'cb-confirm', 'data-testid': 'confirm-permanent' },
+        h(
+          'p',
+          { class: 'cb-confirm-warn' },
+          'This cannot be undone. These run on GitHub as soon as you confirm:',
+        ),
+        h(
+          'ul',
+          { class: 'cb-confirm-list' },
+          ...keys.map((k) => h('li', {}, keyWithoutKind(k))),
+        ),
+      ),
+      actions: [
+        { label: 'cancel', run: () => sh.close() },
+        {
+          label: title,
+          fill: true,
+          run() {
+            sh.close();
+            run();
+          },
+        },
+      ],
     });
   }
 

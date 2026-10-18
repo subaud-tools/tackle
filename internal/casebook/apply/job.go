@@ -91,6 +91,9 @@ type JobStep struct {
 	// UndoNote says whether a step of this action can be undone
 	// (UndoNote). Computed when read, never stored.
 	UndoNote string `json:"undo_note,omitempty"`
+	// Permanent: it can never be undone (Permanent); the page confirms
+	// before approving. Computed when read, never stored.
+	Permanent bool `json:"permanent,omitempty"`
 }
 
 // NeedsYou is a card requesting Court's attention for a job (and optionally a step).
@@ -217,6 +220,7 @@ func (s *Store) Create(ctx context.Context, p Plan, machine string) (Job, error)
 				ExpectedTip:  ps.ExpectedTip,
 				State:        StepPending,
 				UndoNote:     UndoNote(ps.Action),
+				Permanent:    Permanent(ps.Action),
 			}
 		}
 
@@ -900,6 +904,7 @@ func scanStep(sc scanner) (JobStep, error) {
 	st.UndoneAt = tm(undoneAt)
 	st.Undoable = st.State == StepVerified && st.UndoneAt.IsZero() && AutoUndoable(st.Restore)
 	st.UndoNote = UndoNote(st.Action)
+	st.Permanent = Permanent(st.Action)
 	return st, nil
 }
 

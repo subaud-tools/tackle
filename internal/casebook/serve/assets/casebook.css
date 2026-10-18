@@ -376,7 +376,7 @@
   font: 12px var(--kit-mono);
   color: var(--kit-agent);
 }
-.cb-group.collapsed .cb-group-acts,
+.cb-group.collapsed .cb-group-acts:not(.cb-apply-head-acts),
 .cb-group.collapsed .cb-group-where {
   display: none;
 }
@@ -2379,4 +2379,16 @@ button.cb-cond-menu-row[aria-disabled=true] {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.cb-confirm-warn {
+  color: var(--kit-danger);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.cb-confirm-list {
+  font: 13px/20px var(--kit-mono);
+  margin: 0;
+  padding-left: 18px;
+  max-height: 320px;
+  overflow: auto;
 }

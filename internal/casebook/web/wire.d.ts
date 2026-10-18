@@ -751,6 +751,7 @@ export interface JobStep {
   undone_at?: string;
   undoable?: boolean;
   undo_note?: string;
+  permanent?: boolean;
 }
 
 export interface Conflict {

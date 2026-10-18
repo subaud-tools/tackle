@@ -67,6 +67,30 @@ export function actionTitle(action: string): string {
   return TITLES[action] ?? action;
 }
 
+/**
+ * planTitle names a plan by what it does and to how many: "Delete 7
+ * repos", one part per action ("Delete 1 local branch, close 2 prs").
+ * nouns gives a kind's singular and plural (serve's vocabulary); a branch
+ * deleted locally and on the remote counts once in each.
+ */
+export function planTitle(
+  job: Job,
+  nouns: (kind: string) => [string, string],
+): string {
+  const parts = groupSteps(job.steps ?? []).map((g) => {
+    const n = new Set(g.steps.map((s) => s.key)).size;
+    const kind = g.steps[0]?.key.slice(0, g.steps[0].key.indexOf(':')) ?? '';
+    const [one, many] = nouns(kind);
+    const words = actionTitle(g.action).split(' ');
+    const mid = words.slice(1, -1);
+    return [words[0], String(n), ...mid, n === 1 ? one : many].join(' ');
+  });
+  if (!parts.length) return `job #${job.id}`;
+  return parts
+    .map((t, i) => (i ? t.charAt(0).toLowerCase() + t.slice(1) : t))
+    .join(', ');
+}
+
 const PAST: Record<string, string> = {
   'branch-delete-local': 'deleted',
   'branch-delete-remote': 'deleted on the remote',

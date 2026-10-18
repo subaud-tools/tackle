@@ -25,6 +25,7 @@ import {
   ageText,
   observations,
   heldOutside,
+  planTitle,
 } from './apply-text.ts';
 import type { Job, JobStep, NeedsYou } from './wire.d.ts';
 
@@ -371,5 +372,53 @@ describe('heldOutside', () => {
     const jobs = [job('running', [['repo:o/r', 'repo-archive']])];
     assert.equal(heldOutside(jobs, 'delete|branch', new Set()), 0);
     assert.equal(heldOutside(jobs, 'archive|repo', new Set()), 1);
+  });
+});
+
+// Court 2026-10-17: a plan says how many it acts on, "Delete 7 repos".
+describe('planTitle', () => {
+  const job = (steps: Array<[string, string]>): Job =>
+    ({
+      id: 3,
+      state: 'planned',
+      steps: steps.map(([key, action], i) => ({
+        id: i + 1,
+        key,
+        action,
+        lane: 'agent',
+      })),
+    }) as unknown as Job;
+  const nouns = (kind: string): [string, string] =>
+    kind === 'branch' ? ['branch', 'branches'] : [kind, kind + 's'];
+  test('one action: its count', () => {
+    assert.equal(
+      planTitle(
+        job([
+          ['repo:o/a', 'repo-delete'],
+          ['repo:o/b', 'repo-delete'],
+        ]),
+        nouns,
+      ),
+      'Delete 2 repos',
+    );
+  });
+  test('one item reads singular', () => {
+    assert.equal(
+      planTitle(job([['pr:o/a#1', 'pr-merge']]), nouns),
+      'Merge 1 pr',
+    );
+  });
+  test('a branch counts once across its local and remote steps', () => {
+    assert.equal(
+      planTitle(
+        job([
+          ['branch:o/r@x', 'branch-delete-local'],
+          ['branch:o/r@x', 'branch-delete-remote'],
+          ['pr:o/r#2', 'pr-close'],
+        ]),
+        nouns,
+      ),
+      'Delete 1 local branch, delete 1 remote branch, close 1 pr',
+    );
   });
 });
