@@ -16,15 +16,16 @@ import (
 // doneUntilObserved is each verified item still to keep out of review: one
 // casebook verified done after GitHub was last read for its owner (read), so
 // the index, built from that read, still shows it waiting. An owner never
-// read goes by the index's build time.
-func doneUntilObserved(verified map[string]time.Time, read func(owner string) (time.Time, bool), built time.Time) map[string]bool {
+// read goes by the index's build time. Its steps must all have verified
+// after its current decision (decided): one decided again since waits.
+func doneUntilObserved(verified map[string]apply.Verified, read func(owner string) (time.Time, bool), decided func(key string) time.Time, built time.Time) map[string]bool {
 	out := map[string]bool{}
 	for key, at := range verified {
 		seen, ok := read(ownerOf(key))
 		if !ok {
 			seen = built
 		}
-		if at.After(seen) {
+		if at.Last.After(seen) && at.First.After(decided(key)) {
 			out[key] = true
 		}
 	}
@@ -76,7 +77,7 @@ func (o *ownerReads) get() map[string]time.Time {
 
 // applied is Index.Applied: what casebook verified done that the index's
 // GitHub read hasn't seen yet.
-func (s *Server) applied(built time.Time) map[string]bool {
+func (s *Server) applied(built time.Time, decided func(key string) time.Time) map[string]bool {
 	reads := s.reads.get()
 	oldest := built
 	for _, at := range reads {
@@ -91,7 +92,7 @@ func (s *Server) applied(built time.Time) map[string]bool {
 	return doneUntilObserved(verified, func(owner string) (time.Time, bool) {
 		at, ok := reads[owner]
 		return at, ok
-	}, built)
+	}, decided, built)
 }
 
 // doneHow says how a done item got done, in the page's words: casebook's job

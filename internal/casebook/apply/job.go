@@ -504,26 +504,48 @@ func (s *Store) List(ctx context.Context) ([]Job, error) {
 	return jobs, nil
 }
 
-// VerifiedSince is each item key with a step verified after t and not
-// undone, with when (its latest): what casebook has done since then.
-func (s *Store) VerifiedSince(ctx context.Context, t time.Time) (map[string]time.Time, error) {
+// Verified is when an item's steps in its job were verified: the first
+// and the last of them.
+type Verified struct {
+	First, Last time.Time
+}
+
+// VerifiedSince is each item key whose latest job verified every step it
+// holds for the key (none failed, pending, paused, skipped or undone), the
+// last after t: what casebook has done since then.
+func (s *Store) VerifiedSince(ctx context.Context, t time.Time) (map[string]Verified, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT key, MAX(verified_at) FROM steps WHERE state = ? AND verified_at > ? AND undone_at = 0 GROUP BY key`,
-		StepVerified, ms(t))
+		`SELECT key, job_id, COUNT(*), SUM(state = ? AND undone_at = 0), MIN(verified_at), MAX(verified_at)
+		 FROM steps WHERE key IN (SELECT key FROM steps WHERE state = ? AND verified_at > ?)
+		 GROUP BY key, job_id ORDER BY key, job_id`,
+		StepVerified, StepVerified, ms(t))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[string]time.Time{}
+	type last struct {
+		all         bool
+		first, last int64
+	}
+	latest := map[string]last{}
 	for rows.Next() {
 		var k string
-		var at int64
-		if err := rows.Scan(&k, &at); err != nil {
+		var job, n, done, first, lastAt int64
+		if err := rows.Scan(&k, &job, &n, &done, &first, &lastAt); err != nil {
 			return nil, err
 		}
-		out[k] = time.UnixMilli(at)
+		latest[k] = last{all: n == done, first: first, last: lastAt} // ordered by job: the latest wins
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := map[string]Verified{}
+	for k, l := range latest {
+		if l.all && l.last > ms(t) {
+			out[k] = Verified{First: time.UnixMilli(l.first), Last: time.UnixMilli(l.last)}
+		}
+	}
+	return out, nil
 }
 
 // LastVerified is the job and time of key's latest verified step that
