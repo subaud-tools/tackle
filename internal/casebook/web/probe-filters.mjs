@@ -997,11 +997,18 @@ async function savedFilters(context, t, s) {
       );
     }
 
-    // 9: edit: the editor prefilled, a change saved.
-    await pg.click('.cb-filter-item[data-id="open-issues"] .cb-filter-more');
-    await pg.click(
-      '.cb-filter-item[data-id="open-issues"] .cb-filter-menu-item[data-act="edit"]',
+    // 9: the selected filter shows in the middle pane; its edit opens the
+    // editor prefilled, and a change saves.
+    const DOC =
+      '.kit-read:not([hidden]) .cb-filter-doc[data-filter="open-issues"]';
+    await pg.waitForSelector(DOC, { timeout: 8000 });
+    t.check(
+      'the selected filter shows in the middle pane: edit, make a rule, delete',
+      (await pg.$$eval(`${DOC} .cb-rule-actions button`, (els) =>
+        els.map((e) => e.textContent).join(','),
+      )) === 'edit,make a rule,delete',
     );
+    await pg.click(`${DOC} button:has-text("edit")`);
     await pg.waitForSelector(`${ED} .cb-conds[data-ready="true"]`, {
       timeout: 8000,
     });
@@ -1040,10 +1047,8 @@ async function savedFilters(context, t, s) {
       pg,
       () => !document.querySelector('[data-testid="filter-editor"]'),
     );
-    await pg.click('.cb-filter-item[data-id="open-issues"] .cb-filter-more');
-    await pg.click(
-      '.cb-filter-item[data-id="open-issues"] .cb-filter-menu-item[data-act="delete"]',
-    );
+    await pg.waitForSelector(DOC, { timeout: 8000 });
+    await pg.click(`${DOC} button:has-text("delete")`);
     await t.until(
       pg,
       () => !document.querySelector('.cb-filter[data-id="open-issues"]'),
@@ -1096,23 +1101,22 @@ async function invalidFilter(context, t, s) {
       return {
         invalid: e?.hasAttribute('data-invalid') ?? false,
         title: e?.getAttribute('title') ?? '',
-        disabled: e?.getAttribute('aria-disabled') ?? '',
       };
     });
     t.check(
       `a filter that doesn't validate is marked, with serve's reason (${JSON.stringify(got)})`,
-      got.invalid &&
-        got.title.includes('unknown field "colour"') &&
-        got.disabled === 'true',
+      got.invalid && got.title.includes('unknown field "colour"'),
     );
   }
 
-  // 13: it can't be selected.
+  // 13: it can't be selected: a click shows it instead.
   const before = await pg.evaluate(() => location.hash);
-  // force: Playwright waits for an aria-disabled element to be enabled; a
-  // person's click lands all the same.
-  await pg.click('.cb-filter[data-id="bad"]', { force: true });
-  await pg.waitForTimeout(300);
+  // A click shows it in the middle pane, to fix, without selecting it.
+  await pg.click('.cb-filter[data-id="bad"]');
+  await pg.waitForSelector(
+    '.kit-read:not([hidden]) .cb-filter-doc[data-filter="bad"]',
+    { timeout: 8000 },
+  );
   {
     const got = await pg.evaluate(() => ({
       hash: location.hash,
@@ -1126,10 +1130,9 @@ async function invalidFilter(context, t, s) {
     );
   }
 
-  // 14: edit shows its condition with serve's message under it.
-  await pg.click('.cb-filter-item[data-id="bad"] .cb-filter-more');
+  // 14: its edit shows its condition with serve's message under it.
   await pg.click(
-    '.cb-filter-item[data-id="bad"] .cb-filter-menu-item[data-act="edit"]',
+    '.kit-read:not([hidden]) .cb-filter-doc[data-filter="bad"] button:has-text("edit")',
   );
   await pg.waitForSelector('.cb-filter-edit .cb-conds[data-ready="true"]', {
     timeout: 8000,

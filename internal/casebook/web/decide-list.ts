@@ -67,7 +67,12 @@ import { showChoiceError } from './choices.ts';
 import { lookingLine } from './sessions.ts';
 import { coalesced } from './coalesce.ts';
 import { openDiscardSheet } from './proposals.ts';
-import { makeFilterBar, filterEditor, type FilterEditor } from './filters.ts';
+import {
+  makeFilterBar,
+  filterEditor,
+  renderFilter,
+  type FilterEditor,
+} from './filters.ts';
 import {
   makeRuleRow,
   ruleEditor,
@@ -342,14 +347,56 @@ export function makeDecide(ctx: Ctx): Section {
   function showReadEmpty(): void {
     currentOpenKey = null;
     shownDetail = null;
-    // A selected rule shows in the middle pane until an item is opened.
+    // A selected rule shows in the middle pane until an item is opened;
+    // so does a selected filter (the one last clicked, else the last
+    // selected), or one that doesn't validate, clicked to fix.
     const rr =
       filters.rule && draft === null
         ? ruleRows.find((r) => r.rule.id === filters.rule)
         : undefined;
+    const fr = draft === null && !filters.rule ? filterShown() : undefined;
     readEl.replaceChildren(renderReadEmpty());
     if (rr) void showRuleDoc(rr);
+    else if (fr) showFilterDoc(fr);
     feedAttached();
+  }
+
+  // shownFilter is the filter chip last clicked: the middle pane shows it
+  // while it is selected (or, not valid, until another is clicked).
+  let shownFilter: string | null = null;
+  function filterShown(): FilterRow | undefined {
+    const sel = filters.filters;
+    const clicked = filterRows.find((r) => r.filter.id === shownFilter);
+    if (clicked && (clicked.invalid || sel.includes(clicked.filter.id)))
+      return clicked;
+    const last = sel[sel.length - 1];
+    return filterRows.find((r) => r.filter.id === last);
+  }
+  // showFilterDoc puts a filter in the middle pane, read only, with edit,
+  // make a rule and delete.
+  function showFilterDoc(fr: FilterRow): void {
+    const id = fr.filter.id;
+    readEl.replaceChildren(
+      renderFilter(ctx, fr, {
+        onEdit() {
+          openFilterEditor(fr);
+        },
+        onMakeRule() {
+          openRuleEditor(null, {
+            name: fr.filter.name,
+            match: fr.filter.match ?? [],
+          });
+        },
+        onDeleted() {
+          if (shownFilter === id) shownFilter = null;
+          filterRows = filterRows.filter((r) => r.filter.id !== id);
+          if (filters.filters.includes(id))
+            selectFilters(filters.filters.filter((x) => x !== id));
+          else showReadEmpty();
+          void loadFilters();
+        },
+      }),
+    );
   }
 
   // showRuleDoc puts the selected rule in the middle pane, read only, with
@@ -384,8 +431,9 @@ export function makeDecide(ctx: Ctx): Section {
     );
   }
 
-  // Initialise the reading column with the empty state so it is never blank.
-  showReadEmpty();
+  // Initialise the reading column with the empty state so it is never blank
+  // (nothing is selected yet: the filters and rules aren't loaded).
+  readEl.replaceChildren(renderReadEmpty());
 
   // ---- foot -----------------------------------------------------------------
 
@@ -497,27 +545,18 @@ export function makeDecide(ctx: Ctx): Section {
   // between the view chips and the switch.
   let filterRows: FilterRow[] = [];
   const filterBar = makeFilterBar(ctx, {
-    onSelect(ids) {
+    onSelect(ids, clicked) {
+      shownFilter = ids.includes(clicked) ? clicked : null;
       selectFilters(ids);
     },
-    onChanged() {
-      void loadFilters().then(() => {
-        if (filtered()) void reload();
-      });
+    onOpen(row) {
+      if (draft !== null) closeFilterEditor(true);
+      if (currentOpenKey) goList();
+      shownFilter = row.filter.id;
+      showReadEmpty();
     },
-    onDeleted(id) {
-      if (editingId === id) closeFilterEditor(true);
-      if (filters.filters.includes(id))
-        selectFilters(filters.filters.filter((x) => x !== id));
-    },
-    onEdit(row) {
-      openFilterEditor(row);
-    },
-    onMakeRule(row) {
-      openRuleEditor(null, {
-        name: row.filter.name,
-        match: row.filter.match ?? [],
-      });
+    onNew() {
+      openFilterEditor(null);
     },
   });
 
@@ -532,20 +571,6 @@ export function makeDecide(ctx: Ctx): Section {
     },
     onNew() {
       openRuleEditor(null, null);
-    },
-    onEdit(row) {
-      openRuleEditor(row, null);
-    },
-    onToggle(row) {
-      void toggleRule(ctx, row)
-        .then(() => loadRules())
-        .then(() => {
-          if (filters.rule === row.rule.id) showReadEmpty();
-          void reload();
-        })
-        .catch((err: unknown) => {
-          filterBar.setError(err instanceof Error ? err.message : String(err));
-        });
     },
   });
   async function loadRules(): Promise<void> {
@@ -779,6 +804,9 @@ export function makeDecide(ctx: Ctx): Section {
       filterRows = v.filters ?? [];
       paintFilters();
       paintRail();
+      // The middle pane shows the selected filter as saved (one just
+      // saved, too), unless an item, a rule or an editor has it.
+      if (draft === null && !currentOpenKey && !filters.rule) showReadEmpty();
     } catch {
       // non-fatal: the chips stay as they were
     }

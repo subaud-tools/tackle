@@ -92,12 +92,12 @@
   align-items: center;
 }
 
-/* A filter that doesn't validate: struck through, never selected; its title
- * is serve's reason. */
-.cb-filter.kit-chip[data-invalid] {
+/* A filter or rule that doesn't validate: struck through; its title is
+ * serve's reason, and a click shows it to fix. */
+.cb-filter.kit-chip[data-invalid],
+.cb-rule-chip.kit-chip[data-invalid] {
   text-decoration: line-through;
   border-style: dashed;
-  cursor: not-allowed;
 }
 
 .cb-filter-more {

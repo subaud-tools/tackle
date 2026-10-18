@@ -65,10 +65,10 @@
   display: inline-flex;
   align-items: center;
 }
-.cb-filter.kit-chip[data-invalid] {
+.cb-filter.kit-chip[data-invalid],
+.cb-rule-chip.kit-chip[data-invalid] {
   text-decoration: line-through;
   border-style: dashed;
-  cursor: not-allowed;
 }
 .cb-filter-more {
   font: 12.5px var(--kit-mono);

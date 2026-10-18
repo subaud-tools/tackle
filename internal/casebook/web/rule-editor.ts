@@ -4,7 +4,7 @@
 //
 // makeRuleRow(ctx, hooks) is the row under the filters, drawn as they are:
 // a chip per rule, then "+ rule". ruleMenu(row, hooks) is a rule's ⋯ (edit,
-// turn off or on), on its chip and on its group's header.
+// turn off or on), on its group's header.
 //
 // ruleEditor(ctx, row, seed, hooks) is the filter editor with one more line:
 // what the rule proposes (a decision, and a note). Saving turns the rule on
@@ -55,7 +55,7 @@ export function dispositionLabel(
 
 /**
  * ruleMenu is a rule's ⋯ and its menu: edit, turn off (or on). It goes on
- * a rule's chip and on its group's header.
+ * a rule's group header.
  */
 export function ruleMenu(
   row: RuleRow,
@@ -145,19 +145,17 @@ export interface RuleRowBar {
 
 /**
  * makeRuleRow is the row under the filters, drawn as the filters are: a
- * "rules" label, one chip per rule (off ones muted) with its ⋯ (ruleMenu),
- * then "+ rule". A chip selects its rule (hooks.onSelect; the selected one
- * again: null, back to everything). A rule that doesn't validate shows
- * marked, with serve's message as its title: it can be edited, not
- * selected.
+ * "rules" label, one chip per rule (off ones dimmed), then "+ rule". A chip
+ * selects its rule (hooks.onSelect; the selected one again: null, back to
+ * everything), and the page shows it in the middle pane with edit and turn
+ * on / off. A rule that doesn't validate shows marked, with serve's message
+ * as its title.
  */
 export function makeRuleRow(
   _ctx: Ctx,
   hooks: {
     onSelect(id: string | null): void;
     onNew(): void;
-    onEdit(row: RuleRow): void;
-    onToggle(row: RuleRow): void;
   },
 ): RuleRowBar {
   const chipsEl = h('div', {
@@ -192,14 +190,13 @@ export function makeRuleRow(
       {
         type: 'button',
         class:
-          'kit-chip cb-filter cb-rule-chip' +
+          'kit-chip cb-rule-chip' +
           (on ? ' on' : '') +
           (off ? ' cb-rule-off' : ''),
         'data-id': id,
         'aria-pressed': String(on),
         title: off ? 'off' : '',
         onclick() {
-          if (row.invalid) return;
           hooks.onSelect(on ? null : id);
         },
       },
@@ -207,18 +204,9 @@ export function makeRuleRow(
     );
     if (row.invalid) {
       b.setAttribute('data-invalid', '');
-      b.setAttribute('aria-disabled', 'true');
       b.title = row.invalid;
     }
-    return h(
-      'span',
-      { class: 'cb-filter-item', 'data-id': id },
-      b,
-      ruleMenu(row, {
-        onEdit: () => hooks.onEdit(row),
-        onToggle: () => hooks.onToggle(row),
-      }),
-    );
+    return b;
   }
 
   function paint(rows: RuleRow[], selected: string | null): void {

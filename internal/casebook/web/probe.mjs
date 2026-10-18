@@ -2440,12 +2440,18 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
       ),
       ['Merged agent branches | off', 'Landed branches | off'],
     );
-    // Turn it on again from its chip: the group comes back.
-    const CHIP = `${LIST} .cb-rule-row .cb-filter-item[data-id="r8-landed"]`;
-    await pg.click(`${CHIP} .cb-rule-more`);
-    await pg.click(`${CHIP} .cb-filter-menu-item[data-act="turn on"]`);
+    // Its chip opens the rule; turn it on again there: the group comes back.
+    await pg.click(`${LIST} .cb-rule-chip[data-id="r8-landed"]`);
+    await until(
+      pg,
+      () =>
+        !!document.querySelector(
+          '.kit-app > .kit-read:not([hidden]) .cb-rule[data-rule="r8-landed"] .cb-rule-actions',
+        ),
+    );
+    await pg.click(`${READ} .cb-rule-actions button:has-text("turn on")`);
     check(
-      'turn on from its chip brings its group back, 6 items',
+      'turn on from the rule its chip opened brings its group back, 6 items',
       await until(
         pg,
         (sel) =>
@@ -2454,13 +2460,11 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
         8000,
       ),
     );
-    // A chip opens the rule, and the list narrows to it.
-    await pg.click(`${LIST} .cb-rule-chip[data-id="r8-landed"]`);
     // Its group came back collapsed, as every group starts: open it.
     await until(pg, () => location.hash === '#/decide?rule=r8-landed');
     await openGroups(pg, { rows: false });
     check(
-      'its chip opens the rule in the middle pane and narrows the list (rule=r8-landed)',
+      'its chip opened the rule in the middle pane and narrowed the list (rule=r8-landed)',
       await until(
         pg,
         () =>
@@ -2641,13 +2645,9 @@ async function invalidRuleScenariosOn(context, serveHandle) {
     await pg.goto(serveHandle.url + '#/decide', {
       waitUntil: 'domcontentloaded',
     });
-    const BAD = `${LIST} .cb-rule-row .cb-filter-item[data-id="r8-bad"]`;
-    await until(
-      pg,
-      (sel) => !!document.querySelector(`${sel} .cb-rule-chip`),
-      BAD,
-    );
-    const badChip = await pg.$eval(`${BAD} .cb-rule-chip`, (e) => ({
+    const BAD = `${LIST} .cb-rule-chip[data-id="r8-bad"]`;
+    await until(pg, (sel) => !!document.querySelector(sel), BAD);
+    const badChip = await pg.$eval(BAD, (e) => ({
       invalid: e.hasAttribute('data-invalid'),
       title: e.title,
     }));
@@ -2655,8 +2655,16 @@ async function invalidRuleScenariosOn(context, serveHandle) {
       `r8-bad's chip is marked not valid, with serve's message as its title (${badChip.title})`,
       badChip.invalid && badChip.title === bad.invalid,
     );
-    await pg.click(`${BAD} .cb-rule-more`);
-    await pg.click(`${BAD} .cb-filter-menu-item[data-act="edit"]`);
+    // Its chip opens the rule, not valid; edit is there.
+    await pg.click(BAD);
+    await until(
+      pg,
+      () =>
+        !!document.querySelector(
+          '.kit-app > .kit-read:not([hidden]) .cb-rule[data-rule="r8-bad"] .cb-rule-actions',
+        ),
+    );
+    await pg.click(`${READ} .cb-rule-actions button:has-text("edit")`);
     const shownMsg = await until(
       pg,
       (msg) =>

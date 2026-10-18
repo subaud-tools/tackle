@@ -303,22 +303,22 @@ var WALKTHROUGH_STEPS = [
 ];
 var MARGIN = 8;
 var clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
-function placeNote(target, card5, view, gap = 12) {
-  const maxX = Math.max(MARGIN, view.width - card5.width - MARGIN);
-  const maxY = Math.max(MARGIN, view.height - card5.height - MARGIN);
+function placeNote(target, card6, view, gap = 12) {
+  const maxX = Math.max(MARGIN, view.width - card6.width - MARGIN);
+  const maxY = Math.max(MARGIN, view.height - card6.height - MARGIN);
   const x = clamp(target.x, MARGIN, maxX);
   const y = clamp(target.y, MARGIN, maxY);
   const below = target.y + target.height + gap;
-  if (below + card5.height <= view.height - MARGIN) return { x, y: below };
-  const above = target.y - gap - card5.height;
+  if (below + card6.height <= view.height - MARGIN) return { x, y: below };
+  const above = target.y - gap - card6.height;
   if (above >= MARGIN) return { x, y: above };
-  const left = target.x - gap - card5.width;
+  const left = target.x - gap - card6.width;
   if (left >= MARGIN) return { x: left, y };
   const right = target.x + target.width + gap;
-  if (right + card5.width <= view.width - MARGIN) return { x: right, y };
+  if (right + card6.width <= view.width - MARGIN) return { x: right, y };
   return {
-    x: clamp((view.width - card5.width) / 2, MARGIN, maxX),
-    y: clamp((view.height - card5.height) / 2, MARGIN, maxY)
+    x: clamp((view.width - card6.width) / 2, MARGIN, maxX),
+    y: clamp((view.height - card6.height) / 2, MARGIN, maxY)
   };
 }
 function walkthroughSeen() {
@@ -369,7 +369,7 @@ function makeWalkthrough(ctx) {
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-label", "walkthrough");
     const ring = el("div", "cb-walk-ring");
-    const card5 = el("div", "cb-walk-card");
+    const card6 = el("div", "cb-walk-card");
     const count = el("p", "cb-walk-count");
     const note = el("p", "cb-walk-note");
     const skipBtn = el("button", "kit-btn cb-walk-skip", "skip");
@@ -378,10 +378,10 @@ function makeWalkthrough(ctx) {
     nextBtn.type = "button";
     const acts = el("div", "cb-walk-acts");
     acts.append(skipBtn, nextBtn);
-    card5.append(count, note, acts);
+    card6.append(count, note, acts);
     ring.hidden = true;
-    card5.hidden = true;
-    overlay.append(ring, card5);
+    card6.hidden = true;
+    overlay.append(ring, card6);
     document.body.append(overlay);
     let steps = WALKTHROUGH_STEPS;
     let at2 = -1;
@@ -405,11 +405,11 @@ function makeWalkthrough(ctx) {
         ring.style.height = `${r.height}px`;
         const p = placeNote(
           r,
-          { width: card5.offsetWidth, height: card5.offsetHeight },
+          { width: card6.offsetWidth, height: card6.offsetHeight },
           { width: innerWidth, height: innerHeight }
         );
-        card5.style.left = `${p.x}px`;
-        card5.style.top = `${p.y}px`;
+        card6.style.left = `${p.x}px`;
+        card6.style.top = `${p.y}px`;
       }
       raf = requestAnimationFrame(place);
     }
@@ -437,7 +437,7 @@ function makeWalkthrough(ctx) {
         note.textContent = step.note;
         nextBtn.textContent = i === steps.length - 1 ? "done" : "next";
         ring.hidden = false;
-        card5.hidden = false;
+        card6.hidden = false;
         nextBtn.focus();
         return;
       }
@@ -1299,22 +1299,22 @@ function renderChoices(ctx, kind, opts) {
     notNow.append(...notNowPicker(vocab2.not_now ?? []));
   });
   function mark(d) {
-    for (const card5 of grid.querySelectorAll(
+    for (const card6 of grid.querySelectorAll(
       ".cb-choice[data-d]"
     )) {
-      card5.classList.toggle("on", card5.dataset.d === d);
-      const k = card5.querySelector(".cb-choice-mark");
-      if (k) k.textContent = markText(card5);
+      card6.classList.toggle("on", card6.dataset.d === d);
+      const k = card6.querySelector(".cb-choice-mark");
+      if (k) k.textContent = markText(card6);
     }
   }
-  function markText(card5) {
+  function markText(card6) {
     const parts = [];
-    if (card5.classList.contains("rec")) parts.push("recommended");
-    if (card5.classList.contains("on")) parts.push("chosen");
+    if (card6.classList.contains("rec")) parts.push("recommended");
+    if (card6.classList.contains("on")) parts.push("chosen");
     return parts.join(" · ");
   }
   function choiceCard(c, n, rec) {
-    const card5 = h2(
+    const card6 = h2(
       "button",
       {
         type: "button",
@@ -1341,9 +1341,9 @@ function renderChoices(ctx, kind, opts) {
       h2("span", { class: "cb-choice-mark" }),
       h2("span", { class: "cb-choice-label" }, c.label)
     );
-    const k = card5.querySelector(".cb-choice-mark");
-    if (k) k.textContent = markText(card5);
-    return card5;
+    const k = card6.querySelector(".cb-choice-mark");
+    if (k) k.textContent = markText(card6);
+    return card6;
   }
   function closeComment() {
     const field = noteField({
@@ -2993,10 +2993,10 @@ function makeApply(ctx) {
       drawOpen();
     },
     note: () => note,
-    answer(card5, action, text, ok) {
+    answer(card6, action, text, ok) {
       void act(
         "/jobs/answer",
-        { needs_you: card5.id, action, text },
+        { needs_you: card6.id, action, text },
         ok
       );
     },
@@ -3660,7 +3660,7 @@ function openDiscardSheet(ctx, vocab2, n, view, body, onDone) {
 }
 
 // filters.ts
-import { h as h8, ApiError as ApiError2 } from "/_kit/kit.js";
+import { h as h8, ApiError as ApiError2, buttons as buttons3, card as card2 } from "/_kit/kit.js";
 
 // conditions.ts
 import { h as h7 } from "/_kit/kit.js";
@@ -4443,53 +4443,6 @@ function setConditionError(editor, index, message5) {
   }
 }
 
-// menu-nav.ts
-function menuNav(menu, selector, opener, close) {
-  const items = () => [...menu.querySelectorAll(selector)];
-  const rove = (to) => {
-    for (const it of items()) it.tabIndex = it === to ? 0 : -1;
-  };
-  menu.addEventListener("focusin", (e) => {
-    const t = e.target;
-    if (t.matches(selector)) rove(t);
-  });
-  menu.addEventListener("keydown", (e) => {
-    if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
-    const list3 = items();
-    if (!list3.length) return;
-    const at2 = list3.indexOf(document.activeElement);
-    let next = -1;
-    switch (e.key) {
-      case "ArrowDown":
-      case "ArrowRight":
-        next = at2 < 0 ? 0 : (at2 + 1) % list3.length;
-        break;
-      case "ArrowUp":
-      case "ArrowLeft":
-        next = at2 < 0 ? list3.length - 1 : (at2 - 1 + list3.length) % list3.length;
-        break;
-      case "Home":
-        next = 0;
-        break;
-      case "End":
-        next = list3.length - 1;
-        break;
-      default:
-        return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    rove(list3[next]);
-    list3[next].focus();
-  });
-  menu.addEventListener("focusout", (e) => {
-    if (menu.hidden) return;
-    const to = e.relatedTarget;
-    if (to && (menu.contains(to) || to === opener)) return;
-    close();
-  });
-}
-
 // filters-text.ts
 function parseFilterIds(s) {
   const out = [];
@@ -4513,7 +4466,7 @@ function filterLabel(rows, ids) {
 function message2(err) {
   return err instanceof Error ? err.message : String(err);
 }
-function makeFilterBar(ctx, hooks) {
+function makeFilterBar(_ctx, hooks) {
   let rows = [];
   let selected = [];
   const chipsEl = h8("div", {
@@ -4526,7 +4479,7 @@ function makeFilterBar(ctx, hooks) {
       type: "button",
       class: "kit-chip cb-filter-add",
       onclick() {
-        hooks.onEdit(null);
+        hooks.onNew();
       }
     },
     "+ filter"
@@ -4539,7 +4492,6 @@ function makeFilterBar(ctx, hooks) {
     chipsEl,
     errEl
   );
-  let closeMenu = null;
   function chip(row) {
     const id = row.filter.id;
     const on = selected.includes(id);
@@ -4551,93 +4503,81 @@ function makeFilterBar(ctx, hooks) {
         "data-id": id,
         "aria-pressed": String(on),
         onclick() {
+          if (row.invalid) {
+            hooks.onOpen(row);
+            return;
+          }
           const next = toggleFilter(rows, selected, id);
-          if (next !== selected) hooks.onSelect(next);
+          if (next !== selected) hooks.onSelect(next, id);
         }
       },
       row.filter.name || id
     );
     if (row.invalid) {
       b.setAttribute("data-invalid", "");
-      b.setAttribute("aria-disabled", "true");
       b.title = row.invalid;
     }
-    const more = h8("button", {
-      type: "button",
-      class: "cb-filter-more",
-      "aria-label": `${row.filter.name || id}: edit or delete`,
-      "aria-haspopup": "menu",
-      "aria-expanded": "false",
-      onclick() {
-        setMenu(menu.hidden);
-      }
-    });
-    more.textContent = "⋯";
-    const item = (label, run) => h8(
-      "button",
-      {
-        type: "button",
-        class: "cb-filter-menu-item",
-        role: "menuitem",
-        "data-act": label,
-        onclick() {
-          setMenu(false);
-          run();
-        }
-      },
-      label
-    );
-    const menu = h8(
-      "div",
-      { class: "cb-filter-menu", role: "menu", hidden: true },
-      item("edit", () => hooks.onEdit(row)),
-      ...hooks.onMakeRule && !row.invalid ? [item("make a rule", () => hooks.onMakeRule?.(row))] : [],
-      item("delete", () => void remove(id))
-    );
-    const onEsc = (e) => {
-      if (e.key !== "Escape" || e.isComposing) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setMenu(false);
-      more.focus();
-    };
-    function setMenu(open) {
-      if (open) closeMenu?.();
-      menu.hidden = !open;
-      more.setAttribute("aria-expanded", String(open));
-      if (open) {
-        closeMenu = () => setMenu(false);
-        document.addEventListener("keydown", onEsc, true);
-        menu.querySelector(".cb-filter-menu-item")?.focus();
-      } else {
-        if (closeMenu) closeMenu = null;
-        document.removeEventListener("keydown", onEsc, true);
-      }
-    }
-    menuNav(menu, ".cb-filter-menu-item", more, () => setMenu(false));
-    return h8("span", { class: "cb-filter-item", "data-id": id }, b, more, menu);
+    return b;
   }
   function paint(r, sel) {
     rows = r;
     selected = sel;
-    closeMenu?.();
     chipsEl.replaceChildren(...rows.map(chip), addBtn);
   }
   function setError(msg) {
     errEl.hidden = msg === null;
     errEl.textContent = msg ?? "";
   }
-  async function remove(id) {
-    try {
-      await ctx.api.post("/filters/delete", { id });
-      hooks.onDeleted(id);
-      hooks.onChanged();
-    } catch (err) {
-      setError(message2(err));
-    }
-  }
   paint([], []);
   return { el: el2, paint, setError };
+}
+function renderFilter(ctx, row, hooks) {
+  const f = row.filter;
+  const note = h8("p", { class: "cb-rule-note", role: "status" });
+  const bs = [{ label: "edit", run: () => hooks.onEdit() }];
+  if (!row.invalid)
+    bs.push({ label: "make a rule", run: () => hooks.onMakeRule() });
+  bs.push({
+    label: "delete",
+    run: () => {
+      note.textContent = "";
+      void ctx.api.post("/filters/delete", { id: f.id }).then(() => hooks.onDeleted()).catch((err) => {
+        note.textContent = message2(err);
+      });
+    }
+  });
+  return h8(
+    "div",
+    { class: "kit-doc" },
+    h8(
+      "article",
+      { class: "cb-rule cb-filter-doc", "data-filter": f.id },
+      h8("p", { class: "kit-kick" }, "filter"),
+      h8("h1", { class: "kit-h1" }, f.name || f.id),
+      row.invalid ? card2({
+        edge: "signal",
+        head: "not valid",
+        body: h8(
+          "div",
+          null,
+          h8("p", { class: "cb-invalid-msg" }, row.invalid),
+          h8(
+            "p",
+            { class: "cb-invalid-help" },
+            "This filter selects nothing until it is valid. Edit it to fix it."
+          )
+        )
+      }) : null,
+      h8("h3", { class: "kit-label" }, "items that match all of"),
+      conditionEditor(
+        ctx,
+        { match: f.match, status: "active", editable: false },
+        () => {
+        }
+      ),
+      h8("div", { class: "cb-rule-actions" }, buttons3(bs), note)
+    )
+  );
 }
 function filterEditor(ctx, row, hooks) {
   let match = (row?.filter.match ?? []).map((c) => ({ ...c }));
@@ -4749,6 +4689,55 @@ function filterEditor(ctx, row, hooks) {
 
 // rule-editor.ts
 import { h as h9, ApiError as ApiError3 } from "/_kit/kit.js";
+
+// menu-nav.ts
+function menuNav(menu, selector, opener, close) {
+  const items = () => [...menu.querySelectorAll(selector)];
+  const rove = (to) => {
+    for (const it of items()) it.tabIndex = it === to ? 0 : -1;
+  };
+  menu.addEventListener("focusin", (e) => {
+    const t = e.target;
+    if (t.matches(selector)) rove(t);
+  });
+  menu.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const list3 = items();
+    if (!list3.length) return;
+    const at2 = list3.indexOf(document.activeElement);
+    let next = -1;
+    switch (e.key) {
+      case "ArrowDown":
+      case "ArrowRight":
+        next = at2 < 0 ? 0 : (at2 + 1) % list3.length;
+        break;
+      case "ArrowUp":
+      case "ArrowLeft":
+        next = at2 < 0 ? list3.length - 1 : (at2 - 1 + list3.length) % list3.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = list3.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    rove(list3[next]);
+    list3[next].focus();
+  });
+  menu.addEventListener("focusout", (e) => {
+    if (menu.hidden) return;
+    const to = e.relatedTarget;
+    if (to && (menu.contains(to) || to === opener)) return;
+    close();
+  });
+}
+
+// rule-editor.ts
 var KINDS = ["repo", "pr", "issue", "branch", "worktree"];
 var OFFERED = (d) => d !== "wait" && d !== "watch";
 function message3(err) {
@@ -4867,12 +4856,11 @@ function makeRuleRow(_ctx, hooks) {
       "button",
       {
         type: "button",
-        class: "kit-chip cb-filter cb-rule-chip" + (on ? " on" : "") + (off ? " cb-rule-off" : ""),
+        class: "kit-chip cb-rule-chip" + (on ? " on" : "") + (off ? " cb-rule-off" : ""),
         "data-id": id,
         "aria-pressed": String(on),
         title: off ? "off" : "",
         onclick() {
-          if (row.invalid) return;
           hooks.onSelect(on ? null : id);
         }
       },
@@ -4880,18 +4868,9 @@ function makeRuleRow(_ctx, hooks) {
     );
     if (row.invalid) {
       b.setAttribute("data-invalid", "");
-      b.setAttribute("aria-disabled", "true");
       b.title = row.invalid;
     }
-    return h9(
-      "span",
-      { class: "cb-filter-item", "data-id": id },
-      b,
-      ruleMenu(row, {
-        onEdit: () => hooks.onEdit(row),
-        onToggle: () => hooks.onToggle(row)
-      })
-    );
+    return b;
   }
   function paint(rows, selected) {
     chipsEl.replaceChildren(...rows.map((r) => chip(r, selected)), addBtn);
@@ -5123,7 +5102,7 @@ function ruleEditor(ctx, row, seed, hooks) {
 }
 
 // rules.ts
-import { h as h10, facts as facts3, buttons as buttons3, card as card2, sheet as sheet4 } from "/_kit/kit.js";
+import { h as h10, facts as facts3, buttons as buttons4, card as card3, sheet as sheet4 } from "/_kit/kit.js";
 var PREVIEW_DEBOUNCE_MS = 300;
 var PAGE2 = 200;
 function message4(err) {
@@ -5171,7 +5150,7 @@ function renderRule(ctx, detail, hooks) {
     factsEl.replaceWith(next);
     factsEl = next;
   }
-  const invalidEl = detail.invalid ? card2({
+  const invalidEl = detail.invalid ? card3({
     edge: "signal",
     head: "not valid",
     body: h10(
@@ -5446,7 +5425,7 @@ function renderRule(ctx, detail, hooks) {
       }
     }
   ];
-  const actionsEl = h10("div", { class: "cb-rule-actions" }, buttons3(bs), note);
+  const actionsEl = h10("div", { class: "cb-rule-actions" }, buttons4(bs), note);
   doc.replaceChildren(
     h10("p", { class: "kit-kick" }, `rule · ${off ? "off" : "on"}`),
     h10("h1", { class: "kit-h1" }, rule.name || id),
@@ -5629,9 +5608,44 @@ function makeDecide(ctx) {
     currentOpenKey = null;
     shownDetail = null;
     const rr = filters.rule && draft === null ? ruleRows.find((r) => r.rule.id === filters.rule) : void 0;
+    const fr = draft === null && !filters.rule ? filterShown() : void 0;
     readEl.replaceChildren(renderReadEmpty());
     if (rr) void showRuleDoc(rr);
+    else if (fr) showFilterDoc(fr);
     feedAttached();
+  }
+  let shownFilter = null;
+  function filterShown() {
+    const sel = filters.filters;
+    const clicked = filterRows.find((r) => r.filter.id === shownFilter);
+    if (clicked && (clicked.invalid || sel.includes(clicked.filter.id)))
+      return clicked;
+    const last = sel[sel.length - 1];
+    return filterRows.find((r) => r.filter.id === last);
+  }
+  function showFilterDoc(fr) {
+    const id = fr.filter.id;
+    readEl.replaceChildren(
+      renderFilter(ctx, fr, {
+        onEdit() {
+          openFilterEditor(fr);
+        },
+        onMakeRule() {
+          openRuleEditor(null, {
+            name: fr.filter.name,
+            match: fr.filter.match ?? []
+          });
+        },
+        onDeleted() {
+          if (shownFilter === id) shownFilter = null;
+          filterRows = filterRows.filter((r) => r.filter.id !== id);
+          if (filters.filters.includes(id))
+            selectFilters(filters.filters.filter((x) => x !== id));
+          else showReadEmpty();
+          void loadFilters();
+        }
+      })
+    );
   }
   let ruleDocSeq = 0;
   async function showRuleDoc(rr) {
@@ -5662,7 +5676,7 @@ function makeDecide(ctx) {
       })
     );
   }
-  showReadEmpty();
+  readEl.replaceChildren(renderReadEmpty());
   function buildFoot() {
     const footRight = h11(
       "div",
@@ -5751,27 +5765,18 @@ function makeDecide(ctx) {
   paintSwitch();
   let filterRows = [];
   const filterBar = makeFilterBar(ctx, {
-    onSelect(ids) {
+    onSelect(ids, clicked) {
+      shownFilter = ids.includes(clicked) ? clicked : null;
       selectFilters(ids);
     },
-    onChanged() {
-      void loadFilters().then(() => {
-        if (filtered()) void reload();
-      });
+    onOpen(row) {
+      if (draft !== null) closeFilterEditor(true);
+      if (currentOpenKey) goList();
+      shownFilter = row.filter.id;
+      showReadEmpty();
     },
-    onDeleted(id) {
-      if (editingId === id) closeFilterEditor(true);
-      if (filters.filters.includes(id))
-        selectFilters(filters.filters.filter((x) => x !== id));
-    },
-    onEdit(row) {
-      openFilterEditor(row);
-    },
-    onMakeRule(row) {
-      openRuleEditor(null, {
-        name: row.filter.name,
-        match: row.filter.match ?? []
-      });
+    onNew() {
+      openFilterEditor(null);
     }
   });
   let ruleRows = [];
@@ -5781,17 +5786,6 @@ function makeDecide(ctx) {
     },
     onNew() {
       openRuleEditor(null, null);
-    },
-    onEdit(row) {
-      openRuleEditor(row, null);
-    },
-    onToggle(row) {
-      void toggleRule(ctx, row).then(() => loadRules()).then(() => {
-        if (filters.rule === row.rule.id) showReadEmpty();
-        void reload();
-      }).catch((err) => {
-        filterBar.setError(err instanceof Error ? err.message : String(err));
-      });
     }
   });
   async function loadRules() {
@@ -5965,6 +5959,7 @@ function makeDecide(ctx) {
       filterRows = v.filters ?? [];
       paintFilters();
       paintRail();
+      if (draft === null && !currentOpenKey && !filters.rule) showReadEmpty();
     } catch {
     }
   }
@@ -6841,7 +6836,7 @@ ${JSON.stringify(listAttached("none"))}`;
     const w = lookIntoCard(words, t.name, key);
     const looking = lookingLine(shownDetail.item.looking);
     const n = Number(grid.dataset.cards) + 1;
-    const card5 = h11(
+    const card6 = h11(
       "button",
       {
         type: "button",
@@ -6850,11 +6845,11 @@ ${JSON.stringify(listAttached("none"))}`;
         dataset: { n: String(n) },
         disabled: !!looking || askingKey === key,
         async onclick() {
-          if (card5.disabled) return;
+          if (card6.disabled) return;
           const wrap = grid.closest(".cb-choices-wrap");
           if (wrap) showChoiceError(wrap, "");
           askingKey = key;
-          card5.disabled = true;
+          card6.disabled = true;
           const why = await ctx.askSession(
             w.message,
             { keys: [key] },
@@ -6862,7 +6857,7 @@ ${JSON.stringify(listAttached("none"))}`;
           );
           askingKey = "";
           if (why) {
-            card5.disabled = false;
+            card6.disabled = false;
             if (wrap) showChoiceError(wrap, why);
           } else void refreshLooking(key);
         }
@@ -6870,8 +6865,8 @@ ${JSON.stringify(listAttached("none"))}`;
       h11("span", { class: "cb-choice-mark" }),
       h11("span", { class: "cb-choice-label" }, w.label)
     );
-    if (old) old.replaceWith(card5);
-    else grid.append(card5);
+    if (old) old.replaceWith(card6);
+    else grid.append(card6);
   }
   ctx.onDockTarget(() => renderAsk());
   let lookingSeq = 0;
@@ -7209,11 +7204,11 @@ ${JSON.stringify(listAttached("none"))}`;
     group: "page",
     run() {
       if (!currentOpenKey) return false;
-      const card5 = readEl.querySelectorAll(
+      const card6 = readEl.querySelectorAll(
         ".cb-choices .cb-choice"
       )[n - 1];
-      if (!card5) return false;
-      card5.click();
+      if (!card6) return false;
+      card6.click();
     }
   }));
   const jumpKeys = groupKeys((d) => {
@@ -7354,7 +7349,7 @@ ${JSON.stringify(listAttached("none"))}`;
 }
 
 // dock.ts
-import { h as h14, card as card4 } from "/_kit/kit.js";
+import { h as h14, card as card5 } from "/_kit/kit.js";
 
 // time-utils.ts
 function ageMs(ts) {
@@ -7721,7 +7716,7 @@ function makeComposer(ctx, dock) {
 }
 
 // progress.ts
-import { h as h13, card as card3, fold as fold2, noteField as noteField3 } from "/_kit/kit.js";
+import { h as h13, card as card4, fold as fold2, noteField as noteField3 } from "/_kit/kit.js";
 function makeBatchTray(ctx, dock) {
   let thread = 0;
   let batch = 0;
@@ -7736,7 +7731,7 @@ function makeBatchTray(ctx, dock) {
     }
   });
   const list3 = h13("div", { class: "cb-batch-drafts" });
-  const el2 = card3({
+  const el2 = card4({
     body: h13(
       "div",
       {},
@@ -8257,7 +8252,7 @@ function renderMsgCard(msg, delivery, sessions, ctx, agentName) {
     moveBtn.textContent = "move to another session";
     fullBody.append(h14("div", { class: "cb-dock-stuck" }, releaseBtn, moveBtn));
   }
-  const el2 = card4({
+  const el2 = card5({
     edge: isAgent ? "agent" : "signal",
     body: fullBody
   });
