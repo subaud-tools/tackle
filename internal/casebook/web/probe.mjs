@@ -16,7 +16,7 @@
 // module load so no future edit can accidentally open Court's browser.
 
 import pkg from 'playwright-core';
-import { startServe, gitGuard } from './serve.mjs';
+import { startServe, gitGuard, seenWalkthrough } from './serve.mjs';
 import { createAgent } from './agent.mjs';
 import { applyScenarios, stopApplyServes } from './probe-apply.mjs';
 import { shellScenarios, stopShellServes } from './probe-shell.mjs';
@@ -24,6 +24,10 @@ import { ownerScenarios, stopOwnerServes } from './probe-owner.mjs';
 import { decideScenarios, stopDecideServes } from './probe-decide.mjs';
 import { loadScenarios, stopLoadServes } from './probe-load.mjs';
 import { filtersScenarios, stopFiltersServes } from './probe-filters.mjs';
+import {
+  walkthroughScenarios,
+  stopWalkthroughServes,
+} from './probe-walkthrough.mjs';
 
 const { chromium } = pkg;
 
@@ -88,6 +92,7 @@ function cleanup() {
   stopDecideServes();
   stopLoadServes();
   stopFiltersServes();
+  stopWalkthroughServes();
 }
 
 process.on('SIGTERM', () => {
@@ -2664,7 +2669,7 @@ const applyHelpers = { check, checkList, until, eventually };
 // run() below is the scenario list. A full run (no PROBE_ONLY) must pass at
 // least MIN_CHECKS checks: a scenario that stops early, or is skipped, can't
 // leave the probe green. Raise it whenever checks are added.
-const MIN_CHECKS = 908;
+const MIN_CHECKS = 972;
 
 // PROBE_ONLY runs one group of scenarios, for working on them: a partial
 // run. It has to say so: under CI (the CI env var) it is refused outright,
@@ -2674,6 +2679,21 @@ const MIN_CHECKS = 908;
 // quiet full run without the floor.
 const only = process.env.PROBE_ONLY ?? '';
 const keyClashes = [];
+// group is the group running now; walkLeaks the groups whose pages showed
+// the walkthrough's overlay (only the walkthrough group's may).
+let group = 'main';
+const walkLeaks = [];
+const groupsRan = new Set();
+// inGroup runs a group's scenarios as that group.
+async function inGroup(name, fn) {
+  group = name;
+  groupsRan.add(name);
+  try {
+    await fn();
+  } finally {
+    group = 'main';
+  }
+}
 const underCI = !!process.env.CI;
 const partial = process.env.PROBE_PARTIAL === '1';
 const PROBE_GROUPS = [
@@ -2686,6 +2706,7 @@ const PROBE_GROUPS = [
   'decide',
   'load',
   'filters',
+  'walkthrough',
 ];
 const throttle = Number(process.env.PROBE_THROTTLE ?? '') || 0;
 const progressDelay = Number(process.env.PROBE_PROGRESS_DELAY ?? '') || 0;
@@ -2760,9 +2781,37 @@ async function run() {
   // many times (CDP Emulation.setCPUThrottlingRate), as a busy CI runner
   // does: the stress the probe's races are checked under.
   const newContext = browser.newContext.bind(browser);
-  // newPlainContext is a context without the probe's marks: the pane
+  // mark gives a context the probe's watchers, and, unless it is a first
+  // visit, the walkthrough marked seen (seenWalkthrough) and a watch for
+  // its overlay: only the walkthrough group may ever see it.
+  const mark = async (c, firstVisit) => {
+    if (!firstVisit) {
+      await seenWalkthrough(c);
+      await c.addInitScript(() => {
+        new MutationObserver((ms) => {
+          for (const m of ms)
+            for (const n of m.addedNodes)
+              if (n.classList?.contains('cb-walk'))
+                console.error('probe: the walkthrough overlay showed');
+        }).observe(document, { childList: true, subtree: true });
+      });
+    }
+    c.on('console', (msg) => {
+      if (msg.type() !== 'error') return;
+      if (msg.text().includes('key clash')) keyClashes.push(msg.text());
+      if (msg.text().includes('the walkthrough overlay showed'))
+        walkLeaks.push(group);
+    });
+    if (throttle > 1) c.on('page', (pg) => void throttlePage(c, pg));
+    return c;
+  };
+  // newPlainContext is a context without the pane's mark: the pane
   // scenario's, which sees the agent pane as a first visit does.
-  browser.newPlainContext = newContext;
+  browser.newPlainContext = async (...args) =>
+    mark(await newContext(...args), false);
+  // newFirstVisitContext is a first visit: the walkthrough group's.
+  browser.newFirstVisitContext = async (...args) =>
+    mark(await newContext(...args), true);
   browser.newContext = async (...args) => {
     const c = await newContext(...args);
     // The agent pane opens on a click; every other scenario finds it open,
@@ -2775,13 +2824,7 @@ async function run() {
         // a page with no storage (about:blank) has no pane either
       }
     });
-    c.on('console', (msg) => {
-      if (msg.type() === 'error' && msg.text().includes('key clash')) {
-        keyClashes.push(msg.text());
-      }
-    });
-    if (throttle > 1) c.on('page', (pg) => void throttlePage(c, pg));
-    return c;
+    return mark(c, false);
   };
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -2790,53 +2833,63 @@ async function run() {
   try {
     // PROBE_ONLY=composer runs only the Task 7 scenarios (their own serve).
     if (process.env.PROBE_ONLY === 'composer') {
-      await composerScenarios(context);
+      await inGroup('composer', () => composerScenarios(context));
       return;
     }
     // PROBE_ONLY=keys runs only the section-key scenario (its own serve).
     if (process.env.PROBE_ONLY === 'keys') {
-      await keyScopeScenarios(context);
+      await inGroup('keys', () => keyScopeScenarios(context));
       return;
     }
     // PROBE_ONLY=rules runs only the rule-group scenarios (their own serve).
     if (process.env.PROBE_ONLY === 'rules') {
-      await ruleGroupsScenarios(context);
-      await invalidRuleScenarios(context);
+      await inGroup('rules', async () => {
+        await ruleGroupsScenarios(context);
+        await invalidRuleScenarios(context);
+      });
       return;
     }
     // PROBE_ONLY=apply runs only the To apply scenarios (their own serves).
     if (process.env.PROBE_ONLY === 'apply') {
-      await applyScenarios(context, applyHelpers);
+      await inGroup('apply', () => applyScenarios(context, applyHelpers));
       return;
     }
     // PROBE_ONLY=shell runs only the keyboard layer and the failure states
     // (probe-shell.mjs, their own serves).
     if (process.env.PROBE_ONLY === 'shell') {
-      await shellScenarios(context, applyHelpers);
+      await inGroup('shell', () => shellScenarios(context, applyHelpers));
       return;
     }
     // PROBE_ONLY=owner runs only the session-ownership scenarios
     // (probe-owner.mjs, their own serve).
     if (process.env.PROBE_ONLY === 'owner') {
-      await ownerScenarios(context, applyHelpers);
+      await inGroup('owner', () => ownerScenarios(context, applyHelpers));
       return;
     }
     // PROBE_ONLY=decide runs only the decide step's scenario
     // (probe-decide.mjs, its own serve).
     if (process.env.PROBE_ONLY === 'decide') {
-      await decideScenarios(context, applyHelpers);
+      await inGroup('decide', () => decideScenarios(context, applyHelpers));
       return;
     }
     // PROBE_ONLY=load runs only the page-under-load scenario
     // (probe-load.mjs, its own serve).
     if (process.env.PROBE_ONLY === 'load') {
-      await loadScenarios(context, applyHelpers);
+      await inGroup('load', () => loadScenarios(context, applyHelpers));
       return;
     }
     // PROBE_ONLY=filters runs only the saved filters' scenarios
     // (probe-filters.mjs, their own serves).
     if (process.env.PROBE_ONLY === 'filters') {
-      await filtersScenarios(context, applyHelpers);
+      await inGroup('filters', () => filtersScenarios(context, applyHelpers));
+      return;
+    }
+    // PROBE_ONLY=walkthrough runs only the first-run walkthrough
+    // (probe-walkthrough.mjs, its own serve, a first visit's context).
+    if (process.env.PROBE_ONLY === 'walkthrough') {
+      await inGroup('walkthrough', () =>
+        walkthroughScenarios(context, applyHelpers),
+      );
       return;
     }
     // Navigate to the page with the ?t= token URL.
@@ -5345,32 +5398,39 @@ async function run() {
     }
 
     // ---- Task 7 (its own seeded serve, so its place in the run is free) -----
-    await composerScenarios(context);
+    await inGroup('composer', () => composerScenarios(context));
 
     // ---- section keys (their own seeded serve too) --------------------------
-    await keyScopeScenarios(context);
+    await inGroup('keys', () => keyScopeScenarios(context));
 
     // ---- Task 8: Rules (its own seeded serve) -------------------------------
-    await ruleGroupsScenarios(context);
-    await invalidRuleScenarios(context);
+    await inGroup('rules', async () => {
+      await ruleGroupsScenarios(context);
+      await invalidRuleScenarios(context);
+    });
 
     // ---- Task 9: To apply (its own seeded serves) ---------------------------
-    await applyScenarios(context, applyHelpers);
+    await inGroup('apply', () => applyScenarios(context, applyHelpers));
 
     // ---- Task 10: the keyboard layer, the failure states (their own serves)
-    await shellScenarios(context, applyHelpers);
+    await inGroup('shell', () => shellScenarios(context, applyHelpers));
 
     // ---- the page belongs to the session that opened it (its own serve) ---
-    await ownerScenarios(context, applyHelpers);
+    await inGroup('owner', () => ownerScenarios(context, applyHelpers));
 
     // ---- the decide step: question, cards, Not now, move-on (its own serve)
-    await decideScenarios(context, applyHelpers);
+    await inGroup('decide', () => decideScenarios(context, applyHelpers));
 
     // ---- the page under load: no replay, no refetch per heartbeat (its own serve)
-    await loadScenarios(context, applyHelpers);
+    await inGroup('load', () => loadScenarios(context, applyHelpers));
 
     // ---- saved filters: chips, the editor, the address (their own serves)
-    await filtersScenarios(context, applyHelpers);
+    await inGroup('filters', () => filtersScenarios(context, applyHelpers));
+
+    // ---- the first-run walkthrough (its own serve, a first visit)
+    await inGroup('walkthrough', () =>
+      walkthroughScenarios(context, applyHelpers),
+    );
 
     // ---- scenario: fidelity — geometry and computed style -------------------
     console.log('\nscenario: fidelity — geometry and computed style');
@@ -5611,6 +5671,18 @@ async function run() {
           ? `every git call ran hermetic with CASEBOOK_DISABLE=1 — ${g.bad.length} of ${g.calls} did not: ${g.bad.slice(0, 3).join(' | ')}`
           : `every git call the probe and its serves made (${g.calls}) ran hermetic, with CASEBOOK_DISABLE=1 (the guard's log)`,
         g.calls > 0 && g.bad.length === 0,
+      );
+    }
+    console.log('\ninvariant: only the walkthrough group saw the walkthrough');
+    for (const g of ['main', ...groupsRan]) {
+      if (g === 'walkthrough') continue;
+      if (g === 'main' && only) continue;
+      const n = walkLeaks.filter((x) => x === g).length;
+      check(
+        n
+          ? `${g}: no page showed the walkthrough — ${n} did`
+          : `${g}: no page showed the walkthrough (marked seen)`,
+        n === 0,
       );
     }
     console.log('\ninvariant: no section key clashed');

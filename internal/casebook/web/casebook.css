@@ -2878,3 +2878,49 @@ button.cb-cond-menu-row[aria-disabled='true'] {
   margin: 0;
   padding: 0;
 }
+
+/* ---- the first-run walkthrough (spec point 22) ---------------------------- */
+/* The overlay takes every click; the page shows through, dimmed, except the
+ * control the step outlines. The outline is the control's own box, its ring
+ * drawn just outside it; the note sits beside it, never on it. */
+.cb-walk {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  cursor: default;
+}
+.cb-walk-ring {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 6px;
+  outline: 2px solid var(--kit-signal);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--kit-bg) 72%, transparent);
+}
+.cb-walk-card {
+  position: fixed;
+  width: 300px;
+  padding: 12px 14px;
+  background: var(--kit-card);
+  color: var(--kit-fg);
+  border: 1px solid var(--kit-line);
+  border-radius: 8px;
+  box-shadow: var(--kit-lift);
+}
+.cb-walk-count {
+  margin: 0 0 4px;
+  font: 10.5px var(--kit-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--kit-muted);
+}
+.cb-walk-note {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.cb-walk-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -97,6 +97,22 @@ export function probeGit(dir, args, home) {
     .trim();
 }
 
+/**
+ * seenWalkthrough marks the first-run walkthrough seen in every page of a
+ * playwright context (an init script setting walkthrough.ts's flag), so
+ * its overlay covers nothing a probe or a walk looks at. Only the
+ * walkthrough's own probe opens a context without it.
+ */
+export async function seenWalkthrough(context) {
+  await context.addInitScript(() => {
+    try {
+      localStorage.setItem('casebook.walkthrough', 'seen');
+    } catch {
+      // a page with no storage (about:blank) has no walkthrough either
+    }
+  });
+}
+
 // The args we always pass to casebook serve. Never remove --no-open.
 const SERVE_ARGS = ['serve', '--foreground', '--no-open'];
 

@@ -164,6 +164,229 @@ function makeKeyLayer(create, report) {
   };
 }
 
+// walkthrough.ts
+var WALKTHROUGH_SEEN = "casebook.walkthrough";
+var WALKTHROUGH_STEPS = [
+  {
+    id: "decide",
+    target: '.kit-ctl[data-id="decide"]',
+    note: "decide lists everything that needs a decision: branches, pull requests, issues, repos and worktrees."
+  },
+  {
+    id: "filters",
+    target: ".kit-list:not([hidden]) .cb-filters",
+    note: "Filters narrow the list. Pick one or more; + filter saves a new one."
+  },
+  {
+    id: "rules",
+    target: ".kit-list:not([hidden]) .cb-rule-row",
+    note: "Rules recommend a decision for many items at once. Each rule’s recommendations are a group in the list, with one button for all of them."
+  },
+  {
+    id: "decision",
+    target: ".kit-read:not([hidden]) .cb-decide-row .cb-choice",
+    note: "A button like this decides the item. Nothing happens yet: what you decide waits in apply."
+  },
+  {
+    id: "apply",
+    target: '.kit-ctl[data-id="apply"]',
+    note: "apply carries out what you decided, once you have read the plan and approved it."
+  },
+  {
+    id: "agent",
+    target: ".kit-rail",
+    note: "Ask the agent at any point. It knows what you’re looking at."
+  }
+];
+var MARGIN = 8;
+var clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+function placeNote(target, card5, view, gap = 12) {
+  const maxX = Math.max(MARGIN, view.width - card5.width - MARGIN);
+  const maxY = Math.max(MARGIN, view.height - card5.height - MARGIN);
+  const x = clamp(target.x, MARGIN, maxX);
+  const y = clamp(target.y, MARGIN, maxY);
+  const below = target.y + target.height + gap;
+  if (below + card5.height <= view.height - MARGIN) return { x, y: below };
+  const above = target.y - gap - card5.height;
+  if (above >= MARGIN) return { x, y: above };
+  const left = target.x - gap - card5.width;
+  if (left >= MARGIN) return { x: left, y };
+  const right = target.x + target.width + gap;
+  if (right + card5.width <= view.width - MARGIN) return { x: right, y };
+  return {
+    x: clamp((view.width - card5.width) / 2, MARGIN, maxX),
+    y: clamp((view.height - card5.height) / 2, MARGIN, maxY)
+  };
+}
+function walkthroughSeen() {
+  try {
+    return localStorage.getItem(WALKTHROUGH_SEEN) === "seen";
+  } catch {
+    return false;
+  }
+}
+function markSeen() {
+  try {
+    localStorage.setItem(WALKTHROUGH_SEEN, "seen");
+  } catch {
+  }
+}
+function el(tag, cls, text = "") {
+  const e = document.createElement(tag);
+  e.className = cls;
+  if (text) e.textContent = text;
+  return e;
+}
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(sel, ms) {
+  const end = Date.now() + ms;
+  for (; ; ) {
+    const e = document.querySelector(sel);
+    if (e && e.getBoundingClientRect().width > 0) return e;
+    if (Date.now() > end) return null;
+    await sleep(50);
+  }
+}
+var ROW = ".kit-list:not([hidden]) .kit-row";
+function makeWalkthrough(ctx) {
+  let running = false;
+  function start2() {
+    if (running) return;
+    running = true;
+    ctx.pauseLive(true);
+    const startHash = location.hash;
+    const pane = ctx.dockPane();
+    const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = el("div", "cb-walk");
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "walkthrough");
+    const ring = el("div", "cb-walk-ring");
+    const card5 = el("div", "cb-walk-card");
+    const count = el("p", "cb-walk-count");
+    const note = el("p", "cb-walk-note");
+    const skipBtn = el("button", "kit-btn cb-walk-skip", "skip");
+    const nextBtn = el("button", "kit-btn fill cb-walk-next", "next");
+    skipBtn.type = "button";
+    nextBtn.type = "button";
+    const acts = el("div", "cb-walk-acts");
+    acts.append(skipBtn, nextBtn);
+    card5.append(count, note, acts);
+    ring.hidden = true;
+    card5.hidden = true;
+    overlay.append(ring, card5);
+    document.body.append(overlay);
+    let steps = WALKTHROUGH_STEPS;
+    let at2 = -1;
+    let ended = false;
+    let raf = 0;
+    let moving = false;
+    function place() {
+      const step = steps[at2];
+      const target = step ? document.querySelector(step.target) : null;
+      if (target) {
+        const r = target.getBoundingClientRect();
+        ring.style.left = `${r.x}px`;
+        ring.style.top = `${r.y}px`;
+        ring.style.width = `${r.width}px`;
+        ring.style.height = `${r.height}px`;
+        const p = placeNote(
+          r,
+          { width: card5.offsetWidth, height: card5.offsetHeight },
+          { width: innerWidth, height: innerHeight }
+        );
+        card5.style.left = `${p.x}px`;
+        card5.style.top = `${p.y}px`;
+      }
+      raf = requestAnimationFrame(place);
+    }
+    async function show(i) {
+      for (; i < steps.length; i++) {
+        const step = steps[i];
+        if (step.id === "decision") {
+          const row = document.querySelector(ROW);
+          if (!row) continue;
+          row.click();
+        }
+        if (step.id === "agent") ctx.setDockPane(true);
+        const target = await waitFor(step.target, 4e3);
+        if (ended) return;
+        if (!target) continue;
+        target.scrollIntoView({ block: "nearest", inline: "nearest" });
+        at2 = i;
+        overlay.dataset.step = step.id;
+        count.textContent = `${i + 1} of ${steps.length}`;
+        note.textContent = step.note;
+        nextBtn.textContent = i === steps.length - 1 ? "done" : "next";
+        ring.hidden = false;
+        card5.hidden = false;
+        nextBtn.focus();
+        return;
+      }
+      finish();
+    }
+    function next() {
+      if (moving || ended) return;
+      moving = true;
+      void show(at2 + 1).finally(() => {
+        moving = false;
+      });
+    }
+    function finish() {
+      if (ended) return;
+      ended = true;
+      markSeen();
+      cancelAnimationFrame(raf);
+      window.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      if (location.hash !== startHash) {
+        if (startHash) location.hash = startHash;
+        else ctx.route.go("decide");
+      }
+      ctx.setDockPane(pane);
+      if (focused?.isConnected) focused.focus();
+      ctx.pauseLive(false);
+      running = false;
+    }
+    function onKey(e) {
+      e.stopImmediatePropagation();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        finish();
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        next();
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        (document.activeElement === nextBtn ? skipBtn : nextBtn).focus();
+        return;
+      }
+      const onButton = e.target === skipBtn || e.target === nextBtn;
+      if (onButton && (e.key === "Enter" || e.key === " ")) return;
+      e.preventDefault();
+    }
+    skipBtn.addEventListener("click", () => finish());
+    nextBtn.addEventListener("click", () => next());
+    window.addEventListener("keydown", onKey, true);
+    raf = requestAnimationFrame(place);
+    moving = true;
+    void (async () => {
+      if (ctx.route.current().section === "apply") ctx.route.go("decide");
+      await waitFor(".kit-list:not([hidden]) .kit-rows > *", 4e3);
+      if (ended) return;
+      if (!document.querySelector(ROW))
+        steps = WALKTHROUGH_STEPS.filter((s) => s.id !== "decision");
+      await show(0);
+      moving = false;
+    })();
+  }
+  return { start: start2 };
+}
+
 // app.ts
 var sectionMakers = [];
 var dockMakers = [];
@@ -205,10 +428,10 @@ function start(first) {
   });
   function svgEl(tag, attrs, ...children) {
     const NS = "http://www.w3.org/2000/svg";
-    const el = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-    for (const child of children) el.appendChild(child);
-    return el;
+    const el2 = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el2.setAttribute(k, v);
+    for (const child of children) el2.appendChild(child);
+    return el2;
   }
   const mark = svgEl(
     "svg",
@@ -318,6 +541,8 @@ function start(first) {
   const dockSessionListeners = [];
   let dockTarget = null;
   const dockTargetListeners = [];
+  let livePaused = false;
+  const held = [];
   const layer = makeKeyLayer(
     (list3) => createKeys(list3 ? { list: list3 } : {}),
     (m) => console.error(m)
@@ -372,6 +597,15 @@ function start(first) {
     askSession(body, attached, purpose) {
       const d = dockHandles[0];
       return d ? d.sendText(body, attached, purpose) : Promise.resolve("no agent session");
+    },
+    pauseLive(on) {
+      livePaused = on;
+      if (on) return;
+      for (const e of held.splice(0)) deliver(e.type, e.data);
+    },
+    dockPane: () => dockHandles[0]?.pane() ?? null,
+    setDockPane(v) {
+      dockHandles[0]?.setPane(v);
     }
   };
   const sections = /* @__PURE__ */ new Map();
@@ -404,9 +638,8 @@ function start(first) {
       poll: "/api/state",
       cursor,
       onEvent(e) {
-        if (e.type === "gap") loadSummary();
-        emitLive(e.type, e.data);
-        for (const sec of sections.values()) sec.onLive(e.type, e.data);
+        if (livePaused) held.push({ type: e.type, data: e.data });
+        else deliver(e.type, e.data);
       },
       onStatus,
       fetch: async (url, init) => {
@@ -438,6 +671,11 @@ function start(first) {
         return;
     }
   }
+  function deliver(type, data) {
+    if (type === "gap") loadSummary();
+    emitLive(type, data);
+    for (const sec of sections.values()) sec.onLive(type, data);
+  }
   function retry() {
     if (stale) return;
     const cursor = liveClient.cursor();
@@ -462,6 +700,12 @@ function start(first) {
   ]) {
     ctx.keys.register({ keys: k, label, run: () => go(id) });
   }
+  const walkthrough = makeWalkthrough(ctx);
+  ctx.keys.register({
+    keys: "g w",
+    label: "show the walkthrough",
+    run: () => walkthrough.start()
+  });
   onRoute((r) => {
     currentRoute = r;
     if (/^#\/(attention|rules)(\/|\?|$)/.test(location.hash)) {
@@ -532,6 +776,7 @@ function start(first) {
   onLiveEvent("index", loadSummary);
   onLiveEvent("push", loadSummary);
   dispatchCurrent();
+  if (!walkthroughSeen()) walkthrough.start();
 }
 
 // apply.ts
@@ -983,7 +1228,7 @@ function renderChoices(ctx, kind, opts) {
     field.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.isComposing) decide(field.value);
     });
-    const el = h2(
+    const el2 = h2(
       "div",
       { class: "cb-close-comment", hidden: true },
       field,
@@ -994,7 +1239,7 @@ function renderChoices(ctx, kind, opts) {
     );
     const onEsc = (e) => {
       if (e.key !== "Escape" || e.isComposing) return;
-      if (!el.isConnected || el.hidden) {
+      if (!el2.isConnected || el2.hidden) {
         document.removeEventListener("keydown", onEsc, true);
         return;
       }
@@ -1008,16 +1253,16 @@ function renderChoices(ctx, kind, opts) {
     };
     function close() {
       if (document.activeElement === field) field.blur();
-      el.hidden = true;
+      el2.hidden = true;
       document.removeEventListener("keydown", onEsc, true);
     }
     function open() {
       field.value = opts.chosen === CLOSE ? opts.note ?? "" : "";
-      el.hidden = false;
+      el2.hidden = false;
       document.addEventListener("keydown", onEsc, true);
       field.focus({ preventScroll: true });
     }
-    return { el, open, close };
+    return { el: el2, open, close };
   }
   function notNowPicker(forms) {
     const input = h2("input", { class: "cb-sheet-input" });
@@ -1492,13 +1737,13 @@ function buildPlan(ctx, what) {
     (err) => err instanceof ApiError && (err.status === 422 || err.status === 409 && !err.message.includes("sync first")) ? planner?.nothing(message(err)) : planner?.refused(message(err))
   );
 }
-function focusKey(el) {
-  const host = el.closest(
+function focusKey(el2) {
+  const host = el2.closest(
     "[data-card],[data-step],[data-session],[data-testid]"
   );
   const hostKey = host ? ["card", "step", "session", "testid"].map((a) => host.getAttribute(`data-${a}`) ?? "").join("/") : "";
-  const own = el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement ? el.className : el.textContent ?? "";
-  return `${hostKey}|${el.tagName}|${own}`;
+  const own = el2 instanceof HTMLTextAreaElement || el2 instanceof HTMLInputElement ? el2.className : el2.textContent ?? "";
+  return `${hostKey}|${el2.tagName}|${own}`;
 }
 function focusSnapshot(root) {
   const a = document.activeElement;
@@ -1515,11 +1760,11 @@ function focusRestore(root, snap) {
   const els = root.querySelectorAll(
     "button, textarea, input, a[href], [tabindex]"
   );
-  for (const el of els) {
-    if (focusKey(el) !== snap.key) continue;
-    el.focus({ preventScroll: true });
-    if ((el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) && snap.start !== null) {
-      el.setSelectionRange(snap.start, snap.end ?? snap.start);
+  for (const el2 of els) {
+    if (focusKey(el2) !== snap.key) continue;
+    el2.focus({ preventScroll: true });
+    if ((el2 instanceof HTMLTextAreaElement || el2 instanceof HTMLInputElement) && snap.start !== null) {
+      el2.setSelectionRange(snap.start, snap.end ?? snap.start);
     }
     return;
   }
@@ -1787,7 +2032,7 @@ function makeApply(ctx) {
       h4("span", { class: "cb-group-n" }, String(p.n))
     );
     const acts = g ? top.querySelector(".cb-apply-head-acts") : null;
-    const el = h4(
+    const el2 = h4(
       "div",
       {
         class: "cb-group cb-apply-part" + (isOpen ? "" : " collapsed"),
@@ -1838,7 +2083,7 @@ function makeApply(ctx) {
       acts.replaceChildren(...bs);
     };
     paint();
-    return { el, paint };
+    return { el: el2, paint };
   }
   function paintHeads() {
     for (const hd of heads) hd.paint();
@@ -1898,8 +2143,8 @@ function makeApply(ctx) {
       `.cb-apply-part[data-part="${CSS.escape(id)}"]`
     );
     if (!head) return;
-    for (const el of handle.el.querySelectorAll(".cb-apply-part.cb-focus"))
-      el.classList.remove("cb-focus");
+    for (const el2 of handle.el.querySelectorAll(".cb-apply-part.cb-focus"))
+      el2.classList.remove("cb-focus");
     head.classList.add("cb-focus");
     head.scrollIntoView({ block: "start" });
   }
@@ -2282,14 +2527,14 @@ function makeApply(ctx) {
         )
       );
     }
-    const el = card({
+    const el2 = card({
       edge: "signal",
       head: "not planned",
       body,
       actions: syncing ? void 0 : [{ label: "sync first", fill: true, run: () => void syncFirst() }]
     });
-    el.dataset.testid = "refusal";
-    return el;
+    el2.dataset.testid = "refusal";
+    return el2;
   }
   function drawOverview() {
     if (openId !== null) return;
@@ -2428,14 +2673,14 @@ function makeApply(ctx) {
   function approveBlock(j) {
     const steps = j.steps ?? [];
     const outward = steps.filter((s) => s.lane === "agent").length;
-    const el = h4("div", { class: "cb-approve", "data-testid": "approve" });
-    el.append(h4("h3", { class: "kit-label" }, "approve"));
+    const el2 = h4("div", { class: "cb-approve", "data-testid": "approve" });
+    el2.append(h4("h3", { class: "kit-label" }, "approve"));
     const bs = [];
     if (needsSession(steps)) {
       const ps = present();
       const chosen = planSession();
       if (!ps.length) {
-        el.append(
+        el2.append(
           h4(
             "p",
             { class: "cb-approve-none", "data-testid": "no-session" },
@@ -2443,7 +2688,7 @@ function makeApply(ctx) {
           )
         );
       } else {
-        el.append(
+        el2.append(
           h4(
             "p",
             { class: "cb-approve-what" },
@@ -2480,7 +2725,7 @@ function makeApply(ctx) {
           )
         );
         if (!chosen) {
-          el.append(
+          el2.append(
             h4(
               "p",
               { class: "cb-approve-none", "data-testid": "pick-session" },
@@ -2495,7 +2740,7 @@ function makeApply(ctx) {
           });
       }
     } else {
-      el.append(
+      el2.append(
         h4(
           "p",
           { class: "cb-approve-what" },
@@ -2505,10 +2750,10 @@ function makeApply(ctx) {
       bs.push({ label: "approve and run", fill: true, run: () => approve() });
     }
     bs.push({ label: "discard", run: () => void discard(j.id) });
-    el.append(buttons2(bs));
+    el2.append(buttons2(bs));
     if (note)
-      el.append(h4("p", { class: "cb-apply-note", role: "status" }, note));
-    return el;
+      el2.append(h4("p", { class: "cb-apply-note", role: "status" }, note));
+    return el2;
   }
   function canApprove() {
     if (!open || open.job.state !== "planned") return false;
@@ -2801,7 +3046,7 @@ function needsCard(c, step, j, agent, hooks) {
   const key = step ? keyWithoutKind(step.key) : "";
   const verb = step ? actionVerb(step.action) : "run";
   const answer = (action, text = "") => hooks.answer(c, action, text);
-  let el;
+  let el2;
   switch (c.kind) {
     case "text": {
       const quote = h4("blockquote", { class: "cb-needs-text" }, c.text);
@@ -2835,7 +3080,7 @@ function needsCard(c, step, j, agent, hooks) {
         },
         { label: "skip", run: () => answer("skip") }
       ];
-      el = card({
+      el2 = card({
         edge: "signal",
         head: c.question ? `needs you · ${c.question}` : "needs you",
         body,
@@ -2850,7 +3095,7 @@ function needsCard(c, step, j, agent, hooks) {
         field.value = text;
         field.addEventListener("input", () => hooks.edit(c.id, field.value));
         quote.replaceWith(field);
-        el.querySelector(".kit-btns")?.replaceWith(
+        el2.querySelector(".kit-btns")?.replaceWith(
           buttons2([
             {
               label: "save text",
@@ -2867,7 +3112,7 @@ function needsCard(c, step, j, agent, hooks) {
               run() {
                 hooks.edit(c.id, null);
                 field.replaceWith(quote);
-                el.querySelector(".kit-btns")?.replaceWith(buttons2(four));
+                el2.querySelector(".kit-btns")?.replaceWith(buttons2(four));
               }
             }
           ])
@@ -2879,7 +3124,7 @@ function needsCard(c, step, j, agent, hooks) {
       break;
     }
     case "batch":
-      el = card({
+      el2 = card({
         edge: "signal",
         head: "needs you · confirm the batch",
         body: h4("p", null, c.question),
@@ -2897,7 +3142,7 @@ function needsCard(c, step, j, agent, hooks) {
           run: () => answer("hand-to-agent")
         });
       bs.push({ label: "skip", run: () => answer("skip") });
-      el = card({
+      el2 = card({
         edge: "signal",
         head: `needs you · ${key || "a step"} failed`,
         body: h4(
@@ -2911,7 +3156,7 @@ function needsCard(c, step, j, agent, hooks) {
       break;
     }
     case "paused":
-      el = card({
+      el2 = card({
         edge: "agent",
         head: `${agent} paused`,
         body: h4(
@@ -2932,16 +3177,16 @@ function needsCard(c, step, j, agent, hooks) {
       });
       break;
     default:
-      el = card({
+      el2 = card({
         edge: "signal",
         head: `needs you · ${c.kind}`,
         body: c.question
       });
   }
-  el.classList.add("cb-needs-card");
-  el.dataset.card = String(c.id);
-  el.dataset.kind = c.kind;
-  return el;
+  el2.classList.add("cb-needs-card");
+  el2.dataset.card = String(c.id);
+  el2.dataset.kind = c.kind;
+  return el2;
 }
 
 // decide-list.ts
@@ -3061,7 +3306,7 @@ function renderRec(ctx, detail, hooks) {
   if (!p) return null;
   const who = h5("p", { class: "cb-rec-who" });
   const label = h5("p", { class: "cb-rec-label" }, p.disposition);
-  const el = h5(
+  const el2 = h5(
     "section",
     { class: "cb-rec" },
     who,
@@ -3079,7 +3324,7 @@ function renderRec(ctx, detail, hooks) {
       hooks.sourceName?.(p.source) ?? ""
     );
   });
-  return el;
+  return el2;
 }
 function cameBack(vocab2, it) {
   const status = vocab2.came_back?.[it.status ?? ""];
@@ -3088,7 +3333,7 @@ function cameBack(vocab2, it) {
 }
 function renderItem(ctx, detail, hooks = {}) {
   const it = detail.item;
-  const el = h5("article", { class: "cb-item", dataset: { key: it.key } });
+  const el2 = h5("article", { class: "cb-item", dataset: { key: it.key } });
   const displayKey = keyWithoutKind(it.key);
   const keyEl = it.url ? h5("a", { href: it.url, target: "_blank", rel: "noopener" }, displayKey) : displayKey;
   const kicker = h5("p", { class: "cb-kicker kit-kick" });
@@ -3099,9 +3344,9 @@ function renderItem(ctx, detail, hooks = {}) {
     if (i > 0) kicker.append(" · ");
     kicker.append(part);
   });
-  el.append(kicker);
+  el2.append(kicker);
   const title = it.title ?? keyWithoutKind(it.key);
-  el.append(h5("h1", { class: "cb-title kit-h1", title }, title));
+  el2.append(h5("h1", { class: "cb-title kit-h1", title }, title));
   const factPairs = [];
   if (it.repo) factPairs.push(["repo", it.repo]);
   if (it.status) factPairs.push(["status", it.status]);
@@ -3114,7 +3359,7 @@ function renderItem(ctx, detail, hooks = {}) {
   if (it.landed) factPairs.push(["landed", it.landed_how ?? it.landed]);
   const factsEl = facts2(factPairs);
   factsEl.title = factsEl.textContent ?? "";
-  el.append(factsEl);
+  el2.append(factsEl);
   void getVocab(ctx).then((vocab2) => {
     const why = cameBack(vocab2, it);
     if (!why) return;
@@ -3122,7 +3367,7 @@ function renderItem(ctx, detail, hooks = {}) {
     factsEl.prepend(h5("span", { class: "cb-came-back", title: line }, line));
     factsEl.title = factsEl.textContent ?? "";
   });
-  el.append(renderDecideRow(ctx, detail, hooks));
+  el2.append(renderDecideRow(ctx, detail, hooks));
   const looking = lookingLine(it.looking);
   const reading = h5(
     "div",
@@ -3150,8 +3395,8 @@ function renderItem(ctx, detail, hooks = {}) {
       renderHistory(detail.history ?? [], detail.decisions ?? [], it.key)
     )
   );
-  el.append(reading);
-  return h5("div", { class: "kit-doc cb-item-doc" }, hooks.nav ?? null, el);
+  el2.append(reading);
+  return h5("div", { class: "kit-doc cb-item-doc" }, hooks.nav ?? null, el2);
 }
 
 // proposals.ts
@@ -3412,17 +3657,17 @@ function newCondition(f) {
   return { field: f.name, op, value: first };
 }
 function select(cls, label, options, labelOf, value, onPick) {
-  const el = h7(
+  const el2 = h7(
     "select",
     { class: cls, "aria-label": label },
     ...options.map((o) => h7("option", { value: o }, labelOf(o)))
   );
   if (!options.includes(value)) {
-    el.prepend(h7("option", { value }, labelOf(value)));
+    el2.prepend(h7("option", { value }, labelOf(value)));
   }
-  el.value = value;
-  el.addEventListener("change", () => onPick(el.value));
-  return el;
+  el2.value = value;
+  el2.addEventListener("change", () => onPick(el2.value));
+  return el2;
 }
 function conditionEditor(ctx, rule, onChange) {
   const editable = rule.editable ?? rule.status === "draft";
@@ -3430,13 +3675,13 @@ function conditionEditor(ctx, rule, onChange) {
   let fields = [];
   let ops = [];
   const fieldOf = (name) => fields.find((f) => f.name === name);
-  const el = h7("div", {
+  const el2 = h7("div", {
     class: "kit-table cb-conds",
     "data-testid": "conditions"
   });
   const rowsEl = h7("div", { class: "cb-cond-rows" });
   const general = h7("div", { class: "cb-cond-err", hidden: true });
-  el.append(rowsEl, general);
+  el2.append(rowsEl, general);
   const changed = () => {
     if (editable && fields.length) fillMenu();
     onChange(conds.map((c) => ({ ...c })));
@@ -3799,8 +4044,8 @@ function conditionEditor(ctx, rule, onChange) {
   }
   function render() {
     rowsEl.replaceChildren(...conds.map((_, i) => row(i)));
-    const e = errors.get(el);
-    if (e) setConditionError(el, e.index, e.message);
+    const e = errors.get(el2);
+    if (e) setConditionError(el2, e.index, e.message);
   }
   const search = h7("input", {
     class: "cb-cond-search",
@@ -3841,7 +4086,7 @@ function conditionEditor(ctx, rule, onChange) {
   });
   function onEsc(e) {
     if (e.key !== "Escape" || e.isComposing) return;
-    if (!el.isConnected) {
+    if (!el2.isConnected) {
       document.removeEventListener("keydown", onEsc, true);
       return;
     }
@@ -3851,7 +4096,7 @@ function conditionEditor(ctx, rule, onChange) {
     add.focus();
   }
   function onDown(e) {
-    if (!el.isConnected || !addWrap.contains(e.target)) setMenu(false);
+    if (!el2.isConnected || !addWrap.contains(e.target)) setMenu(false);
   }
   function setMenu(open) {
     if (editable) return;
@@ -3948,23 +4193,23 @@ function conditionEditor(ctx, rule, onChange) {
   if (editable) {
     menu.hidden = false;
     add.hidden = true;
-    el.prepend(addWrap);
+    el2.prepend(addWrap);
   }
   void Promise.all([ruleVocabulary(ctx), ruleOperators(ctx)]).then(([fs, os]) => {
     fields = fs;
     ops = os;
     render();
     if (editable) fillMenu();
-    el.dataset.ready = "true";
+    el2.dataset.ready = "true";
   }).catch((err) => {
     if (!editable) {
-      el.dataset.ready = "true";
+      el2.dataset.ready = "true";
       return;
     }
     general.textContent = err instanceof Error ? err.message : "the vocabulary did not load";
     general.hidden = false;
   });
-  return el;
+  return el2;
 }
 function setConditionError(editor, index, message5) {
   if (message5 === null) errors.delete(editor);
@@ -4077,7 +4322,7 @@ function makeFilterBar(ctx, hooks) {
     "+ filter"
   );
   const errEl = h8("p", { class: "cb-filter-err", hidden: true });
-  const el = h8(
+  const el2 = h8(
     "div",
     { class: "cb-filters", "aria-label": "saved filters" },
     h8("span", { class: "cb-bar-label" }, "filters"),
@@ -4182,7 +4427,7 @@ function makeFilterBar(ctx, hooks) {
     }
   }
   paint([], []);
-  return { el, paint, setError };
+  return { el: el2, paint, setError };
 }
 function filterEditor(ctx, row, hooks) {
   let match = (row?.filter.match ?? []).map((c) => ({ ...c }));
@@ -4247,7 +4492,7 @@ function filterEditor(ctx, row, hooks) {
       setConditionError(editor, i, msg);
     }
   }
-  const el = h8(
+  const el2 = h8(
     "div",
     { class: "kit-doc" },
     h8(
@@ -4289,7 +4534,7 @@ function filterEditor(ctx, row, hooks) {
       editor
     )
   );
-  return { el, showError };
+  return { el: el2, showError };
 }
 
 // rule-editor.ts
@@ -4406,14 +4651,14 @@ function makeRuleRow(_ctx, hooks) {
     },
     "rules 0"
   );
-  const el = h9(
+  const el2 = h9(
     "div",
     { class: "kit-chips cb-rule-row", "aria-label": "rules" },
     addBtn,
     listBtn
   );
   return {
-    el,
+    el: el2,
     paint(rows) {
       listBtn.textContent = `rules ${rows.length}`;
     }
@@ -4573,7 +4818,7 @@ function ruleEditor(ctx, row, seed, hooks) {
       setConditionError(editor, i, msg);
     }
   }
-  const el = h9(
+  const el2 = h9(
     "div",
     { class: "kit-doc" },
     h9(
@@ -4639,7 +4884,7 @@ function ruleEditor(ctx, row, seed, hooks) {
       version = d.version;
     }).catch(() => {
     });
-  return { el, showError };
+  return { el: el2, showError };
 }
 
 // rules.ts
@@ -4664,7 +4909,7 @@ function renderRule(ctx, detail, hooks) {
     "data-status": rule.status
   });
   doc.toggleAttribute("data-invalid", !!detail.invalid);
-  const el = h10("div", { class: "kit-doc" }, doc);
+  const el2 = h10("div", { class: "kit-doc" }, doc);
   let factsEl = h10("div");
   const heading = h10("h3", { class: "kit-label cb-matches-label" });
   const groupChips = h10("span", { class: "cb-matches-view" });
@@ -4993,7 +5238,7 @@ function renderRule(ctx, detail, hooks) {
   drawFacts();
   drawGroupChips();
   drawMatches();
-  return el;
+  return el2;
 }
 function renderRuleList(ctx, rows, hooks) {
   const note = h10("p", { class: "cb-rule-note", role: "status" });
@@ -5047,7 +5292,7 @@ function renderRuleList(ctx, rows, hooks) {
       })
     );
   };
-  const el = h10(
+  const el2 = h10(
     "div",
     { class: "kit-doc" },
     h10(
@@ -5072,7 +5317,7 @@ function renderRuleList(ctx, rows, hooks) {
       );
   }).catch(() => {
   });
-  return el;
+  return el2;
 }
 
 // decide-list.ts
@@ -5797,8 +6042,8 @@ function makeDecide(ctx) {
     });
     shown.forEach((it, i) => {
       for (const sel of [".kit-kicker", ".kit-title"]) {
-        const el = rowEls[i]?.querySelector(sel);
-        if (el) el.title = el.textContent ?? "";
+        const el2 = rowEls[i]?.querySelector(sel);
+        if (el2) el2.title = el2.textContent ?? "";
       }
       const col = rowEls[i]?.querySelector(".kit-title")?.parentElement;
       if (!col) return;
@@ -6014,7 +6259,7 @@ function makeDecide(ctx) {
       more
     );
     const acts = h11("div", { class: "cb-group-acts" });
-    const el = h11(
+    const el2 = h11(
       "div",
       {
         class: "cb-group" + (isOpen ? "" : " collapsed"),
@@ -6024,7 +6269,7 @@ function makeDecide(ctx) {
       top,
       acts
     );
-    return { el, acts };
+    return { el: el2, acts };
   }
   function groupSays(g) {
     for (const k of vocab2?.kinds ?? []) {
@@ -6035,9 +6280,9 @@ function makeDecide(ctx) {
     }
     return "";
   }
-  function withSays(el, says) {
-    if (says) el.title = says;
-    return el;
+  function withSays(el2, says) {
+    if (says) el2.title = says;
+    return el2;
   }
   function groupButton(id, cls, label, run, off = false) {
     return h11(
@@ -6082,7 +6327,7 @@ function makeDecide(ctx) {
         (err) => showReadError(err instanceof Error ? err.message : String(err))
       )
     }) : null;
-    const { el, acts } = headShell(
+    const { el: el2, acts } = headShell(
       g.id,
       ruleId ? rr?.rule.name || ruleId : g.label,
       g.total,
@@ -6162,10 +6407,10 @@ ${k}`)
       );
     }
     paint();
-    return { el, paint };
+    return { el: el2, paint };
   }
   function leftOpenHead() {
-    const { el } = headShell(
+    const { el: el2 } = headShell(
       LEFT_OPEN,
       vocab2?.left_open ?? "",
       leftOpenTotal,
@@ -6173,7 +6418,7 @@ ${k}`)
       null,
       { group: LEFT_OPEN }
     );
-    return { el, paint() {
+    return { el: el2, paint() {
     } };
   }
   function paintAll() {
@@ -6399,13 +6644,13 @@ ${JSON.stringify(listAttached("none"))}`;
   }
   function paintDetail(key, detail) {
     shownDetail = detail;
-    const el = renderItem(ctx, detail, {
+    const el2 = renderItem(ctx, detail, {
       decide: (d, until, note) => void decideOpen(key, d, until, note),
       cardsReady: () => renderAsk(),
       nav: renderNav(key),
       sourceName: ruleNameOf
     });
-    readEl.replaceChildren(el);
+    readEl.replaceChildren(el2);
     renderAsk();
   }
   let askingKey = "";
@@ -6471,10 +6716,10 @@ ${JSON.stringify(listAttached("none"))}`;
       item: { ...shownDetail.item, looking: detail.item.looking }
     };
     const says = lookingLine(detail.item.looking);
-    const el = readEl.querySelector(".cb-looking");
-    if (el) {
-      el.textContent = says;
-      el.hidden = !says;
+    const el2 = readEl.querySelector(".cb-looking");
+    if (el2) {
+      el2.textContent = says;
+      el2.hidden = !says;
     }
     renderAsk();
   }
@@ -7165,7 +7410,7 @@ function makeComposer(ctx, dock) {
     h12("span", {}, "↵ send · ⌘↵ add to batch"),
     note
   );
-  const el = h12(
+  const el2 = h12(
     "div",
     { class: "cb-comp", "data-testid": "composer" },
     line,
@@ -7231,7 +7476,7 @@ function makeComposer(ctx, dock) {
   }
   renderAttached();
   return {
-    el,
+    el: el2,
     input,
     setAttached(a, jobTitle2 = "") {
       context = a;
@@ -7298,7 +7543,7 @@ function makeBatchTray(ctx, dock) {
     }
   });
   const list3 = h13("div", { class: "cb-batch-drafts" });
-  const el = card3({
+  const el2 = card3({
     body: h13(
       "div",
       {},
@@ -7306,14 +7551,14 @@ function makeBatchTray(ctx, dock) {
       list3
     )
   });
-  el.classList.add("cb-batch");
-  el.setAttribute("data-testid", "batch-tray");
-  el.hidden = true;
+  el2.classList.add("cb-batch");
+  el2.setAttribute("data-testid", "batch-tray");
+  el2.hidden = true;
   let editing = null;
   function render() {
     if (editing?.isConnected) return;
     editing = null;
-    el.hidden = drafts.length === 0;
+    el2.hidden = drafts.length === 0;
     if (!drafts.length) {
       list3.replaceChildren();
       return;
@@ -7484,7 +7729,7 @@ function makeBatchTray(ctx, dock) {
   function reload() {
     return load(thread);
   }
-  return { el, load, reload };
+  return { el: el2, load, reload };
 }
 var NO_PROGRESS_MS = 4 * 60 * 1e3;
 function fmtAgo(ms) {
@@ -7504,7 +7749,7 @@ function makeProgressLine() {
   const age = h13("span", { class: "cb-prog-age" });
   const fill = h13("span", { class: "cb-prog-fill" });
   const bar2 = h13("div", { class: "cb-prog-bar", role: "progressbar" }, fill);
-  const el = h13(
+  const el2 = h13(
     "div",
     { class: "cb-prog", "data-testid": "progress-line" },
     h13(
@@ -7516,14 +7761,14 @@ function makeProgressLine() {
     ),
     bar2
   );
-  el.hidden = true;
+  el2.hidden = true;
   function render() {
-    el.hidden = !prog;
+    el2.hidden = !prog;
     if (!prog) return;
     const since = Date.now() - at2;
     text.textContent = prog.text + countText(prog.n, prog.total);
     const quiet = since >= NO_PROGRESS_MS;
-    el.toggleAttribute("data-quiet", quiet);
+    el2.toggleAttribute("data-quiet", quiet);
     age.textContent = quiet ? `no progress for ${Math.floor(since / 6e4)}m` : fmtAgo(since);
     const n = prog.n ?? 0;
     const total = prog.total ?? 0;
@@ -7535,7 +7780,7 @@ function makeProgressLine() {
     }
   }
   return {
-    el,
+    el: el2,
     set(p, when) {
       prog = p;
       at2 = when;
@@ -7550,17 +7795,17 @@ function makeProgressLine() {
 }
 function makeWaitingStrip() {
   const count = h13("span", {});
-  const el = h13(
+  const el2 = h13(
     "div",
     { class: "cb-wait", "data-testid": "waiting-strip" },
     h13("span", { class: "cb-wait-word" }, "waiting"),
     count
   );
-  el.hidden = true;
+  el2.hidden = true;
   return {
-    el,
+    el: el2,
     setQueued(n) {
-      el.hidden = n <= 0;
+      el2.hidden = n <= 0;
       count.textContent = ` · ${n} queued for the end of this turn`;
     }
   };
@@ -7587,10 +7832,10 @@ function workedFold(msg) {
       )
     )
   );
-  const el = fold2(msg.body, history2);
-  el.classList.add("cb-worked");
-  el.setAttribute("data-testid", "worked");
-  return el;
+  const el2 = fold2(msg.body, history2);
+  el2.classList.add("cb-worked");
+  el2.setAttribute("data-testid", "worked");
+  return el2;
 }
 
 // dock.ts
@@ -7642,15 +7887,15 @@ function stateLabel(msg) {
   return base;
 }
 function sessionItem(s, extra = "") {
-  const el = h14(
+  const el2 = h14(
     "button",
     { class: "cb-dock-pick-item", "data-session": s.id },
     h14("span", { class: "cb-dock-dot" }),
     h14("span", { class: "cb-dock-pick-title" }, sessionTitle(s))
   );
   const meta = [sessionMeta(s), extra].filter(Boolean).join(" · ");
-  if (meta) el.append(h14("span", { class: "cb-dock-pick-meta" }, meta));
-  return el;
+  if (meta) el2.append(h14("span", { class: "cb-dock-pick-meta" }, meta));
+  return el2;
 }
 function renderAgentBody(msg) {
   const wrap = h14("div", { class: "cb-dock-body" });
@@ -7819,14 +8064,14 @@ function renderMsgCard(msg, delivery, sessions, ctx, agentName) {
     moveBtn.textContent = "move to another session";
     fullBody.append(h14("div", { class: "cb-dock-stuck" }, releaseBtn, moveBtn));
   }
-  const el = card4({
+  const el2 = card4({
     edge: isAgent ? "agent" : "signal",
     body: fullBody
   });
-  el.classList.add("cb-dock-card");
-  if (isAgent) el.classList.add("cb-dock-card--agent");
-  else el.classList.add("cb-dock-card--you");
-  return el;
+  el2.classList.add("cb-dock-card");
+  if (isAgent) el2.classList.add("cb-dock-card--agent");
+  else el2.classList.add("cb-dock-card--you");
+  return el2;
 }
 async function releaseDelivery(ctx, id) {
   try {
@@ -7844,12 +8089,12 @@ async function moveDelivery(ctx, id, sessionId) {
 }
 function openMoveSheet(ctx, delivery, targets) {
   const items = targets.map((s) => {
-    const el = sessionItem(s);
-    el.onclick = () => {
+    const el2 = sessionItem(s);
+    el2.onclick = () => {
       void moveDelivery(ctx, delivery.id, s.id);
       sheet4.close();
     };
-    return el;
+    return el2;
   });
   if (items.length === 0) {
     const noOther = h14(
@@ -7888,12 +8133,12 @@ async function moveSession(ctx, fromSession, toSession) {
 }
 function openSessionMoveSheet(ctx, fromSession, targets) {
   const items = targets.map((s) => {
-    const el = sessionItem(s);
-    el.onclick = () => {
+    const el2 = sessionItem(s);
+    el2.onclick = () => {
       void moveSession(ctx, fromSession, s.id);
       sheet4.close();
     };
-    return el;
+    return el2;
   });
   if (items.length === 0) {
     const noOther = h14(
@@ -7922,13 +8167,13 @@ function openSessionMoveSheet(ctx, fromSession, targets) {
 }
 function buildSessionPicker(sessions, currentId, onSelect) {
   const items = pickable(sessions).map((s) => {
-    const el = sessionItem(s, s.busy ? "busy" : "");
-    if (s.id === currentId) el.classList.add("cb-dock-pick-item--on");
-    el.onclick = () => {
+    const el2 = sessionItem(s, s.busy ? "busy" : "");
+    if (s.id === currentId) el2.classList.add("cb-dock-pick-item--on");
+    el2.onclick = () => {
       onSelect(s.id);
       picker.remove();
     };
-    return el;
+    return el2;
   });
   if (items.length === 0) {
     items.push(
@@ -8178,11 +8423,11 @@ function makeDock(ctx) {
     }
     chooser.append(lead);
     for (const s of offered) {
-      const el = sessionItem(s, s.busy ? "busy" : "");
-      el.onclick = () => {
+      const el2 = sessionItem(s, s.busy ? "busy" : "");
+      el2.onclick = () => {
         void attach(s.id, true);
       };
-      chooser.append(el);
+      chooser.append(el2);
     }
   }
   function renderThreadChips() {
@@ -8524,6 +8769,10 @@ function makeDock(ctx) {
     sendText(body, attached, purpose) {
       if (manual !== true) setManual(true);
       return composer.sendText(body, attached, purpose);
+    },
+    pane: () => manual,
+    setPane(v) {
+      if (v !== manual) setManual(v);
     }
   };
 }

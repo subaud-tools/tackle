@@ -4,6 +4,11 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [casebook 0.14.0] - 2026-10-17
+
+### Added
+- A walkthrough the first time casebook opens, on the real page: the page pauses (nothing can be clicked and nothing live moves) while one control at a time is outlined with a short note, in the order casebook is used: decide, filters, rules, a decision button (on the first item in the list), apply, the agent. Each step has next and skip (Esc skips). It decides nothing, and puts the page back as it found it. Once done or skipped it doesn't show again on its own; `g w` (listed in the `?` overlay) shows it again.
+
 ## [casebook 0.13.0] - 2026-10-17
 
 ### Added

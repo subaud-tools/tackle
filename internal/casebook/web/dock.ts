@@ -1324,5 +1324,9 @@ export function makeDock(ctx: Ctx): DockHandle {
       if (manual !== true) setManual(true);
       return composer.sendText(body, attached, purpose);
     },
+    pane: () => manual,
+    setPane(v: boolean | null): void {
+      if (v !== manual) setManual(v);
+    },
   };
 }
