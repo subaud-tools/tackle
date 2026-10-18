@@ -122,12 +122,20 @@ func (s *Server) setPageOpen(ctx context.Context, open bool) {
 }
 
 // takePageOpen reports whether a tab was connected when the previous serve
-// went away, and clears the flag.
-func (s *Server) takePageOpen(ctx context.Context) bool {
-	var v string
+// went away, and the agent it was attached to, and clears the flag.
+func (s *Server) takePageOpen(ctx context.Context) (bool, string) {
+	var v, sess string
 	_ = s.DB.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'page_open'").Scan(&v)
+	_ = s.DB.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'page_session'").Scan(&sess)
 	s.setPageOpen(ctx, false)
-	return v == "1"
+	return v == "1", sess
+}
+
+// setPageSession records the agent a tab is attached to (its dock asks for
+// that one session): a restart reopens the page for it.
+func (s *Server) setPageSession(ctx context.Context, id string) {
+	_, _ = s.DB.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('page_session', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, id)
 }
 
 // pageStream wraps the page's event stream: it counts connected tabs, keeps
@@ -847,7 +855,9 @@ type Options struct {
 	// Ready is called once listening. pageWasOpen: a tab was connected when
 	// the previous serve went away (a stop, an upgrade or a crash), so the
 	// caller should open the page again; the old tab's token died with it.
-	Ready   func(url string, pageWasOpen bool)
+	// session is the agent that tab was attached to ("" none): the page opens
+	// for it again.
+	Ready   func(url string, pageWasOpen bool, session string)
 	Open    func(url string) error // opens the page in the browser (casebook_open); nil: can't
 	Log     io.Writer              // diagnostics
 	Assets  fs.FS                  // nil: the embedded placeholder
@@ -878,7 +888,7 @@ func Run(ctx context.Context, a *app.App, o Options) error {
 		return err
 	}
 	s.stop, s.life = cancel, ctx
-	wasOpen := s.takePageOpen(ctx)
+	wasOpen, pageSession := s.takePageOpen(ctx)
 	assetsFS := o.Assets
 	if assetsFS == nil {
 		assetsFS, _ = fs.Sub(assets, "assets")
@@ -912,7 +922,7 @@ func Run(ctx context.Context, a *app.App, o Options) error {
 		o.Started(s, adv)
 	}
 	if o.Ready != nil {
-		o.Ready(srv.URL, wasOpen)
+		o.Ready(srv.URL, wasOpen, pageSession)
 	}
 	err = srv.Wait()
 	cancel()          // serve is stopping: a push in flight ends, its commits stay queued

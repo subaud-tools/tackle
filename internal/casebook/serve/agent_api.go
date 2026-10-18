@@ -893,8 +893,10 @@ func buildJobBody(job apply.Job, user string) (string, error) {
 		job.ID, len(agentSteps))
 	b.WriteString("Work through each step in order. Check preconditions live before running.\n")
 
-	// Approving was the user's go: the agent starts now.
-	fmt.Fprintf(&b, "%s approved these steps: run them now.\n", user)
+	// Approving in casebook was the user's confirmation: the agent runs the
+	// steps without asking again in chat (Court, 2026-10-18).
+	fmt.Fprintf(&b, "%s approved these exact steps in casebook; that is their confirmation.\n", user)
+	b.WriteString("Do not ask again in chat: run them now, pausing a step only if its precondition fails.\n")
 
 	// List agent-lane steps.
 	if len(agentSteps) > 0 {

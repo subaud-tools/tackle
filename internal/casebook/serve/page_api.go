@@ -893,6 +893,10 @@ func (s *Server) getSessions(w http.ResponseWriter, r *http.Request) {
 		reply(w, SessionsView{Sessions: nonNil(ss)}, nil)
 		return
 	}
+	// A tab's dock asks for the one session it is attached to.
+	if v := q["session"]; len(v) == 1 && v[0] != "" && !strings.Contains(v[0], ",") {
+		s.setPageSession(r.Context(), v[0])
+	}
 	named := map[string]bool{}
 	for _, v := range q["session"] {
 		for _, id := range strings.Split(v, ",") {

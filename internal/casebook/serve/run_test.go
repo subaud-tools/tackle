@@ -77,13 +77,20 @@ func TestStaleAdvertIsNotRunning(t *testing.T) {
 // runOnce starts serve, returns its advert and whether it was told the page
 // was open, and a stop function.
 func runOnce(t *testing.T, r *apptest.Rig, opened *[]string) (Advert, bool, func()) {
+	adv, was, _, stop := runOnceSession(t, r, opened)
+	return adv, was, stop
+}
+
+// runOnceSession is runOnce, with the agent the reopened page is attached to.
+func runOnceSession(t *testing.T, r *apptest.Rig, opened *[]string) (Advert, bool, string, func()) {
 	t.Helper()
 	started := make(chan Advert, 1)
 	was := make(chan bool, 1)
+	sess := make(chan string, 1)
 	errc := make(chan error, 1)
 	go func() {
 		errc <- Run(context.Background(), r.App, Options{Version: "test",
-			Ready:   func(_ string, pageWasOpen bool) { was <- pageWasOpen },
+			Ready:   func(_ string, pageWasOpen bool, session string) { was <- pageWasOpen; sess <- session },
 			Open:    func(url string) error { *opened = append(*opened, url); return nil },
 			Started: func(_ *Server, a Advert) { started <- a }})
 	}()
@@ -95,11 +102,32 @@ func runOnce(t *testing.T, r *apptest.Rig, opened *[]string) (Advert, bool, func
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not start")
 	}
-	return adv, <-was, func() {
+	return adv, <-was, <-sess, func() {
 		if err := Stop(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		<-errc
+	}
+}
+
+// TestRestartReopensThePageForItsAgent (Court, 2026-10-18: every restart left
+// the page with no agent): the page an agent's tab had open is reopened for
+// that agent, so the tab can still run what Court approves.
+func TestRestartReopensThePageForItsAgent(t *testing.T) {
+	r := apptest.New(t)
+	var opened []string
+	adv, _, _, stop := runOnceSession(t, r, &opened)
+	closeTab := stream(t, adv.Base, adv.Token)
+	defer closeTab()
+	time.Sleep(100 * time.Millisecond)
+	if c := call(t, adv, "GET", "/api/sessions?session=s1"); c != http.StatusOK {
+		t.Fatalf("sessions: %d", c)
+	}
+	stop()
+	_, was, sess, stop := runOnceSession(t, r, &opened)
+	defer stop()
+	if !was || sess != "s1" {
+		t.Fatalf("restart reopened %v for %q, want the page for s1", was, sess)
 	}
 }
 

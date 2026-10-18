@@ -34,8 +34,13 @@ func TestBuildJobBodyTellsAgentToStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildJobBody: %v", err)
 	}
-	if want := "schuettc approved these steps: run them now."; !strings.Contains(body, want) {
-		t.Errorf("job body missing %q; got:\n%s", want, body)
+	for _, want := range []string{
+		"schuettc approved these exact steps in casebook; that is their confirmation.",
+		"Do not ask again in chat: run them now, pausing a step only if its precondition fails.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("job body missing %q; got:\n%s", want, body)
+		}
 	}
 	if strings.Contains(body, "batch") {
 		t.Errorf("job body still names a batch:\n%s", body)
@@ -374,7 +379,7 @@ func TestAgentTextNamesTheConfiguredUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for user, want := range map[string]string{"lena": "lena approved these steps: run them now.", "": "the user approved these steps: run them now."} {
+	for user, want := range map[string]string{"lena": "lena approved these exact steps in casebook; that is their confirmation.", "": "the user approved these exact steps in casebook; that is their confirmation."} {
 		r.App.Cfg.User = user
 		body, err := buildJobBody(job, r.s.userName())
 		if err != nil {
