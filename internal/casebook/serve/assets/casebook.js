@@ -6375,8 +6375,11 @@ function makeDecide(ctx) {
   async function navGo(which) {
     const key = currentOpenKey;
     if (!key) return;
-    let target2 = navTargets(navOrder(), navGroups(), key)[which];
     const ahead = which === "next" || which === "nextGroup";
+    if (which === "nextGroup" || which === "prevGroup" || atGroupEdge(key, ahead))
+      await openNeighbour(key, ahead);
+    if (currentOpenKey !== key) return;
+    let target2 = navTargets(navOrder(), navGroups(), key)[which];
     while (!target2 && ahead && offset < totalItems) {
       const before2 = offset;
       if (reloading) await reload();
@@ -6392,6 +6395,34 @@ function makeDecide(ctx) {
       setRows();
     }
     openKey(target2);
+  }
+  function atGroupEdge(key, ahead) {
+    const order = navOrder();
+    const i = order.findIndex((r) => r.key === key);
+    if (i < 0) return false;
+    const g = order[i].group;
+    if (!ahead) return i === 0 || order[i - 1].group !== g;
+    if (i + 1 < order.length && order[i + 1].group === g) return false;
+    const total = navGroups().find((x) => x.id === g)?.total ?? 0;
+    return order.filter((r) => r.group === g).length >= total;
+  }
+  async function openNeighbour(key, ahead) {
+    if (flat) return false;
+    const cur = navOrder().find((r) => r.key === key)?.group;
+    if (cur === void 0) return false;
+    const gs = navGroups();
+    const at2 = gs.findIndex((g) => g.id === cur);
+    if (at2 < 0) return false;
+    for (let i = at2 + (ahead ? 1 : -1); i >= 0 && i < gs.length; i += ahead ? 1 : -1) {
+      const g = gs[i];
+      if (g.total <= 0 || g.id === LEFT_OPEN && offset < totalItems) continue;
+      if (opened.has(g.id)) return false;
+      opened.add(g.id);
+      if (g.id === LEFT_OPEN) setRows();
+      else await reload();
+      return true;
+    }
+    return false;
   }
   function know(items) {
     for (const it of items) {

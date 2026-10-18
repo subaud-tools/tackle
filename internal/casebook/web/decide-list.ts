@@ -1122,9 +1122,10 @@ export function makeDecide(ctx: Ctx): Section {
 
   // ---- « ‹ › »: the open item's place in the list ---------------------------
 
-  // navOrder is the list's loaded rows in group order, a collapsed group's
-  // included, the left-open group last once every page is loaded. Flat,
-  // the rows are one group (the view).
+  // navOrder is the list's loaded rows in group order: serve sends only the
+  // open groups' rows (openNeighbour opens a collapsed one to move into),
+  // the left-open group last once every page is loaded. Flat, the rows are
+  // one group (the view).
   function navOrder(): { key: string; group: string }[] {
     const rows = loadedItems.map((it) => ({
       key: it.key,
@@ -1261,8 +1262,19 @@ export function makeDecide(ctx: Ctx): Section {
   async function navGo(which: NavWhich): Promise<void> {
     const key = currentOpenKey;
     if (!key) return;
-    let target = navTargets(navOrder(), navGroups(), key)[which];
     const ahead = which === 'next' || which === 'nextGroup';
+    // Groups start collapsed and serve sends only the open ones' rows: a
+    // move out of key's group into a collapsed neighbour (in serve's order)
+    // opens it and loads its rows first, so the move lands there and not in
+    // the next open group after it.
+    if (
+      which === 'nextGroup' ||
+      which === 'prevGroup' ||
+      atGroupEdge(key, ahead)
+    )
+      await openNeighbour(key, ahead);
+    if (currentOpenKey !== key) return;
+    let target = navTargets(navOrder(), navGroups(), key)[which];
     while (!target && ahead && offset < totalItems) {
       const before = offset;
       if (reloading) await reload();
@@ -1278,6 +1290,45 @@ export function makeDecide(ctx: Ctx): Section {
       setRows();
     }
     openKey(target);
+  }
+
+  // atGroupEdge: key is its group's last row (ahead: every one of its rows
+  // loaded) or first row, so › or ‹ leaves the group.
+  function atGroupEdge(key: string, ahead: boolean): boolean {
+    const order = navOrder();
+    const i = order.findIndex((r) => r.key === key);
+    if (i < 0) return false;
+    const g = order[i].group;
+    if (!ahead) return i === 0 || order[i - 1].group !== g;
+    if (i + 1 < order.length && order[i + 1].group === g) return false;
+    const total = navGroups().find((x) => x.id === g)?.total ?? 0;
+    return order.filter((r) => r.group === g).length >= total;
+  }
+
+  // openNeighbour opens the group next to key's (after it ahead, else
+  // before) in serve's order when it is collapsed and has items, and loads
+  // its rows. false when the neighbour is open, empty or there is none.
+  async function openNeighbour(key: string, ahead: boolean): Promise<boolean> {
+    if (flat) return false;
+    const cur = navOrder().find((r) => r.key === key)?.group;
+    if (cur === undefined) return false;
+    const gs = navGroups();
+    const at = gs.findIndex((g) => g.id === cur);
+    if (at < 0) return false;
+    for (
+      let i = at + (ahead ? 1 : -1);
+      i >= 0 && i < gs.length;
+      i += ahead ? 1 : -1
+    ) {
+      const g = gs[i];
+      if (g.total <= 0 || (g.id === LEFT_OPEN && offset < totalItems)) continue;
+      if (opened.has(g.id)) return false;
+      opened.add(g.id);
+      if (g.id === LEFT_OPEN) setRows();
+      else await reload();
+      return true;
+    }
+    return false;
   }
 
   // ---- the groups ------------------------------------------------------------
