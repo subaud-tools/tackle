@@ -184,8 +184,8 @@ async function overlayKeys(t, pg) {
   return keys.sort();
 }
 
-// The keys every section lists: the switches and the dock's.
-const PAGE_KEYS = ['g d', 'g a', '.', '\u2318\u21b5'];
+// The keys every section lists: the switches, the walkthrough and the dock's.
+const PAGE_KEYS = ['g d', 'g a', 'g w', '.', '\u2318\u21b5'];
 const MOVE_OPEN = ['j', '\u2193', 'k', '\u2191', 'o', '\u21b5'];
 const SELECT = ['x', '\u21e7x'];
 const FAMILY = ['?', 'Esc'];
