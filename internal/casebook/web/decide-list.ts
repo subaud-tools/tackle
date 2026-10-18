@@ -546,14 +546,20 @@ export function makeDecide(ctx: Ctx): Section {
   let filterRows: FilterRow[] = [];
   const filterBar = makeFilterBar(ctx, {
     onSelect(ids, clicked) {
+      // A chip clicked while an editor is open ends it first.
+      if (draft !== null) closeFilterEditor(false);
       shownFilter = ids.includes(clicked) ? clicked : null;
       selectFilters(ids);
     },
     onOpen(row) {
       if (draft !== null) closeFilterEditor(true);
-      if (currentOpenKey) goList();
       shownFilter = row.filter.id;
-      showReadEmpty();
+      // A selected rule has the middle pane: drop it so the filter shows.
+      if (filters.rule) selectRule(null);
+      else {
+        if (currentOpenKey) goList();
+        showReadEmpty();
+      }
     },
     onNew() {
       openFilterEditor(null);
@@ -567,6 +573,8 @@ export function makeDecide(ctx: Ctx): Section {
   let ruleRows: RuleRow[] = [];
   const ruleRow = makeRuleRow(ctx, {
     onSelect(id) {
+      // A chip clicked while an editor is open ends it first.
+      if (draft !== null) closeFilterEditor(false);
       selectRule(id);
     },
     onNew() {

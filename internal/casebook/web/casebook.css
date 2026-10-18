@@ -2750,13 +2750,15 @@ button.cb-cond-menu-row[aria-disabled='true'] {
 }
 
 /* The rules row, under the filters and drawn as they are; an off rule's
- * chip is muted. */
+ * chip is dashed, and dimmed unless selected. */
 .cb-rule-row {
   margin-top: 8px;
 }
+.cb-rule-chip.kit-chip.cb-rule-off {
+  border-style: dashed;
+}
 .cb-rule-chip.kit-chip.cb-rule-off:not(.on) {
   opacity: 0.5;
-  border-style: dashed;
 }
 /* The rule editor's propose line and the rule card. */
 .cb-rule-propose {

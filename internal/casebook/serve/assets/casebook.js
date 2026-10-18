@@ -5766,14 +5766,18 @@ function makeDecide(ctx) {
   let filterRows = [];
   const filterBar = makeFilterBar(ctx, {
     onSelect(ids, clicked) {
+      if (draft !== null) closeFilterEditor(false);
       shownFilter = ids.includes(clicked) ? clicked : null;
       selectFilters(ids);
     },
     onOpen(row) {
       if (draft !== null) closeFilterEditor(true);
-      if (currentOpenKey) goList();
       shownFilter = row.filter.id;
-      showReadEmpty();
+      if (filters.rule) selectRule(null);
+      else {
+        if (currentOpenKey) goList();
+        showReadEmpty();
+      }
     },
     onNew() {
       openFilterEditor(null);
@@ -5782,6 +5786,7 @@ function makeDecide(ctx) {
   let ruleRows = [];
   const ruleRow = makeRuleRow(ctx, {
     onSelect(id) {
+      if (draft !== null) closeFilterEditor(false);
       selectRule(id);
     },
     onNew() {
