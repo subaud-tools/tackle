@@ -2977,3 +2977,26 @@ button.cb-cond-menu-row[aria-disabled='true'] {
   flex: 0 1 220px;
   min-width: 0;
 }
+
+/* review: a waiting group's header names it ("repos · Delete it"); a
+ * click opens its review, where the one button that runs it is. */
+.cb-group-namebtn {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.cb-group-namebtn .cb-group-label {
+  font-weight: 600;
+  color: var(--kit-fg);
+}
+.cb-group-namebtn .cb-group-choice {
+  font: 12px var(--kit-mono);
+  color: var(--kit-muted);
+}
+.cb-group-namebtn:hover .cb-group-label,
+.cb-group-namebtn:focus-visible .cb-group-label {
+  text-decoration: underline;
+}

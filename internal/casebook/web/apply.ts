@@ -232,6 +232,9 @@ export function makeApply(ctx: Ctx): Section {
   // opened, the group open, the items it was opened for and serve's plan.
   let wantGroup = '';
   let reviewGroup = '';
+  let followTimer: ReturnType<typeof setTimeout> | null = null;
+  const sameKeys = (a: string[], b: string[]): boolean =>
+    a.length === b.length && a.every((k, i) => k === b[i]);
   let reviewKeys: string[] = [];
   let reviewView: PlanView | null = null;
   // serve's words when the group's plan wasn't built (nothing to plan, an
@@ -295,6 +298,19 @@ export function makeApply(ctx: Ctx): Section {
   const held = () => startedKeys(jobs);
   const order = () => runOrder(jobs);
 
+  // groupName is a waiting group's kind, plural ("repos"); choiceOf its
+  // decision as decide words it ("Delete it").
+  const groupName = (g: GroupView): string => {
+    const kind = g.id.slice(g.id.indexOf('|') + 1);
+    return kindVocab(kind)?.nouns ?? kind;
+  };
+  const choiceOf = (g: GroupView): string => {
+    const kind = g.id.slice(g.id.indexOf('|') + 1);
+    return (
+      kindVocab(kind)?.choices?.find((c) => c.disposition === g.disposition)
+        ?.label ?? g.disposition
+    );
+  };
   // titleOf names a plan with its counts, in serve's nouns: "Delete 7 repos".
   const titleOf = (j: Job): string =>
     planTitle(j, (kind) => {
@@ -373,6 +389,15 @@ export function makeApply(ctx: Ctx): Section {
     },
     onSelect() {
       paintHeads();
+      // The open review follows the ticks in its group.
+      if (mode !== 'review' || !reviewGroup) return;
+      const g = groups.find((x) => x.id === reviewGroup);
+      if (!g) return;
+      if (followTimer) clearTimeout(followTimer);
+      followTimer = setTimeout(() => {
+        followTimer = null;
+        if (reviewGroup === g.id) void openGroup(g, true);
+      }, 250);
     },
     foot,
   });
@@ -571,18 +596,22 @@ export function makeApply(ctx: Ctx): Section {
         'aria-checked',
         !ticked.length ? 'false' : ticked.length === all ? 'true' : 'mixed',
       );
-      const n = ticked.length || p.n;
+      // The group's name (what is in it, and its decision in serve's
+      // words), which opens its review: the one button that runs it is
+      // there, named for the action.
       const bs: HTMLElement[] = [
         h(
           'button',
           {
             type: 'button',
-            class: 'kit-btn fill cb-group-plan',
+            class: 'cb-group-plan cb-group-namebtn',
+            title: 'review these',
             onclick() {
               openFromHead(g);
             },
           },
-          `${labelFor(g, n)}\u2026`,
+          h('span', { class: 'cb-group-label' }, groupName(g)),
+          h('span', { class: 'cb-group-choice' }, choiceOf(g)),
         ),
       ];
       if (ticked.length && vocab?.untick)
@@ -973,15 +1002,19 @@ export function makeApply(ctx: Ctx): Section {
   // openGroup builds serve's plan for group g's ticked items, or every item
   // of it that waits (every page: fetched when the list hasn't them all),
   // and shows it. serve reuses the plan it built for exactly these items.
-  async function openGroup(g: GroupView): Promise<void> {
+  // follow (a tick changed while g is open) keeps what is shown until the
+  // new plan is in, so the review follows the ticks without a flash.
+  async function openGroup(g: GroupView, follow = false): Promise<void> {
     reviewGroup = g.id;
-    reviewView = null;
+    if (!follow) reviewView = null;
     reviewNote = '';
     refusal = '';
     note = '';
-    if (collapsed.has(g.id)) collapsed.delete(g.id);
-    paintList();
-    focusHead(g.id);
+    if (!follow) {
+      if (collapsed.has(g.id)) collapsed.delete(g.id);
+      paintList();
+      focusHead(g.id);
+    }
     const mine = planSeq.next();
     let keys = tickedIn(g);
     if (!keys.length) {
@@ -998,8 +1031,9 @@ export function makeApply(ctx: Ctx): Section {
       }
     }
     if (!planSeq.isLatest(mine)) return;
+    if (follow && sameKeys(keys, reviewKeys)) return;
     reviewKeys = keys;
-    drawReview();
+    if (!follow) drawReview();
     if (!keys.length) return;
     opening = true;
     try {
@@ -1514,8 +1548,8 @@ export function makeApply(ctx: Ctx): Section {
         return syncing
           ? null
           : { label: 'Sync first', run: () => void syncFirst() };
-      const rc = runCheck();
-      return rc?.can ? { label: titleOf(rc.v.job), run: runGroup } : null;
+      // The one button that runs it is in the review, not the bar too.
+      return null;
     }
     if (open && openId !== null && isRunning(open.job)) {
       return open.job.paused

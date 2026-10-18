@@ -1797,6 +1797,8 @@ function makeApply(ctx) {
   let active = false;
   let wantGroup = "";
   let reviewGroup = "";
+  let followTimer = null;
+  const sameKeys = (a, b) => a.length === b.length && a.every((k, i) => k === b[i]);
   let reviewKeys = [];
   let reviewView = null;
   let reviewNote = "";
@@ -1836,6 +1838,14 @@ function makeApply(ctx) {
   const foot = h4("div", { class: "cb-apply-foot" }, obsEl);
   const held = () => startedKeys(jobs);
   const order = () => runOrder(jobs);
+  const groupName = (g) => {
+    const kind = g.id.slice(g.id.indexOf("|") + 1);
+    return kindVocab(kind)?.nouns ?? kind;
+  };
+  const choiceOf = (g) => {
+    const kind = g.id.slice(g.id.indexOf("|") + 1);
+    return kindVocab(kind)?.choices?.find((c) => c.disposition === g.disposition)?.label ?? g.disposition;
+  };
   const titleOf = (j) => planTitle(j, (kind) => {
     const kv = kindVocab(kind);
     return kv ? [kv.noun, kv.nouns] : [kind, `${kind}s`];
@@ -1899,6 +1909,14 @@ function makeApply(ctx) {
     },
     onSelect() {
       paintHeads();
+      if (mode !== "review" || !reviewGroup) return;
+      const g = groups.find((x) => x.id === reviewGroup);
+      if (!g) return;
+      if (followTimer) clearTimeout(followTimer);
+      followTimer = setTimeout(() => {
+        followTimer = null;
+        if (reviewGroup === g.id) void openGroup(g, true);
+      }, 250);
     },
     foot
   });
@@ -2056,18 +2074,19 @@ function makeApply(ctx) {
         "aria-checked",
         !ticked.length ? "false" : ticked.length === all ? "true" : "mixed"
       );
-      const n = ticked.length || p.n;
       const bs = [
         h4(
           "button",
           {
             type: "button",
-            class: "kit-btn fill cb-group-plan",
+            class: "cb-group-plan cb-group-namebtn",
+            title: "review these",
             onclick() {
               openFromHead(g);
             }
           },
-          `${labelFor(g, n)}…`
+          h4("span", { class: "cb-group-label" }, groupName(g)),
+          h4("span", { class: "cb-group-choice" }, choiceOf(g))
         )
       ];
       if (ticked.length && vocab2?.untick)
@@ -2385,15 +2404,17 @@ function makeApply(ctx) {
     drawReview();
     feed();
   }
-  async function openGroup(g) {
+  async function openGroup(g, follow = false) {
     reviewGroup = g.id;
-    reviewView = null;
+    if (!follow) reviewView = null;
     reviewNote = "";
     refusal = "";
     note = "";
-    if (collapsed.has(g.id)) collapsed.delete(g.id);
-    paintList();
-    focusHead(g.id);
+    if (!follow) {
+      if (collapsed.has(g.id)) collapsed.delete(g.id);
+      paintList();
+      focusHead(g.id);
+    }
     const mine = planSeq.next();
     let keys = tickedIn(g);
     if (!keys.length) {
@@ -2410,8 +2431,9 @@ function makeApply(ctx) {
       }
     }
     if (!planSeq.isLatest(mine)) return;
+    if (follow && sameKeys(keys, reviewKeys)) return;
     reviewKeys = keys;
-    drawReview();
+    if (!follow) drawReview();
     if (!keys.length) return;
     opening = true;
     try {
@@ -2861,8 +2883,7 @@ function makeApply(ctx) {
     if (mode === "review") {
       if (refusal)
         return syncing ? null : { label: "Sync first", run: () => void syncFirst() };
-      const rc = runCheck();
-      return rc?.can ? { label: titleOf(rc.v.job), run: runGroup } : null;
+      return null;
     }
     if (open && openId !== null && isRunning(open.job)) {
       return open.job.paused ? { label: "Resume", run: pauseOrResume } : { label: "Pause job", run: pauseOrResume };
