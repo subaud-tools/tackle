@@ -2639,13 +2639,9 @@ function makeApply(ctx) {
         { class: "kit-kick" },
         discarded ? `plan · job #${j.id} · ${j.machine} · discarded` : `plan · job #${j.id} · ${j.machine} · built ${builtAgo(j.created_at)}`
       ),
-      h4("h1", { class: "kit-h1" }, titleOf(j)),
-      facts([
-        ["steps", String(steps.length)],
-        ["local", String(steps.filter((s) => s.lane !== "agent").length)],
-        ["outward", String(steps.filter((s) => s.lane === "agent").length)]
-      ])
+      h4("h1", { class: "kit-h1" }, titleOf(j))
     );
+    if (steps.length && !discarded) doc.append(approveBlock(j));
     if (!steps.length && !discarded) {
       doc.append(
         h4(
@@ -2705,7 +2701,7 @@ function makeApply(ctx) {
           "This plan was discarded before it was approved: nothing in it ran."
         )
       );
-    } else doc.append(approveBlock(j));
+    }
     return doc;
   }
   function discardButtons(j) {
@@ -2714,13 +2710,24 @@ function makeApply(ctx) {
   function approveBlock(j) {
     const steps = j.steps ?? [];
     const outward = steps.filter((s) => s.lane === "agent").length;
+    const permanent = steps.some((s) => s.permanent);
     const el2 = h4("div", { class: "cb-approve", "data-testid": "approve" });
-    el2.append(h4("h3", { class: "kit-label" }, "approve"));
-    const bs = [];
+    el2.append(
+      h4(
+        "p",
+        { class: "cb-approve-what" },
+        `${planSummary(steps)}${outward ? "" : ", all local"}.`,
+        permanent ? h4("span", { class: "cb-approve-warn" }, " Cannot be undone.") : null
+      )
+    );
+    const row = h4("div", { class: "cb-approve-row" });
+    const approveLabel = permanent ? "approve and run…" : "approve and run";
+    let can = true;
     if (needsSession(steps)) {
       const ps = present();
       const chosen = planSession();
       if (!ps.length) {
+        can = false;
         el2.append(
           h4(
             "p",
@@ -2729,69 +2736,58 @@ function makeApply(ctx) {
           )
         );
       } else {
-        el2.append(
-          h4(
-            "p",
-            { class: "cb-approve-what" },
-            `${planSummary(steps)}. ${outwardGo(outward)} to:`
-          ),
-          h4(
-            "div",
-            {
-              class: "cb-sessions",
-              role: "radiogroup",
-              "aria-label": "session",
-              "data-testid": "session-picker"
-            },
-            ...ps.map(
-              (s) => h4(
-                "button",
-                {
-                  type: "button",
-                  role: "radio",
-                  class: "kit-chip cb-session" + (s.id === chosen ? " on" : ""),
-                  "aria-checked": String(s.id === chosen),
-                  "data-session": s.id,
-                  title: sessionMeta(s),
-                  onclick() {
-                    courtSession = s.id;
-                    note = "";
-                    drawOpen();
-                    if (active) ctx.setPrimary(primary());
-                  }
-                },
-                sessionTitle(s)
-              )
+        can = !!chosen;
+        const pick = h4(
+          "select",
+          {
+            class: "cb-session-pick",
+            "aria-label": "runs through",
+            "data-testid": "session-picker",
+            onchange(e) {
+              courtSession = e.target.value;
+              note = "";
+              drawOpen();
+              if (active) ctx.setPrimary(primary());
+            }
+          },
+          ...chosen ? [] : [
+            h4(
+              "option",
+              { value: "", selected: true },
+              "choose an agent…"
+            )
+          ],
+          ...ps.map(
+            (s) => h4(
+              "option",
+              {
+                value: s.id,
+                selected: s.id === chosen,
+                title: sessionMeta(s),
+                "data-session": s.id
+              },
+              sessionTitle(s)
             )
           )
         );
-        if (!chosen) {
-          el2.append(
-            h4(
-              "p",
-              { class: "cb-approve-none", "data-testid": "pick-session" },
-              `${ps.length} sessions are here and none is chosen yet.`
-            )
-          );
-        } else
-          bs.push({
-            label: "approve and run",
-            fill: true,
-            run: () => approve()
-          });
+        row.append(
+          h4("span", { class: "cb-approve-lab" }, "runs through"),
+          pick
+        );
       }
-    } else {
-      el2.append(
-        h4(
-          "p",
-          { class: "cb-approve-what" },
-          `${planSummary(steps)}, all local.`
-        )
-      );
-      bs.push({ label: "approve and run", fill: true, run: () => approve() });
     }
-    bs.push({ label: "discard", run: () => void discard(j.id) });
-    el2.append(buttons2(bs));
+    row.append(
+      buttons2([
+        {
+          label: approveLabel,
+          fill: true,
+          disabled: !can,
+          run: () => approve()
+        },
+        { label: "discard", run: () => void discard(j.id) }
+      ])
+    );
+    el2.append(row);
     if (note)
       el2.append(h4("p", { class: "cb-apply-note", role: "status" }, note));
     return el2;

@@ -2392,3 +2392,39 @@ button.cb-cond-menu-row[aria-disabled=true] {
   max-height: 320px;
   overflow: auto;
 }
+.cb-plan .cb-approve {
+  margin: 4px 0 26px;
+}
+.cb-approve-warn {
+  color: var(--kit-danger);
+  font-weight: 600;
+}
+.cb-approve-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--kit-line);
+  border-radius: 8px;
+  background: var(--kit-card);
+}
+.cb-approve-row .kit-btns {
+  margin: 0 0 0 auto;
+  flex: 0 0 auto;
+}
+.cb-approve-lab {
+  white-space: nowrap;
+  font: 12px var(--kit-mono);
+  color: var(--kit-muted);
+}
+.cb-session-pick {
+  font: 13px var(--kit-mono);
+  color: var(--kit-fg);
+  background: var(--kit-bg);
+  border: 1px solid var(--kit-line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  flex: 0 1 220px;
+  min-width: 0;
+}

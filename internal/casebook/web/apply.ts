@@ -1284,12 +1284,10 @@ export function makeApply(ctx: Ctx): Section {
           : `plan \u00b7 job #${j.id} \u00b7 ${j.machine} \u00b7 built ${builtAgo(j.created_at)}`,
       ),
       h('h1', { class: 'kit-h1' }, titleOf(j)),
-      facts([
-        ['steps', String(steps.length)],
-        ['local', String(steps.filter((s) => s.lane !== 'agent').length)],
-        ['outward', String(steps.filter((s) => s.lane === 'agent').length)],
-      ]),
     );
+    // What it does, then the decision: right under the title (Court,
+    // 2026-10-17), the commands below as the detail.
+    if (steps.length && !discarded) doc.append(approveBlock(j));
     if (!steps.length && !discarded) {
       doc.append(
         h(
@@ -1353,7 +1351,7 @@ export function makeApply(ctx: Ctx): Section {
           'This plan was discarded before it was approved: nothing in it ran.',
         ),
       );
-    } else doc.append(approveBlock(j));
+    }
     return doc;
   }
 
@@ -1366,13 +1364,28 @@ export function makeApply(ctx: Ctx): Section {
   function approveBlock(j: Job): HTMLElement {
     const steps = j.steps ?? [];
     const outward = steps.filter((s) => s.lane === 'agent').length;
+    const permanent = steps.some((s) => s.permanent);
     const el = h('div', { class: 'cb-approve', 'data-testid': 'approve' });
-    el.append(h('h3', { class: 'kit-label' }, 'approve'));
-    const bs: Button[] = [];
+    el.append(
+      h(
+        'p',
+        { class: 'cb-approve-what' },
+        `${planSummary(steps)}${outward ? '' : ', all local'}.`,
+        permanent
+          ? h('span', { class: 'cb-approve-warn' }, ' Cannot be undone.')
+          : null,
+      ),
+    );
+    const row = h('div', { class: 'cb-approve-row' });
+    const approveLabel = permanent
+      ? 'approve and run\u2026'
+      : 'approve and run';
+    let can = true;
     if (needsSession(steps)) {
       const ps = present();
       const chosen = planSession();
       if (!ps.length) {
+        can = false;
         el.append(
           h(
             'p',
@@ -1381,69 +1394,62 @@ export function makeApply(ctx: Ctx): Section {
           ),
         );
       } else {
-        el.append(
-          h(
-            'p',
-            { class: 'cb-approve-what' },
-            `${planSummary(steps)}. ${outwardGo(outward)} to:`,
-          ),
-          h(
-            'div',
-            {
-              class: 'cb-sessions',
-              role: 'radiogroup',
-              'aria-label': 'session',
-              'data-testid': 'session-picker',
+        can = !!chosen;
+        // The sessions here, as one menu (it starts on the one the page is
+        // with, or the only one); none chosen, it asks.
+        const pick = h(
+          'select',
+          {
+            class: 'cb-session-pick',
+            'aria-label': 'runs through',
+            'data-testid': 'session-picker',
+            onchange(e: Event) {
+              courtSession = (e.target as HTMLSelectElement).value;
+              note = '';
+              drawOpen();
+              if (active) ctx.setPrimary(primary());
             },
-            ...ps.map((s) =>
-              h(
-                'button',
-                {
-                  type: 'button',
-                  role: 'radio',
-                  class: 'kit-chip cb-session' + (s.id === chosen ? ' on' : ''),
-                  'aria-checked': String(s.id === chosen),
-                  'data-session': s.id,
-                  title: sessionMeta(s),
-                  onclick() {
-                    courtSession = s.id;
-                    note = '';
-                    drawOpen();
-                    if (active) ctx.setPrimary(primary());
-                  },
-                },
-                sessionTitle(s),
-              ),
+          },
+          ...(chosen
+            ? []
+            : [
+                h(
+                  'option',
+                  { value: '', selected: true },
+                  'choose an agent\u2026',
+                ),
+              ]),
+          ...ps.map((s) =>
+            h(
+              'option',
+              {
+                value: s.id,
+                selected: s.id === chosen,
+                title: sessionMeta(s),
+                'data-session': s.id,
+              },
+              sessionTitle(s),
             ),
           ),
         );
-        if (!chosen) {
-          el.append(
-            h(
-              'p',
-              { class: 'cb-approve-none', 'data-testid': 'pick-session' },
-              `${ps.length} sessions are here and none is chosen yet.`,
-            ),
-          );
-        } else
-          bs.push({
-            label: 'approve and run',
-            fill: true,
-            run: () => approve(),
-          });
+        row.append(
+          h('span', { class: 'cb-approve-lab' }, 'runs through'),
+          pick,
+        );
       }
-    } else {
-      el.append(
-        h(
-          'p',
-          { class: 'cb-approve-what' },
-          `${planSummary(steps)}, all local.`,
-        ),
-      );
-      bs.push({ label: 'approve and run', fill: true, run: () => approve() });
     }
-    bs.push({ label: 'discard', run: () => void discard(j.id) });
-    el.append(buttons(bs));
+    row.append(
+      buttons([
+        {
+          label: approveLabel,
+          fill: true,
+          disabled: !can,
+          run: () => approve(),
+        },
+        { label: 'discard', run: () => void discard(j.id) },
+      ]),
+    );
+    el.append(row);
     if (note)
       el.append(h('p', { class: 'cb-apply-note', role: 'status' }, note));
     return el;
