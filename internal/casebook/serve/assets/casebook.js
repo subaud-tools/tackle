@@ -1909,13 +1909,18 @@ function makeApply(ctx) {
     },
     onSelect() {
       paintHeads();
-      if (mode !== "review" || !reviewGroup) return;
-      const g = groups.find((x) => x.id === reviewGroup);
-      if (!g) return;
+      if (mode !== "review") return;
+      let g = reviewGroup ? groups.find((x) => x.id === reviewGroup) : void 0;
+      if (!g) {
+        g = groups.find((x) => tickedIn(x).length > 0);
+        if (!g) return;
+      }
       if (followTimer) clearTimeout(followTimer);
       followTimer = setTimeout(() => {
         followTimer = null;
+        if (!g) return;
         if (reviewGroup === g.id) void openGroup(g, true);
+        else if (!reviewGroup) openFromHead(g);
       }, 250);
     },
     foot
@@ -2657,7 +2662,7 @@ function makeApply(ctx) {
           h4(
             "p",
             null,
-            "A group's button opens it here: the exact command for each item, where it runs and whether it can be undone. Nothing runs until you press its button there; then it runs in run. This machine applies what is on it; GitHub steps run once, from whichever machine runs them."
+            "Click a group's name, or tick items in it, to review it here: the exact command for each item, where it runs and whether it can be undone. Nothing runs until you press its button there; then it runs in run. This machine applies what is on it; GitHub steps run once, from whichever machine runs them."
           )
         )
       );
