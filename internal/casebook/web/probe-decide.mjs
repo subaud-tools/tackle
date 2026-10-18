@@ -1770,6 +1770,17 @@ async function groupsScenario(context, t, s) {
       { sel: groupSel(''), w: 'asked agent' },
     ),
   );
+  // Another search is another list (review 2026-10-17): the agent wasn't
+  // asked about it, so the offer is back.
+  await pg.fill('.kit-search', 'schuettc');
+  check(
+    'searching narrows to another list, and its not recommended offer "ask agent to suggest rules" again',
+    await until(
+      pg,
+      (sel) => !!document.querySelector(`${sel} .cb-group-ask`),
+      groupSel(''),
+    ),
+  );
   clearInterval(beating);
   await pg.close();
 }

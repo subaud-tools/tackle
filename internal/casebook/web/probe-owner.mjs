@@ -829,6 +829,19 @@ export async function ownerScenarios(context, t) {
             g0.opener.includes('agent') &&
             !g0.opener.includes('tools-workspace/pane'),
         );
+        // An item is open while it arrives (review 2026-10-17): the item
+        // keeps its width and its decide row its height.
+        const itemBox = () =>
+          pg.evaluate(() => {
+            const r = (q) => {
+              const b = document.querySelector(q)?.getBoundingClientRect();
+              return b ? `${b.left}+${b.width} h${b.height}` : 'none';
+            };
+            return `item ${r('.cb-item')} row ${r('.cb-decide-row')}`;
+          });
+        await pg.click('.kit-app > .kit-list .kit-rows > .kit-row');
+        await pg.waitForSelector('.cb-item .cb-decide-row', { timeout: 8000 });
+        const item0 = await itemBox();
         // A message arrives (from another tab): the pane opens to its full
         // width, and nothing left of the reading column moves.
         await agent.postMessage(threadP.id, 'from another tab');
@@ -863,6 +876,13 @@ export async function ownerScenarios(context, t) {
             g0.bar.top === g1.bar.top &&
             g0.bar.width === g1.bar.width,
         );
+        {
+          const item1 = await itemBox();
+          check(
+            `the open item doesn't move or rewrap when the pane opens (${item0} then ${item1})`,
+            item0 === item1,
+          );
+        }
         await pg.click('.cb-dock-collapse');
         const shut = await until(
           pg,

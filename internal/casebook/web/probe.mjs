@@ -1879,6 +1879,21 @@ async function composerScenariosOn(context, serveHandle) {
         'the line never names a section',
         !(await line()).startsWith('section'),
       );
+      // A new rule's draft previewing (review 2026-10-17): the list shown
+      // is the draft's, and so is what goes with a message.
+      await pg.evaluate(() => {
+        location.hash = '#/decide';
+      });
+      await pg.click('[data-testid="new-rule"]');
+      check(
+        `a draft previewing: "attached: list \u00b7 draft \u2026" (${await line()})`,
+        await until(pg, () =>
+          (
+            document.querySelector('[data-testid="composer-attached"]')
+              ?.textContent ?? ''
+          ).startsWith('list \u00b7 draft'),
+        ),
+      );
     } finally {
       await pg.close();
     }
@@ -2649,7 +2664,7 @@ const applyHelpers = { check, checkList, until, eventually };
 // run() below is the scenario list. A full run (no PROBE_ONLY) must pass at
 // least MIN_CHECKS checks: a scenario that stops early, or is skipped, can't
 // leave the probe green. Raise it whenever checks are added.
-const MIN_CHECKS = 905;
+const MIN_CHECKS = 908;
 
 // PROBE_ONLY runs one group of scenarios, for working on them: a partial
 // run. It has to say so: under CI (the CI env var) it is refused outright,

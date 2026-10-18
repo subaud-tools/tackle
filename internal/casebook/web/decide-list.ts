@@ -315,20 +315,24 @@ export function makeDecide(ctx: Ctx): Section {
     const ids = selection.ids();
     if (ids.length > 0) ctx.setAttached({ keys: ids });
     else if (currentOpenKey) ctx.setAttached({ open: currentOpenKey });
+    // A draft previewing is what the list shows: its conditions go (and,
+    // editing a rule, which rule).
     else if (draft !== null && editing === 'rule' && editingId)
-      ctx.setAttached({ rule: editingId });
+      ctx.setAttached({ rule: editingId, list: listAttached() });
     else if (draft === null && !listShown && filters.rule)
       ctx.setAttached({ rule: filters.rule });
     else ctx.setAttached({ list: listAttached() });
   }
 
-  // listAttached is the list as it is narrowed (its saved filters, rule and
-  // search; group, one group of it), not its keys: what casebook_attention
-  // takes.
+  // listAttached is the list as it is narrowed (a draft's conditions, or
+  // its saved filters and rule; its search; group, one group of it), not
+  // its keys: what casebook_attention takes.
   function listAttached(group = ''): AttachedList {
     const l: AttachedList = {};
-    if (filters.filters.length) l.filters = [...filters.filters];
-    if (filters.rule) l.rule = filters.rule;
+    // A draft lists what it matches, as buildQuery asks for it.
+    if (draft !== null) l.match = JSON.stringify(draft);
+    else if (filters.filters.length) l.filters = [...filters.filters];
+    if (draft === null && filters.rule) l.rule = filters.rule;
     if (filters.q) l.q = filters.q;
     if (group) l.group = group;
     return l;
@@ -1508,9 +1512,14 @@ export function makeDecide(ctx: Ctx): Section {
         let ask: HTMLElement | null = null;
         let note: HTMLElement | null = null;
         if (t && n > 0) {
+          // Underway: serve says the row is being looked into, or (a
+          // row not loaded) this page asked this session about it.
           const rows = loadedItems.filter((it) => it.group === g.id);
-          const looked = ticked.every((k) =>
-            rows.some((it) => it.key === k && it.looking),
+          const looked = ticked.every(
+            (k) =>
+              rows.some((it) => it.key === k && it.looking) ||
+              (!rows.some((it) => it.key === k) &&
+                lookedInto.has(`${t.id}\n${k}`)),
           );
           ask = button(
             'fill cb-group-ask',
@@ -1519,7 +1528,7 @@ export function makeDecide(ctx: Ctx): Section {
             looked,
           );
         } else if (t && g.id === 'none' && !filtered()) {
-          if (asked === t.id)
+          if (asked === askedKey(t.id))
             note = h('span', { class: 'cb-group-note' }, vocab.asked);
           else ask = button('fill cb-group-ask', vocab.suggest_rules, askRules);
         }
@@ -1715,11 +1724,13 @@ export function makeDecide(ctx: Ctx): Section {
         '{keys}',
         keys.join(', '),
       );
+      const t = ctx.dockTarget();
       const why = await ctx.askSession(message, { keys }, 'look-into');
       if (why) {
         showReadError(why);
         return;
       }
+      if (t) for (const k of keys) lookedInto.add(`${t.id}\n${k}`);
       await reload();
     } catch (err) {
       showReadError(err instanceof Error ? err.message : String(err));
@@ -1794,10 +1805,16 @@ export function makeDecide(ctx: Ctx): Section {
 
   // ---- recommendations: ask, discard ----------------------------------------
 
-  // asked is the session this page asked to suggest rules: the
-  // not-recommended group's ask gives way to "asked agent" for it, so one
-  // click sends one message.
+  // asked is the session this page asked to suggest rules and the list it
+  // asked about: the not-recommended group's ask gives way to "asked
+  // agent" for that list, so one click sends one message; another search
+  // or filter is another list, and the offer is back.
   let asked = '';
+  const askedKey = (session: string): string =>
+    `${session}\n${JSON.stringify(listAttached('none'))}`;
+  // lookedInto is each session\nkey this page asked to recommend: a row
+  // not loaded (past the first pages) still counts as underway.
+  const lookedInto = new Set<string>();
   ctx.onDockTarget(() => paintAll());
 
   async function askRules(): Promise<void> {
@@ -1808,7 +1825,7 @@ export function makeDecide(ctx: Ctx): Section {
     });
     if (why) showReadError(why);
     else {
-      asked = t.id;
+      asked = askedKey(t.id);
       paintAll();
     }
   }

@@ -766,6 +766,7 @@ export interface AttachedList {
   rule?: string;
   q?: string;
   group?: string;
+  match?: string;
 }
 
 export interface ProgressLine {

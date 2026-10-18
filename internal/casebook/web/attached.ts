@@ -10,7 +10,8 @@
 //   attachedText   — the editable form of the same value, in the words the
 //                    delivery text uses: "pr:o/r#1 pr:o/r#2", "open pr:o/r#4",
 //                    "rule landed-branches", "job 3", and the list as
-//                    `list filters=a,b rule=x search="foo" group=none`.
+//                    `list filters=a,b rule=x search="foo" group=none`
+//                    (a draft previewing: `list match="[...]"`).
 //   parseAttached  — reads an edited line back into an Attached. Words it
 //                    doesn't recognise are dropped; the line then re-renders
 //                    from what was parsed, so what Court sees is what is sent.
@@ -63,6 +64,7 @@ export function attachedLabel(a: Attached, jobTitle = ''): string {
 // listLabel is the narrowed list's display value.
 function listLabel(l: AttachedList): string {
   const parts = ['list'];
+  if (l.match) parts.push('draft');
   const n = l.filters?.length ?? 0;
   if (n) parts.push(pluralize(n, 'filter'));
   if (l.rule) parts.push(`rule ${l.rule}`);
@@ -75,6 +77,7 @@ function listLabel(l: AttachedList): string {
 // `list filters=a,b rule=x search="foo" group=none`.
 function listText(l: AttachedList): string {
   const words = ['list'];
+  if (l.match) words.push(`match=${JSON.stringify(l.match)}`);
   if (l.filters?.length) words.push(`filters=${l.filters.join(',')}`);
   if (l.rule) words.push(`rule=${l.rule}`);
   if (l.q) words.push(`search=${JSON.stringify(l.q)}`);
@@ -85,12 +88,12 @@ function listText(l: AttachedList): string {
 // LIST_RE finds the list's editable form in a line: "list" and the
 // name=value words after it (a search's value is quoted).
 const LIST_RE =
-  /(?:^|\s)list((?:\s+(?:filters|rule|search|group)=(?:"(?:[^"\\]|\\.)*"|\S+))*)(?=\s|$)/;
+  /(?:^|\s)list((?:\s+(?:match|filters|rule|search|group)=(?:"(?:[^"\\]|\\.)*"|\S+))*)(?=\s|$)/;
 
 // parseList reads the name=value words after "list".
 function parseList(words: string): AttachedList {
   const l: AttachedList = {};
-  const re = /(filters|rule|search|group)=("(?:[^"\\]|\\.)*"|\S+)/g;
+  const re = /(match|filters|rule|search|group)=("(?:[^"\\]|\\.)*"|\S+)/g;
   for (const m of words.matchAll(re)) {
     const [, name, raw] = m;
     let v = raw;
@@ -104,7 +107,8 @@ function parseList(words: string): AttachedList {
     if (name === 'filters') {
       const ids = v.split(',').filter(Boolean);
       if (ids.length) l.filters = ids;
-    } else if (name === 'rule') l.rule = v;
+    } else if (name === 'match') l.match = v;
+    else if (name === 'rule') l.rule = v;
     else if (name === 'search') l.q = v;
     else l.group = v;
   }

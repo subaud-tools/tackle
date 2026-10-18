@@ -42,3 +42,12 @@ func TestAttachedListReachesTheAgent(t *testing.T) {
 		t.Fatalf("a searched list reads %q", got)
 	}
 }
+
+// A draft previewing on the page (review 2026-10-17): the list Court sees
+// is the draft's conditions, and the agent reads them as match.
+func TestAttachedDraftListReachesTheAgent(t *testing.T) {
+	const m = `[{"field":"kind","op":"is","value":"issue"}]`
+	if got := describe(Attached{List: &AttachedList{Match: m, Q: "foo"}}); got != `list matching `+m+` · search "foo"` {
+		t.Fatalf("a draft's list reads %q", got)
+	}
+}

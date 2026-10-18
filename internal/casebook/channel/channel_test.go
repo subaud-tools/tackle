@@ -962,4 +962,9 @@ func TestAttentionToolTakesRuleAndGroup(t *testing.T) {
 		!strings.Contains(out, "pr:schuettc/hail#3") || strings.Contains(out, "issue:schuettc/hail#4") || !strings.Contains(out, "group none") {
 		t.Fatalf("group none %q %v", out, isErr)
 	}
+	// A draft's conditions (the page previewing one): match.
+	if out, isErr := m.tool("casebook_attention", map[string]any{"match": `[{"field":"kind","op":"is","value":"issue"}]`}); isErr ||
+		!strings.Contains(out, "issue:schuettc/hail#4") || strings.Contains(out, "pr:schuettc/hail#3") || !strings.Contains(out, "matching") {
+		t.Fatalf("match %q %v", out, isErr)
+	}
 }

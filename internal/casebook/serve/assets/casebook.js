@@ -5210,15 +5210,16 @@ function makeDecide(ctx) {
     if (ids.length > 0) ctx.setAttached({ keys: ids });
     else if (currentOpenKey) ctx.setAttached({ open: currentOpenKey });
     else if (draft !== null && editing === "rule" && editingId)
-      ctx.setAttached({ rule: editingId });
+      ctx.setAttached({ rule: editingId, list: listAttached() });
     else if (draft === null && !listShown && filters.rule)
       ctx.setAttached({ rule: filters.rule });
     else ctx.setAttached({ list: listAttached() });
   }
   function listAttached(group = "") {
     const l = {};
-    if (filters.filters.length) l.filters = [...filters.filters];
-    if (filters.rule) l.rule = filters.rule;
+    if (draft !== null) l.match = JSON.stringify(draft);
+    else if (filters.filters.length) l.filters = [...filters.filters];
+    if (draft === null && filters.rule) l.rule = filters.rule;
     if (filters.q) l.q = filters.q;
     if (group) l.group = group;
     return l;
@@ -6110,7 +6111,8 @@ function makeDecide(ctx) {
         if (t && n > 0) {
           const rows = loadedItems.filter((it) => it.group === g.id);
           const looked = ticked.every(
-            (k) => rows.some((it) => it.key === k && it.looking)
+            (k) => rows.some((it) => it.key === k && it.looking) || !rows.some((it) => it.key === k) && lookedInto.has(`${t.id}
+${k}`)
           );
           ask = button(
             "fill cb-group-ask",
@@ -6119,7 +6121,7 @@ function makeDecide(ctx) {
             looked
           );
         } else if (t && g.id === "none" && !filtered()) {
-          if (asked === t.id)
+          if (asked === askedKey(t.id))
             note = h11("span", { class: "cb-group-note" }, vocab2.asked);
           else ask = button("fill cb-group-ask", vocab2.suggest_rules, askRules);
         }
@@ -6276,11 +6278,14 @@ function makeDecide(ctx) {
         "{keys}",
         keys.join(", ")
       );
+      const t = ctx.dockTarget();
       const why = await ctx.askSession(message5, { keys }, "look-into");
       if (why) {
         showReadError(why);
         return;
       }
+      if (t) for (const k of keys) lookedInto.add(`${t.id}
+${k}`);
       await reload();
     } catch (err) {
       showReadError(err instanceof Error ? err.message : String(err));
@@ -6338,6 +6343,9 @@ function makeDecide(ctx) {
     }
   }
   let asked = "";
+  const askedKey = (session) => `${session}
+${JSON.stringify(listAttached("none"))}`;
+  const lookedInto = /* @__PURE__ */ new Set();
   ctx.onDockTarget(() => paintAll());
   async function askRules() {
     const t = ctx.dockTarget();
@@ -6347,7 +6355,7 @@ function makeDecide(ctx) {
     });
     if (why) showReadError(why);
     else {
-      asked = t.id;
+      asked = askedKey(t.id);
       paintAll();
     }
   }
@@ -6979,6 +6987,7 @@ function attachedLabel(a, jobTitle2 = "") {
 }
 function listLabel(l) {
   const parts = ["list"];
+  if (l.match) parts.push("draft");
   const n = l.filters?.length ?? 0;
   if (n) parts.push(pluralize(n, "filter"));
   if (l.rule) parts.push(`rule ${l.rule}`);
@@ -6988,16 +6997,17 @@ function listLabel(l) {
 }
 function listText(l) {
   const words = ["list"];
+  if (l.match) words.push(`match=${JSON.stringify(l.match)}`);
   if (l.filters?.length) words.push(`filters=${l.filters.join(",")}`);
   if (l.rule) words.push(`rule=${l.rule}`);
   if (l.q) words.push(`search=${JSON.stringify(l.q)}`);
   if (l.group) words.push(`group=${l.group}`);
   return words.join(" ");
 }
-var LIST_RE = /(?:^|\s)list((?:\s+(?:filters|rule|search|group)=(?:"(?:[^"\\]|\\.)*"|\S+))*)(?=\s|$)/;
+var LIST_RE = /(?:^|\s)list((?:\s+(?:match|filters|rule|search|group)=(?:"(?:[^"\\]|\\.)*"|\S+))*)(?=\s|$)/;
 function parseList(words) {
   const l = {};
-  const re = /(filters|rule|search|group)=("(?:[^"\\]|\\.)*"|\S+)/g;
+  const re = /(match|filters|rule|search|group)=("(?:[^"\\]|\\.)*"|\S+)/g;
   for (const m of words.matchAll(re)) {
     const [, name, raw] = m;
     let v = raw;
@@ -7011,7 +7021,8 @@ function parseList(words) {
     if (name === "filters") {
       const ids = v.split(",").filter(Boolean);
       if (ids.length) l.filters = ids;
-    } else if (name === "rule") l.rule = v;
+    } else if (name === "match") l.match = v;
+    else if (name === "rule") l.rule = v;
     else if (name === "search") l.q = v;
     else l.group = v;
   }

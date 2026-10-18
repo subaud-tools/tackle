@@ -87,6 +87,9 @@ func describe(a Attached) string {
 		if len(l.Filters) > 0 {
 			list[0] += " filters " + strings.Join(l.Filters, ",")
 		}
+		if l.Match != "" {
+			list[0] += " matching " + l.Match
+		}
 		if l.Rule != "" {
 			list = append(list, "rule "+l.Rule)
 		}

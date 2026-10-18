@@ -670,6 +670,9 @@
 .kit-app > .kit-rail.cb-dock-strip {
   width: 40px;
 }
+.kit-app:has(> .kit-rail.cb-dock-strip) > .kit-read {
+  padding-right: 320px;
+}
 .cb-dock-folded > :not(.cb-dock-opener) {
   display: none;
 }

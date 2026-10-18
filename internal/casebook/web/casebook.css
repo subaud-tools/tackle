@@ -882,10 +882,14 @@
 
 /* ---- the pane folds to a strip (spec point 12) ---------------------------- */
 /* Until there's a conversation the rail is a thin strip whose one button
- * says "agent"; the reading column takes the rest. Only the rail's column
- * changes width: the list and the bar stay where they are. */
+ * says "agent". The reading column keeps the room the open pane takes
+ * (360px less the strip's 40px), so nothing on the page moves or rewraps
+ * when the pane opens or folds: only the rail changes. */
 .kit-app > .kit-rail.cb-dock-strip {
   width: 40px;
+}
+.kit-app:has(> .kit-rail.cb-dock-strip) > .kit-read {
+  padding-right: 320px;
 }
 .cb-dock-folded > :not(.cb-dock-opener) {
   display: none;

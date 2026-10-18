@@ -132,6 +132,9 @@ type AttachedList struct {
 	Rule    string   `json:"rule,omitempty"`
 	Q       string   `json:"q,omitempty"`
 	Group   string   `json:"group,omitempty"`
+	// Match is a draft's conditions as JSON, while the page previews one:
+	// the list is then what the draft matches (filters and rule don't apply).
+	Match string `json:"match,omitempty"`
 }
 
 // Empty reports whether nothing is attached.

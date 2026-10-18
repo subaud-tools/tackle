@@ -82,6 +82,10 @@ describe('attachedText and parseAttached', () => {
     { list: { filters: ['a', 'b'], rule: 'x', q: 'foo' } },
     { list: { q: 'two words', group: 'none' } },
     { list: {} },
+    {
+      rule: 'x',
+      list: { match: '[{"field":"kind","op":"is","value":"issue"}]', q: 'a b' },
+    },
     { keys: ['pr:o/r#1', 'pr:o/r#2'], open: 'issue:o/r#9', rule: 'x' },
     {},
   ];
@@ -108,4 +112,13 @@ describe('attachedText and parseAttached', () => {
     assert.ok(sameAttached({ keys: ['a:1'] }, { keys: ['a:1'] }));
     assert.ok(!sameAttached({ keys: ['a:1'] }, { open: 'a:1' }));
   });
+});
+
+// Review 2026-10-17: a draft previewing is what the list shows, so it is
+// what goes with a message.
+test('a draft list reads "list · draft"', () => {
+  assert.equal(
+    attachedLabel({ list: { match: '[]', q: 'foo' } }),
+    'list \u00b7 draft \u00b7 search foo',
+  );
 });
