@@ -237,6 +237,8 @@ export function makeApply(ctx: Ctx): Section {
     a.length === b.length && a.every((k, i) => k === b[i]);
   let reviewKeys: string[] = [];
   let reviewView: PlanView | null = null;
+  // drawnView is the plan drawReview last put on the page: only it runs.
+  let drawnView: PlanView | null = null;
   // serve's words when the group's plan wasn't built (nothing to plan, an
   // item already running): shown in the pane, no "sync first".
   let reviewNote = '';
@@ -1162,7 +1164,7 @@ export function makeApply(ctx: Ctx): Section {
   // runCheck: the open group's plan, and whether it can run now.
   function runCheck(): { v: PlanView; can: boolean; text: string } | null {
     const v = reviewView;
-    if (!v || v.job.state !== 'planned') return null;
+    if (!v || v !== drawnView || v.job.state !== 'planned') return null;
     const steps = v.job.steps ?? [];
     const rt = runsThrough(steps, runnerAgent());
     return { v, can: !!steps.length && rt.can && !busy, text: rt.text };
@@ -1234,6 +1236,8 @@ export function makeApply(ctx: Ctx): Section {
         reviewView = { ...saved, job: { ...saved.job } };
         note =
           'What would run changed since you looked; nothing ran. Look again.';
+        busy = false;
+        drawReview();
         return;
       }
       const v = await ctx.api.post<JobView>('/apply/approve', {
@@ -1362,6 +1366,7 @@ export function makeApply(ctx: Ctx): Section {
   // drawReview is the open group: what it does and who runs it, its one
   // button, then each part's where, undo and exact commands.
   function drawReview(): void {
+    drawnView = null;
     if (!active || mode !== 'review' || !reviewGroup) return;
     const g = groups.find((x) => x.id === reviewGroup);
     const v = reviewView;
@@ -1414,6 +1419,7 @@ export function makeApply(ctx: Ctx): Section {
       );
       return paint(doc);
     }
+    drawnView = v;
     doc.append(runBlock(j));
     const agent = runnerAgent() ?? 'an agent';
     const parts: StepGroup<Step>[] = (v.groups ?? []).map((x) => ({

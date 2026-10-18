@@ -1929,6 +1929,7 @@ function makeApply(ctx) {
   const sameKeys = (a, b) => a.length === b.length && a.every((k, i) => k === b[i]);
   let reviewKeys = [];
   let reviewView = null;
+  let drawnView = null;
   let reviewNote = "";
   let refusal = "";
   let opening = false;
@@ -2663,7 +2664,7 @@ function makeApply(ctx) {
   }
   function runCheck() {
     const v = reviewView;
-    if (!v || v.job.state !== "planned") return null;
+    if (!v || v !== drawnView || v.job.state !== "planned") return null;
     const steps = v.job.steps ?? [];
     const rt = runsThrough(steps, runnerAgent());
     return { v, can: !!steps.length && rt.can && !busy, text: rt.text };
@@ -2725,6 +2726,8 @@ function makeApply(ctx) {
       if (want.join("\n") !== got.join("\n")) {
         reviewView = { ...saved, job: { ...saved.job } };
         note = "What would run changed since you looked; nothing ran. Look again.";
+        busy = false;
+        drawReview();
         return;
       }
       const v = await ctx.api.post("/apply/approve", {
@@ -2837,6 +2840,7 @@ function makeApply(ctx) {
     );
   }
   function drawReview() {
+    drawnView = null;
     if (!active || mode !== "review" || !reviewGroup) return;
     const g = groups.find((x) => x.id === reviewGroup);
     const v = reviewView;
@@ -2885,6 +2889,7 @@ function makeApply(ctx) {
       );
       return paint(doc);
     }
+    drawnView = v;
     doc.append(runBlock(j));
     const agent = runnerAgent() ?? "an agent";
     const parts2 = (v.groups ?? []).map((x) => ({

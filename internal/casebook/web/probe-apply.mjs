@@ -235,6 +235,7 @@ async function applyScenariosIn(context, t) {
     ['list', T11_SEED, listScenario],
     ['same', { seedRepos: [dormant('t10-same')] }, sameGroupScenario],
     ['ticked', TICKED_SEED, tickedRunScenario],
+    ['changed', CHANGED_SEED, changedPlanScenario],
   ];
   for (const [name, seed, run] of groups) {
     if (!runs(name)) continue;
@@ -2404,6 +2405,143 @@ async function tickedRunScenario(context, t, s) {
       `after running one ticked PR the page stays on its job in run (${at} then ${after}), not back on review with the rest`,
       after === at,
     );
+  } finally {
+    clearInterval(keep);
+    await pg.close();
+  }
+}
+
+// ---- a plan that changed since it was shown --------------------------------
+// Review 2026-10-18: a press whose stored plan differed from the one shown
+// swapped the plan in without drawing it, so the next press ran commands
+// Court had never seen. Running only ever acts on the plan on the page.
+const CPR = 'pr:schuettc/ch-prs#1';
+const CHANGED_SEED = {
+  seedRepos: [
+    {
+      repo: 'schuettc/ch-prs',
+      pushed_at: '2026-09-20T00:00:00Z',
+      default_branch: 'main',
+      prs: [
+        {
+          repo: 'schuettc/ch-prs',
+          number: 1,
+          title: 'bump dep 1',
+          author: 'dependabot[bot]',
+          state: 'OPEN',
+          created_at: '2026-03-01T00:00:00Z',
+          updated_at: '2026-03-01T00:00:00Z',
+        },
+      ],
+      issues: [],
+    },
+  ],
+};
+async function changedPlanScenario(context, t, s) {
+  const { check, until } = t;
+  console.log('\nscenario: review — the plan changed since it was shown');
+  const agent = createAgent(s.base, s.token);
+  const S = 'probe-changed-pi';
+  const here = () => agent.presence(S, 'pi \u00b7 ch', '/home/court/ch', 'pi');
+  await here();
+  const keep = setInterval(() => void here(), 1000);
+  const pg = await context.newPage();
+  const errors = [];
+  pg.on('pageerror', (e) => errors.push(String(e)));
+  const approves = [];
+  pg.on('request', (r) => {
+    if (r.url().includes('/api/apply/approve') && r.method() === 'POST')
+      approves.push(r.postDataJSON());
+  });
+  const cmds = () =>
+    pg.evaluate(() =>
+      [...document.querySelectorAll('.cb-plan-step .cb-cmd')].map(
+        (e) => e.textContent,
+      ),
+    );
+  try {
+    await agent.api('POST', '/api/decide', {
+      keys: [CPR],
+      disposition: 'close',
+      note: 'first note',
+    });
+    await pg.setViewportSize({ width: 1600, height: 900 });
+    await pg.goto(`${s.url}&session=${S}#/review`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await until(pg, (b) => !!document.querySelector(b), HEAD('close|pr'));
+    await pg.click(HEAD('close|pr'));
+    await until(
+      pg,
+      () =>
+        !!document.querySelector(
+          '[data-testid="run-group"] .kit-btn:not([disabled])',
+        ) &&
+        [...document.querySelectorAll('.cb-plan-step .cb-cmd')].some((e) =>
+          e.textContent.includes('first note'),
+        ),
+    );
+    // Another tab re-decides it with a new closing comment: the command
+    // changes, and this page still shows the first.
+    await agent.api('POST', '/api/decide', {
+      keys: [CPR],
+      disposition: 'close',
+      note: 'second note',
+    });
+    // The press stores the plan; its reply is held while "a" is pressed.
+    let release;
+    const held = new Promise((r) => (release = r));
+    await pg.route('**/api/apply/plan', async (route) => {
+      if (route.request().postDataJSON()?.preview) return route.continue();
+      await held;
+      await route.continue();
+    });
+    const stored = pg.waitForResponse(
+      (r) =>
+        r.url().includes('/api/apply/plan') &&
+        r.request().method() === 'POST' &&
+        !r.request().postDataJSON()?.preview,
+    );
+    await pg.click(RUN_BTN);
+    await pressWithFocus(pg, 'a');
+    release();
+    await stored;
+    const shown = await until(
+      pg,
+      () =>
+        [...document.querySelectorAll('.cb-plan-step .cb-cmd')].some((e) =>
+          e.textContent.includes('second note'),
+        ) &&
+        (
+          document.querySelector('[data-testid="run-group"] .cb-apply-note')
+            ?.textContent ?? ''
+        ).includes('changed since you looked'),
+    );
+    const now = await cmds();
+    check(
+      `a press on a plan that changed shows the new commands with the note (${now.join(' | ')})`,
+      shown && now.some((c) => c.includes('second note')),
+    );
+    check(
+      `nothing was approved: not by the press, not by "a" pressed while it was stored (${approves.length})`,
+      approves.length === 0,
+    );
+    await pg.unroute('**/api/apply/plan');
+    // "a" now runs what is drawn, and only that.
+    const drawn = await cmds();
+    const approved = pg.waitForResponse(
+      (r) =>
+        r.url().includes('/api/apply/approve') &&
+        r.request().method() === 'POST',
+    );
+    await pressWithFocus(pg, 'a');
+    const job = (await (await approved).json()).job ?? {};
+    const ran = (job.steps ?? []).map((x) => x.command);
+    check(
+      `"a" then runs exactly the plan on the page (${ran.join(' | ')})`,
+      ran.length > 0 && ran.join('\n') === drawn.join('\n'),
+    );
+    check(`no page errors (${errors.join(' | ')})`, errors.length === 0);
   } finally {
     clearInterval(keep);
     await pg.close();
