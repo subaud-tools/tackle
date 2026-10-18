@@ -225,28 +225,12 @@ function findBinary() {
 // Config is written fresh so paths are correct for this machine.
 //
 // seedRepos adds repos (the cache's repo shape: {repo, prs, issues, …}) to the
-// fixture's GitHub cache, so a scenario can own Attention items no other
-// scenario touches. seedMachines adds other machines' snapshots (the
-// machines/<machine>.json shape: {version, machine, roots, clones}) to the
-// casebook-data repo, committed, so a scenario can own local branches (with
-// their landed verdicts) no other scenario touches.
+// fixture's GitHub cache, so a scenario can own items no other scenario
+// touches. seedClones adds real clones on this machine (makeClone), with
+// landed branches, so a scenario can own local branches no other scenario
+// touches.
 let homes = 0;
-//
-// seedFiles adds any other files to the casebook-data repo, committed with
-// the machines ({'rules/x.toml': '…'}), e.g. a rule file as a person wrote it.
-//
-// seedRefs adds individual lookups to the GitHub cache, as a sync's lookups
-// left them ({'pr:o/r#9': {exists: false}}: GitHub answered "not found").
-function setupHome(
-  seedRepos = [],
-  seedMachines = [],
-  seedFiles = {},
-  seedClones = [],
-  syncInterval = '30m',
-  slowRemote = false,
-  conflictRemote = false,
-  seedRefs = {},
-) {
+function setupHome(seedRepos = [], seedClones = []) {
   const fixture = join(here, 'testdata', 'home');
   const home =
     realpathSync(tmpdir()) + `/casebook-probe-${process.pid}-${homes++}`;
@@ -263,6 +247,7 @@ function setupHome(
   // Real clones on this machine ("probe"), with landed branches, under the
   // home: the casebook lane's git runs in them and nowhere else.
   if (seedClones.length) {
+    const git = (args) => probeGit(repoPath, args, home);
     const snap = join(repoPath, 'machines', 'probe.json');
     const probe = existsSync(snap)
       ? JSON.parse(readFileSync(snap, 'utf8'))
@@ -272,27 +257,10 @@ function setupHome(
       ...(probe.clones ?? []),
       ...seedClones.map((c) => makeClone(home, c)),
     ];
-    seedMachines = [...seedMachines, probe];
-  }
-  const files = Object.entries(seedFiles);
-  if (seedMachines.length || files.length) {
-    for (const snap of seedMachines) {
-      writeFileSync(
-        join(repoPath, 'machines', `${snap.machine}.json`),
-        JSON.stringify(snap, null, 2) + '\n',
-      );
-    }
-    for (const [rel, text] of files) {
-      mkdirSync(dirname(join(repoPath, rel)), { recursive: true });
-      writeFileSync(join(repoPath, rel), text);
-    }
-    const git = (args) => probeGit(repoPath, args, home);
+    writeFileSync(snap, JSON.stringify(probe, null, 2) + '\n');
     git('add -A');
     git('commit -q -m "probe: seed machine snapshots"');
   }
-
-  if (slowRemote) makeSlowRemote(home, repoPath);
-  if (conflictRemote) makeConflictRemote(home, repoPath);
 
   // Copy the github cache to the state directory, which is where CachePath()
   // looks: $CASEBOOK_HOME/state/github.json (tools.StateDir("casebook") joins
@@ -310,13 +278,6 @@ function setupHome(
     }
     writeFileSync(cachePath, JSON.stringify(cache, null, 2));
   }
-  if (Object.keys(seedRefs).length) {
-    const cachePath = join(home, 'state', 'github.json');
-    const cache = JSON.parse(readFileSync(cachePath, 'utf8'));
-    cache.refs = { ...(cache.refs ?? {}), ...seedRefs };
-    writeFileSync(cachePath, JSON.stringify(cache, null, 2));
-  }
-
   // Write a minimal config.toml. casebook_repo is left blank so it defaults
   // to CASEBOOK_HOME/data/repo (the clone above).
   writeFileSync(
@@ -326,7 +287,7 @@ function setupHome(
       'user = "schuettc"',
       'casebook_remote = ""',
       'roots = []',
-      `sync_interval = "${syncInterval}"`,
+      'sync_interval = "30m"',
     ].join('\n') + '\n',
     { mode: 0o600 },
   );
@@ -341,9 +302,7 @@ function setupHome(
 // give serve apptest.FakeGh for it; the binary has no such seam, so every
 // serve the probe starts finds a fake gh first on its PATH, answering the
 // verification reads the way apptest.FakeGh does and refusing anything else.
-// Every call is logged (ghCalls()), with the environment it saw (ghEnv()),
-// so a probe can say none went elsewhere. Nothing the probe starts can reach
-// GitHub: were the fake bypassed, the serve's environment sends a real gh
+// Nothing the probe starts can reach GitHub: were the fake bypassed, the serve's environment sends a real gh
 // to a host that doesn't exist (GH_HOST, a .invalid name) with a token
 // that isn't one, and no config of Court's (GH_CONFIG_DIR): it fails closed.
 //
@@ -358,8 +317,6 @@ const GH_FAIL_CLOSED = {
   GH_PROMPT_DISABLED: '1',
 };
 const FAKE_GH = `#!/bin/sh
-printf '%s\\n' "$*" >> "$CASEBOOK_HOME/gh-calls.log"
-printf '%s %s %s\\n' "$GH_HOST" "$GH_TOKEN" "$GH_CONFIG_DIR" >> "$CASEBOOK_HOME/gh-env.log"
 case "$*" in
   "pr view "*"--json state"*) echo '{"state":"CLOSED"}' ;;
   "issue view "*"--json state"*) echo '{"state":"CLOSED"}' ;;
@@ -426,62 +383,6 @@ function makeClone(home, c) {
   };
 }
 
-// makeSlowRemote gives the casebook-data clone a bare "origin" under
-// <home>/remotes (instead of the fixture bundle, which can't take a push),
-// holding everything the clone has, so nothing is queued at the start. Its
-// pre-receive hook holds every push after that: it touches
-// <home>/push-gate/started, then waits (up to 60 s) for
-// <home>/push-gate/release. The hook is local: the push never leaves the
-// probe's temp home.
-function makeSlowRemote(home, repoPath) {
-  const remote = join(home, 'remotes', 'casebook-data.git');
-  const gate = join(home, 'push-gate');
-  mkdirSync(dirname(remote), { recursive: true });
-  mkdirSync(gate, { recursive: true });
-  const git = (dir, args) => probeGit(dir, args, home);
-  git(home, `init -q --bare "${remote}"`);
-  git(repoPath, `remote set-url origin "${remote}"`);
-  git(repoPath, 'push -q origin HEAD:main');
-  git(repoPath, 'fetch -q origin');
-  writeFileSync(
-    join(remote, 'hooks', 'pre-receive'),
-    `#!/bin/sh
-cat >/dev/null
-touch '${gate}/started'
-i=0
-while [ ! -f '${gate}/release' ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
-exit 0
-`,
-    { mode: 0o755 },
-  );
-}
-
-// makeConflictRemote gives the casebook-data clone a bare "origin" under
-// <home>/remotes, as makeSlowRemote does (no hook), then puts two different
-// notes.txt on it: one pushed from another clone (another machine) and one
-// committed in this clone, queued. serve's push then fails for a reason
-// other than the network: rebasing onto the remote meets a conflict in a
-// file casebook doesn't resolve. Moving the remote's main back one commit
-// (to the base both share) lets the next push through. Local only.
-function makeConflictRemote(home, repoPath) {
-  const remote = join(home, 'remotes', 'casebook-data.git');
-  const other = join(home, 'remotes', 'other-machine');
-  mkdirSync(dirname(remote), { recursive: true });
-  const git = (dir, args) => probeGit(dir, args, home);
-  git(home, `init -q --bare "${remote}"`);
-  git(repoPath, `remote set-url origin "${remote}"`);
-  git(repoPath, 'push -q origin HEAD:main');
-  git(repoPath, 'fetch -q origin');
-  git(home, `clone -q -b main "${remote}" "${other}"`);
-  writeFileSync(join(other, 'notes.txt'), 'from another machine\n');
-  git(other, 'add notes.txt');
-  git(other, 'commit -q -m "another machine: a note"');
-  git(other, 'push -q origin HEAD:main');
-  writeFileSync(join(repoPath, 'notes.txt'), 'from this machine\n');
-  git(repoPath, 'add notes.txt');
-  git(repoPath, 'commit -q -m "probe: a note of its own"');
-}
-
 // Wait up to timeoutMs for the advert file to appear and return its contents.
 function waitForAdvert(advertPath, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
@@ -512,121 +413,48 @@ function waitForAdvert(advertPath, timeoutMs = 10000) {
  */
 export async function startServe(opts = {}) {
   const bin = findBinary();
-  const home = setupHome(
-    opts.seedRepos,
-    opts.seedMachines,
-    opts.seedFiles,
-    opts.seedClones,
-    opts.syncInterval,
-    opts.slowRemote,
-    opts.conflictRemote,
-    opts.seedRefs,
-  );
+  const home = setupHome(opts.seedRepos, opts.seedClones);
   const advertPath = join(home, 'state', 'live', 'serve.json');
 
-  // launch starts serve on the home (again, for restart: the same state
-  // directory, so its database and its remembered port).
-  let proc;
   let exited = false;
   let stderr = '';
-  const launch = () => {
-    exited = false;
-    stderr = '';
-    const p = spawn(bin, SERVE_ARGS, {
-      env: {
-        ...process.env,
-        CASEBOOK_HOME: home,
-        HOME: home,
-        // The fake gh first on PATH (then the git guard); git without Court's
-        // config; a real gh, were it reached, fails closed.
-        PATH: `${join(home, 'bin')}:${process.env.PATH}`,
-        ...HERMETIC_GIT,
-        ...GH_FAIL_CLOSED,
-        GH_CONFIG_DIR: join(home, 'gh'),
-        // Disables browser opening via the test seam in cli/workbench.go:
-        // with it, even a restarted serve that finds a tab was open (which
-        // reopens the page whatever --no-open says) opens nothing.
-        CASEBOOK_NO_BROWSER: '1',
-        // Short stuck threshold so probes can test stuck delivery UI without
-        // waiting 10 minutes. Tests that need this wait 3+ seconds after
-        // picking up a delivery.
-        CASEBOOK_STUCK_AFTER: '2s',
-        // Short left threshold so probes can test left-session UI without
-        // waiting 60 seconds for a session to go left.
-        CASEBOOK_LEFT_AFTER: '3s',
-        // Short watch interval so the left-crossing check fires quickly.
-        CASEBOOK_WATCH_EVERY: '1s',
-      },
-      stdio: 'pipe',
-    });
-    p.stderr.on('data', (d) => {
-      stderr += String(d);
-    });
-    p.on('exit', () => {
-      if (p === proc) exited = true;
-    });
-    proc = p;
-  };
-  const advertOf = async () => {
-    try {
-      return await waitForAdvert(advertPath);
-    } catch (err) {
-      if (!exited) proc.kill();
-      throw new Error(`${String(err)}\nstderr: ${stderr}`);
-    }
-  };
-
-  launch();
-  let adv = await advertOf();
+  const proc = spawn(bin, SERVE_ARGS, {
+    env: {
+      ...process.env,
+      CASEBOOK_HOME: home,
+      HOME: home,
+      // The fake gh first on PATH (then the git guard); git without Court's
+      // config; a real gh, were it reached, fails closed.
+      PATH: `${join(home, 'bin')}:${process.env.PATH}`,
+      ...HERMETIC_GIT,
+      ...GH_FAIL_CLOSED,
+      GH_CONFIG_DIR: join(home, 'gh'),
+      // Disables browser opening via the test seam in cli/workbench.go:
+      // with it, even a serve that finds a tab was open (which reopens the
+      // page whatever --no-open says) opens nothing.
+      CASEBOOK_NO_BROWSER: '1',
+    },
+    stdio: 'pipe',
+  });
+  proc.stderr.on('data', (d) => {
+    stderr += String(d);
+  });
+  proc.on('exit', () => {
+    exited = true;
+  });
+  let adv;
+  try {
+    adv = await waitForAdvert(advertPath);
+  } catch (err) {
+    if (!exited) proc.kill();
+    throw new Error(`${String(err)}\nstderr: ${stderr}`);
+  }
 
   return {
     url: adv.url,
     base: adv.base,
     token: adv.token,
     home,
-    /**
-     * The slow remote's gate (opts.slowRemote): started() says a push is
-     * being held, release() lets every push through from now on.
-     */
-    pushGate: {
-      started: () => existsSync(join(home, 'push-gate', 'started')),
-      release: () => writeFileSync(join(home, 'push-gate', 'release'), ''),
-    },
-    /** Every gh call serve made (to the fake), one line each. */
-    ghCalls() {
-      const log = join(home, 'gh-calls.log');
-      return existsSync(log)
-        ? readFileSync(log, 'utf8').split('\n').filter(Boolean)
-        : [];
-    },
-    /** The environment each gh call saw: "GH_HOST GH_TOKEN GH_CONFIG_DIR". */
-    ghEnv() {
-      const log = join(home, 'gh-env.log');
-      return existsSync(log)
-        ? readFileSync(log, 'utf8').split('\n').filter(Boolean)
-        : [];
-    },
-    /**
-     * restart stops serve and starts it again on the same home (its database
-     * and its remembered port): the page's token dies with the old one. The
-     * new one's advert is returned; handle.url/base/token follow it.
-     * Reopened says the new serve found a tab had been open and would have
-     * opened the page again (CASEBOOK_NO_BROWSER keeps it from doing so).
-     */
-    async restart() {
-      if (!exited) {
-        const gone = new Promise((r) => proc.once('exit', r));
-        proc.kill();
-        await gone;
-      }
-      rmSync(advertPath, { force: true });
-      launch();
-      adv = await advertOf();
-      this.url = adv.url;
-      this.base = adv.base;
-      this.token = adv.token;
-      return adv;
-    },
     stop() {
       if (!exited) proc.kill();
       // serve shuts down gracefully and may still be finishing a background

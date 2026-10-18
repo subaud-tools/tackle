@@ -14,6 +14,7 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 - The agent the page is attached to runs a group's outward steps; there is no session menu. With no agent attached, review says "Open casebook from an agent to run this." and its button is off; a group that is all local needs none.
 - There are no plans to approve or discard: opening a group plans exactly its items, reusing the plan casebook built for them, or replacing one that held any of them (an item is still in one job that hasn't finished). Plans left from before are reused or replaced the same way.
 - Old `#/apply` links open review (`#/apply/<job>` opens the job in run); the strip after a decision says "waiting in review"; `g v` goes to review and `g r` to run.
+- The browser probe keeps only checks that nothing runs without your click, that decisions aren't lost or doubled, and one end-to-end pass; it runs faster and no longer fails on slow runners.
 
 ## [casebook 0.13.0] - 2026-10-17
 
