@@ -143,12 +143,14 @@ async function waitFor(sel: string, ms: number): Promise<HTMLElement | null> {
   }
 }
 
-const ROW = '.kit-list:not([hidden]) .kit-row';
+const ROW = '.kit-list:not([hidden]) .kit-row:not(.cb-left-open)';
 // decide's groups start collapsed (serve sends no rows for them): a list
 // with items has group headers before it has rows.
-const GROUP_CARET =
-  '.kit-list:not([hidden]) .cb-group.collapsed .cb-group-caret';
-const HAS_ITEMS = `${ROW}, .kit-list:not([hidden]) .cb-group`;
+// The left-open group holds items already decided: not something to decide.
+const UNDECIDED =
+  '.kit-list:not([hidden]) .cb-group:not([data-group="left-open"])';
+const GROUP_CARET = `${UNDECIDED}.collapsed .cb-group-caret`;
+const HAS_ITEMS = `${ROW}, ${UNDECIDED}`;
 
 export function makeWalkthrough(ctx: Ctx): { start(): void } {
   let running = false;

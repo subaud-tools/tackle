@@ -350,9 +350,10 @@ async function waitFor(sel, ms) {
     await sleep(50);
   }
 }
-var ROW = ".kit-list:not([hidden]) .kit-row";
-var GROUP_CARET = ".kit-list:not([hidden]) .cb-group.collapsed .cb-group-caret";
-var HAS_ITEMS = `${ROW}, .kit-list:not([hidden]) .cb-group`;
+var ROW = ".kit-list:not([hidden]) .kit-row:not(.cb-left-open)";
+var UNDECIDED = '.kit-list:not([hidden]) .cb-group:not([data-group="left-open"])';
+var GROUP_CARET = `${UNDECIDED}.collapsed .cb-group-caret`;
+var HAS_ITEMS = `${ROW}, ${UNDECIDED}`;
 function makeWalkthrough(ctx) {
   let running = false;
   function start2() {
