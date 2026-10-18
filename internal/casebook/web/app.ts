@@ -534,7 +534,7 @@ function start(first: SummaryView | null): void {
 
   // The stream, polling /api/state?since=<cursor> every 2 s while it is down
   // (the kit's live()). A poll that answers means serve is back.
-  const sharedStream = browserShared('casebook-live');
+  const sharedStream = browserShared('casebook-live', '/api/state');
   function startLive(cursor?: string): ReturnType<typeof live> {
     return live({
       events: '/api/events',

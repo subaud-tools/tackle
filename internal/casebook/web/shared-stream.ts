@@ -10,7 +10,9 @@
 // sharedEventSource returns a class the kit's live() takes as its
 // EventSource: it has onopen, onmessage, onerror and close, which is all
 // live() uses. A tab that joins after the stream opened asks for "open" and
-// gets it. When the stream errs, or the tab holding it closes, every tab's
+// gets it, then reads what happened after its own cursor (the since in its
+// address: events passed on before it listened) and delivers that first,
+// holding what is passed on meanwhile. When the stream errs, or the tab holding it closes, every tab's
 // stream errs, and live() reconnects each with its newest cursor (polling
 // meanwhile), so nothing between is lost.
 
@@ -18,6 +20,12 @@
 export interface StreamMessage {
   data: string;
   lastEventId: string;
+}
+
+/** A poll's answer: what happened after since, and the cursor after it. */
+export interface PollBody {
+  cursor: string;
+  events: Array<{ type: string; data: unknown }>;
 }
 
 interface Channel {
@@ -43,6 +51,19 @@ export interface SharedDeps {
    * function that stops it.
    */
   onWake?(cb: () => void): () => void;
+  /**
+   * Reads what happened after cursor since (GET <poll>?since=): a following
+   * tab catches up with it. A poll answers at most POLL_MAX events.
+   */
+  catchUp?(since: string): Promise<PollBody>;
+}
+
+// POLL_MAX is the most events serve's poll answers at once.
+const POLL_MAX = 500;
+
+// sinceOf is the cursor in a stream address ("" for none).
+function sinceOf(url: string): string {
+  return new URL(url, 'http://x').searchParams.get('since') ?? '';
 }
 
 type Note =
@@ -73,8 +94,16 @@ export function sharedEventSource(
     private readonly abort = new AbortController();
     private readonly ch: Channel;
     private unwake: (() => void) | null = null;
+    // A follower with a cursor catches up before it delivers what is passed
+    // on (held meanwhile); last is the newest cursor it delivered.
+    private readonly since: string;
+    private catching: boolean;
+    private held: Array<{ data: string; id: string }> = [];
+    private last = '';
 
     constructor(url: string) {
+      this.since = sinceOf(url);
+      this.catching = !!this.since && !!deps.catchUp;
       this.ch = deps.channel();
       this.ch.onmessage = (e) => this.heard(e.data as Note);
       // Some tab may already hold the stream: ask whether it is open, once
@@ -102,10 +131,56 @@ export function sharedEventSource(
       if (n.k === 'open' && !this.opened) {
         this.opened = true;
         this.onopen?.();
+        if (this.catching) void this.catchUp();
       } else if (n.k === 'msg') {
-        this.onmessage?.({ data: n.data, lastEventId: n.id });
+        if (this.catching) this.held.push({ data: n.data, id: n.id });
+        else this.passOn(n.data, n.id);
       } else if (n.k === 'error') {
         this.onerror?.();
+      }
+    }
+
+    // passOn delivers an event passed on, unless its cursor was delivered
+    // already (cursors are increasing integers).
+    private passOn(data: string, id: string): void {
+      if (id && this.last && Number(id) <= Number(this.last)) return;
+      if (id) this.last = id;
+      this.onmessage?.({ data, lastEventId: id });
+    }
+
+    // catchUp reads what happened after this stream's cursor, delivers it,
+    // then what was passed on meanwhile. A failed read errs the stream:
+    // live() polls from its cursor.
+    private async catchUp(): Promise<void> {
+      const read = deps.catchUp?.bind(deps);
+      if (!read) return;
+      let cur = this.since;
+      try {
+        for (;;) {
+          const body = await read(cur);
+          if (this.closed) return;
+          const evs = body.events ?? [];
+          for (const e of evs)
+            this.onmessage?.({
+              data: JSON.stringify({ type: e.type, data: e.data }),
+              lastEventId: body.cursor,
+            });
+          if (body.cursor) cur = this.last = body.cursor;
+          if (evs.length < POLL_MAX) break;
+        }
+      } catch {
+        if (this.closed) return;
+        this.catching = false;
+        this.held = [];
+        this.onerror?.();
+        return;
+      }
+      this.catching = false;
+      const held = this.held;
+      this.held = [];
+      for (const m of held) {
+        if (this.closed) return;
+        this.passOn(m.data, m.id);
       }
     }
 
@@ -166,7 +241,7 @@ export function sharedEventSource(
  * browserShared is the EventSource live() takes: shared between tabs where
  * the browser has locks and BroadcastChannel, the plain one otherwise.
  */
-export function browserShared(name: string): typeof EventSource {
+export function browserShared(name: string, poll: string): typeof EventSource {
   const locks = (navigator as Navigator & { locks?: LockManager }).locks;
   if (!locks || typeof BroadcastChannel === 'undefined') return EventSource;
   return sharedEventSource({
@@ -176,6 +251,13 @@ export function browserShared(name: string): typeof EventSource {
       locks.request(name, { signal }, granted).catch(() => {
         // aborted while waiting: the stream closed before its turn
       });
+    },
+    async catchUp(since) {
+      const res = await fetch(`${poll}?since=${encodeURIComponent(since)}`, {
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error(`poll: HTTP ${res.status}`);
+      return (await res.json()) as PollBody;
     },
     onWake(cb) {
       const shown = (): void => {

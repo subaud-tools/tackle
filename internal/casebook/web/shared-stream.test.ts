@@ -157,3 +157,80 @@ test('a following tab that wakes asks live() to catch up', async () => {
   assert.equal(errs, 1);
   void lead;
 });
+
+// A tab that follows another's stream joins after its own cursor: what
+// happened between (Court's own decisions in another tab) came over the
+// channel before it listened (review, 2026-10-18). Told "open", it reads
+// /api/state?since=<its cursor> itself, holding what is passed on meanwhile.
+function follower(since: string) {
+  const b = browser();
+  const asked: string[] = [];
+  let answer: (v: {
+    cursor: string;
+    events: Array<{ type: string; data: unknown }>;
+  }) => void = () => {};
+  const lead = new (sharedEventSource(b.tab()))('/e');
+  const got: string[] = [];
+  const f = new (sharedEventSource({
+    ...b.tab(),
+    catchUp(s) {
+      asked.push(s);
+      return new Promise((r) => (answer = r));
+    },
+  }))(`/e?since=${since}`);
+  f.onmessage = (m) =>
+    got.push(
+      `${(JSON.parse(m.data) as { type: string }).type} ${m.lastEventId}`,
+    );
+  return {
+    b,
+    lead,
+    f,
+    got,
+    asked,
+    answer: (v: Parameters<typeof answer>[0]) => answer(v),
+  };
+}
+
+test('an event passed on while a joining tab catches up reaches it once, after what it caught up', async () => {
+  const t = follower('3');
+  await flush();
+  t.b.real[0].onopen?.();
+  await flush();
+  assert.deepEqual(t.asked, ['3']);
+  t.b.real[0].onmessage?.({ data: '{"type":"x6"}', lastEventId: '6' });
+  assert.deepEqual(
+    t.got,
+    [],
+    'nothing passed on is delivered before the catch-up',
+  );
+  t.answer({
+    cursor: '5',
+    events: [
+      { type: 'x4', data: {} },
+      { type: 'x5', data: {} },
+    ],
+  });
+  await flush();
+  assert.deepEqual(t.got, ['x4 5', 'x5 5', 'x6 6']);
+  void t.lead;
+});
+
+test('an event the catch-up already delivered is not delivered again', async () => {
+  const t = follower('3');
+  await flush();
+  t.b.real[0].onopen?.();
+  await flush();
+  t.b.real[0].onmessage?.({ data: '{"type":"x6"}', lastEventId: '6' });
+  t.answer({
+    cursor: '6',
+    events: [
+      { type: 'x5', data: {} },
+      { type: 'x6', data: {} },
+    ],
+  });
+  await flush();
+  t.b.real[0].onmessage?.({ data: '{"type":"x7"}', lastEventId: '7' });
+  assert.deepEqual(t.got, ['x5 6', 'x6 6', 'x7 7']);
+  void t.lead;
+});

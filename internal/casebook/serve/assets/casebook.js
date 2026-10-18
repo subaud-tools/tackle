@@ -1,4 +1,8 @@
 // shared-stream.ts
+var POLL_MAX = 500;
+function sinceOf(url) {
+  return new URL(url, "http://x").searchParams.get("since") ?? "";
+}
 function sharedEventSource(deps) {
   return class Shared {
     onopen = null;
@@ -12,7 +16,15 @@ function sharedEventSource(deps) {
     abort = new AbortController();
     ch;
     unwake = null;
+    // A follower with a cursor catches up before it delivers what is passed
+    // on (held meanwhile); last is the newest cursor it delivered.
+    since;
+    catching;
+    held = [];
+    last = "";
     constructor(url) {
+      this.since = sinceOf(url);
+      this.catching = !!this.since && !!deps.catchUp;
       this.ch = deps.channel();
       this.ch.onmessage = (e) => this.heard(e.data);
       queueMicrotask(() => {
@@ -34,10 +46,54 @@ function sharedEventSource(deps) {
       if (n.k === "open" && !this.opened) {
         this.opened = true;
         this.onopen?.();
+        if (this.catching) void this.catchUp();
       } else if (n.k === "msg") {
-        this.onmessage?.({ data: n.data, lastEventId: n.id });
+        if (this.catching) this.held.push({ data: n.data, id: n.id });
+        else this.passOn(n.data, n.id);
       } else if (n.k === "error") {
         this.onerror?.();
+      }
+    }
+    // passOn delivers an event passed on, unless its cursor was delivered
+    // already (cursors are increasing integers).
+    passOn(data, id) {
+      if (id && this.last && Number(id) <= Number(this.last)) return;
+      if (id) this.last = id;
+      this.onmessage?.({ data, lastEventId: id });
+    }
+    // catchUp reads what happened after this stream's cursor, delivers it,
+    // then what was passed on meanwhile. A failed read errs the stream:
+    // live() polls from its cursor.
+    async catchUp() {
+      const read = deps.catchUp?.bind(deps);
+      if (!read) return;
+      let cur = this.since;
+      try {
+        for (; ; ) {
+          const body = await read(cur);
+          if (this.closed) return;
+          const evs = body.events ?? [];
+          for (const e of evs)
+            this.onmessage?.({
+              data: JSON.stringify({ type: e.type, data: e.data }),
+              lastEventId: body.cursor
+            });
+          if (body.cursor) cur = this.last = body.cursor;
+          if (evs.length < POLL_MAX) break;
+        }
+      } catch {
+        if (this.closed) return;
+        this.catching = false;
+        this.held = [];
+        this.onerror?.();
+        return;
+      }
+      this.catching = false;
+      const held = this.held;
+      this.held = [];
+      for (const m of held) {
+        if (this.closed) return;
+        this.passOn(m.data, m.id);
       }
     }
     // granted: this tab holds the lock. A stream that was following another
@@ -90,7 +146,7 @@ function sharedEventSource(deps) {
     }
   };
 }
-function browserShared(name) {
+function browserShared(name, poll) {
   const locks = navigator.locks;
   if (!locks || typeof BroadcastChannel === "undefined") return EventSource;
   return sharedEventSource({
@@ -99,6 +155,13 @@ function browserShared(name) {
     lock(granted, signal) {
       locks.request(name, { signal }, granted).catch(() => {
       });
+    },
+    async catchUp(since) {
+      const res = await fetch(`${poll}?since=${encodeURIComponent(since)}`, {
+        credentials: "same-origin"
+      });
+      if (!res.ok) throw new Error(`poll: HTTP ${res.status}`);
+      return await res.json();
     },
     onWake(cb) {
       const shown = () => {
@@ -770,7 +833,7 @@ function start(first) {
   }
   app.append(rail);
   document.body.append(app);
-  const sharedStream = browserShared("casebook-live");
+  const sharedStream = browserShared("casebook-live", "/api/state");
   function startLive(cursor) {
     return live({
       events: "/api/events",
