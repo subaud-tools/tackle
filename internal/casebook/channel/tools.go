@@ -346,11 +346,12 @@ func (ch *Channel) attention(ctx context.Context, qy serve.Query, filters []stri
 		return "", err
 	}
 	var b strings.Builder
-	if match != "" {
+	switch {
+	case match != "":
 		fmt.Fprintf(&b, "%d item(s) matching %s", out.Total, match)
-	} else if len(filters) > 0 {
+	case len(filters) > 0:
 		fmt.Fprintf(&b, "%d item(s) matching filters %s", out.Total, strings.Join(filters, ", "))
-	} else {
+	default:
 		fmt.Fprintf(&b, "%d item(s) in %s", out.Total, qy.View)
 	}
 	if qy.Rule != "" {
