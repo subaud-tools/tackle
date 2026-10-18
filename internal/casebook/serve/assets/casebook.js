@@ -7439,6 +7439,30 @@ ${JSON.stringify(listAttached("none"))}`;
   };
 }
 
+// in-order.ts
+function latestInOrder(send) {
+  let busy = false;
+  let next = null;
+  const run = async (v) => {
+    busy = true;
+    try {
+      await send(v);
+    } catch (err) {
+      console.error("[in-order]", err);
+    }
+    busy = false;
+    if (next) {
+      const n = next;
+      next = null;
+      void run(n.v);
+    }
+  };
+  return (v) => {
+    if (busy) next = { v };
+    else void run(v);
+  };
+}
+
 // dock.ts
 import { h as h14, card as card5 } from "/_kit/kit.js";
 
@@ -8881,11 +8905,9 @@ function makeDock(ctx) {
     composer.setAgent(sess?.harness ?? "");
     ctx.setAgentName(sess?.harness ?? "");
   }
-  function tellAttached(id) {
-    ctx.api.post("/page/attached", { session: id }).catch((err) => {
-      console.error("[dock] attached:", err);
-    });
-  }
+  const tellAttached = latestInOrder(
+    (id) => ctx.api.post("/page/attached", { session: id })
+  );
   function detach() {
     auto = false;
     if (currentSessionId) tellAttached("");

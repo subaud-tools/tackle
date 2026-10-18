@@ -28,6 +28,7 @@
 // asking the agent opens it; the header's › folds it back. A click is
 // kept for the tab (sessionStorage) until a message arrives.
 
+import { latestInOrder } from './in-order.ts';
 import { h, card } from '/_kit/kit.js';
 import type {
   Session,
@@ -1094,12 +1095,11 @@ export function makeDock(ctx: Ctx): DockHandle {
   }
 
   // tellAttached tells serve the agent this tab is attached to ("" for
-  // none): a restart reopens the page for it.
-  function tellAttached(id: string) {
-    ctx.api.post('/page/attached', { session: id }).catch((err: unknown) => {
-      console.error('[dock] attached:', err);
-    });
-  }
+  // none): a restart reopens the page for it. In order, the latest last: a
+  // slow report of an earlier agent never lands after a later one.
+  const tellAttached = latestInOrder((id: string) =>
+    ctx.api.post('/page/attached', { session: id }),
+  );
 
   // detach drops a lone-session guess: no session, so the chooser asks.
   function detach() {
