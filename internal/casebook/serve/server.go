@@ -659,6 +659,7 @@ func (s *Server) watch(ctx context.Context) {
 	lastPrune := time.Now()
 	knownLeft := map[string]bool{}
 	knownStuck := map[int64]bool{}
+	lastQueued := -1
 	for {
 		select {
 		case <-ctx.Done():
@@ -668,6 +669,15 @@ func (s *Server) watch(ctx context.Context) {
 				if err := s.rebuild(ctx); err != nil {
 					fmt.Fprintf(os.Stderr, "casebook serve: rebuild: %v\n", err)
 				}
+			}
+			// What waits to be pushed can change with HEAD still: another
+			// process's sync pushes after committing. The page reads its
+			// status again on a push event.
+			if q, _ := s.pushState(ctx); q != lastQueued {
+				if lastQueued >= 0 {
+					s.publish(ctx, "push", PushEvent{State: PushDone})
+				}
+				lastQueued = q
 			}
 			s.checkLeftCrossings(ctx, knownLeft)
 			s.checkStuckCrossings(ctx, knownStuck)
