@@ -8,14 +8,14 @@ member. One Go monorepo; each tool is an independent binary under `cmd/`.
 - **scratch** — per-directory scratch notes with a live TUI.
 - **proj** — agent-aware tmux session picker; the way *in* to a work session.
 - **creel** — masked capture of an API key/secret into a local `.env`, so it never passes through an agent's chat. Run it bare (or via `prefix S`), or let the pi `request_secret` tool drive it. Consume a captured key with `creel exec NAME -- <command>`, which runs the command with the value in its environment only — never printed, never in the agent's context.
-- **casebook** — records the intended fate of every repo, pull request, issue, branch and worktree you own or touch, journals git/gh activity from any agent or terminal, and shows what needs attention. Its data lives in your own private git repo. (Preview.)
-  Install: `kempt apply -manifest cmd/casebook/kempt.toml -packages casebook`, then `casebook init` (creates a private `<you>/casebook-data` if needed) and `casebook hooks install`.
 - **cull** — judges the tests an agent wrote, using TypeSafe's Jev, cuts the ones Jev is sure about, and puts the rest in front of you on a local page. (Preview.)
   Install: `kempt apply -manifest cmd/cull/kempt.toml -packages cull`, then `cull init` in each project.
 - **sift** — audits the instruction files coding agents read (global files, repo files, skills), has the agent recommend one revised version per file, and puts each in front of you on a local page; what you approve becomes one pull request per repo. (Preview.)
   Install: `kempt apply -manifest cmd/sift/kempt.toml -packages sift`, then `sift skills install` and `sift init --root DIR`.
 - **imprint** — guides a coding agent through publishing npm packages, trusted publishers and deprecation, opening each approval for you and checking every step on the registry.
   Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`.
+
+casebook moved to its own repo, https://github.com/subaud-tools/casebook (casebook.tools).
 
 ## Install
 
