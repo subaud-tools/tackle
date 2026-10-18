@@ -4837,6 +4837,10 @@ async function toggleRule(ctx, row) {
   });
 }
 function makeRuleRow(_ctx, hooks) {
+  const chipsEl = h9("div", {
+    class: "kit-chips cb-filter-chips",
+    "data-group": "rules"
+  });
   const addBtn = h9(
     "button",
     {
@@ -4849,30 +4853,51 @@ function makeRuleRow(_ctx, hooks) {
     },
     "+ rule"
   );
-  const listBtn = h9(
-    "button",
-    {
-      type: "button",
-      class: "kit-chip cb-rules-n",
-      "data-testid": "rules-n",
-      onclick() {
-        hooks.onList();
-      }
-    },
-    "rules 0"
-  );
   const el2 = h9(
     "div",
-    { class: "kit-chips cb-rule-row", "aria-label": "rules" },
-    addBtn,
-    listBtn
+    { class: "cb-filters cb-rule-row", "aria-label": "rules" },
+    h9("span", { class: "cb-bar-label" }, "rules"),
+    chipsEl
   );
-  return {
-    el: el2,
-    paint(rows) {
-      listBtn.textContent = `rules ${rows.length}`;
+  function chip(row, selected) {
+    const id = row.rule.id;
+    const on = selected === id;
+    const off = row.rule.status !== "active";
+    const b = h9(
+      "button",
+      {
+        type: "button",
+        class: "kit-chip cb-filter cb-rule-chip" + (on ? " on" : "") + (off ? " cb-rule-off" : ""),
+        "data-id": id,
+        "aria-pressed": String(on),
+        title: off ? "off" : "",
+        onclick() {
+          if (row.invalid) return;
+          hooks.onSelect(on ? null : id);
+        }
+      },
+      row.rule.name || id
+    );
+    if (row.invalid) {
+      b.setAttribute("data-invalid", "");
+      b.setAttribute("aria-disabled", "true");
+      b.title = row.invalid;
     }
-  };
+    return h9(
+      "span",
+      { class: "cb-filter-item", "data-id": id },
+      b,
+      ruleMenu(row, {
+        onEdit: () => hooks.onEdit(row),
+        onToggle: () => hooks.onToggle(row)
+      })
+    );
+  }
+  function paint(rows, selected) {
+    chipsEl.replaceChildren(...rows.map((r) => chip(r, selected)), addBtn);
+  }
+  paint([], null);
+  return { el: el2, paint };
 }
 function ruleEditor(ctx, row, seed, hooks) {
   let match = (row?.rule.match ?? seed?.match ?? []).map((c) => ({
@@ -5450,85 +5475,6 @@ function renderRule(ctx, detail, hooks) {
   drawMatches();
   return el2;
 }
-function renderRuleList(ctx, rows, hooks) {
-  const note = h10("p", { class: "cb-rule-note", role: "status" });
-  const decision = (row) => h10("span", { class: "cb-rules-row-d" }, row.rule.propose.disposition);
-  const decisions = [];
-  const line = (row) => {
-    const off = row.rule.status !== "active";
-    const d = decision(row);
-    decisions.push([row, d]);
-    const state = row.invalid ? "not valid" : off ? "off" : "on";
-    return h10(
-      "li",
-      {
-        class: "cb-rules-row" + (off ? " cb-rule-off" : ""),
-        "data-id": row.rule.id
-      },
-      h10(
-        "button",
-        {
-          type: "button",
-          class: "cb-rules-row-open",
-          title: row.invalid ?? "",
-          onclick() {
-            hooks.onOpen(row);
-          }
-        },
-        h10("span", { class: "cb-rules-row-name" }, row.rule.name || row.rule.id),
-        h10(
-          "span",
-          {
-            class: "cb-rules-row-state",
-            "data-state": state
-          },
-          state
-        ),
-        d,
-        h10(
-          "span",
-          { class: "cb-rules-row-n" },
-          row.invalid ? "" : pluralize(row.matches, "match", "matches")
-        )
-      ),
-      ruleMenu(row, {
-        onEdit: () => hooks.onEdit(row),
-        onToggle: () => {
-          note.textContent = "";
-          void hooks.onToggle(row).catch((err) => {
-            note.textContent = message4(err);
-          });
-        }
-      })
-    );
-  };
-  const el2 = h10(
-    "div",
-    { class: "kit-doc" },
-    h10(
-      "article",
-      { class: "cb-rules-doc", "data-testid": "rule-list" },
-      h10("h1", { class: "kit-h1" }, pluralize(rows.length, "rule")),
-      h10(
-        "p",
-        null,
-        "A rule recommends a decision for the undecided items it matches. Its recommendations are a group in the list, accepted in one go."
-      ),
-      rows.length ? h10("ul", { class: "cb-rules-rows" }, ...rows.map(line)) : h10("p", { class: "cb-read-empty-prompt" }, "No rules yet."),
-      note
-    )
-  );
-  void getVocab(ctx).then((vocab2) => {
-    for (const [row, d] of decisions)
-      d.textContent = dispositionLabel(
-        vocab2,
-        null,
-        row.rule.propose.disposition
-      );
-  }).catch(() => {
-  });
-  return el2;
-}
 
 // decide-list.ts
 var STRIP_MS = 6e3;
@@ -5666,7 +5612,7 @@ function makeDecide(ctx) {
     else if (currentOpenKey) ctx.setAttached({ open: currentOpenKey });
     else if (draft !== null && editing === "rule" && editingId)
       ctx.setAttached({ rule: editingId, list: listAttached() });
-    else if (draft === null && !listShown && filters.rule)
+    else if (draft === null && filters.rule)
       ctx.setAttached({ rule: filters.rule });
     else ctx.setAttached({ list: listAttached() });
   }
@@ -5682,7 +5628,6 @@ function makeDecide(ctx) {
   function showReadEmpty() {
     currentOpenKey = null;
     shownDetail = null;
-    listShown = false;
     const rr = filters.rule && draft === null ? ruleRows.find((r) => r.rule.id === filters.rule) : void 0;
     readEl.replaceChildren(renderReadEmpty());
     if (rr) void showRuleDoc(rr);
@@ -5717,35 +5662,6 @@ function makeDecide(ctx) {
       })
     );
   }
-  function showRuleList() {
-    if (draft !== null) closeFilterEditor(true);
-    if (currentOpenKey) goList();
-    currentOpenKey = null;
-    shownDetail = null;
-    listShown = true;
-    paintRuleList();
-    feedAttached();
-  }
-  function paintRuleList() {
-    readEl.replaceChildren(
-      renderRuleList(ctx, ruleRows, {
-        onOpen(row) {
-          listShown = false;
-          selectRule(row.rule.id);
-        },
-        onEdit(row) {
-          listShown = false;
-          openRuleEditor(row, null);
-        },
-        async onToggle(row) {
-          await toggleRule(ctx, row);
-          await loadRules();
-          void reload();
-        }
-      })
-    );
-  }
-  let listShown = false;
   showReadEmpty();
   function buildFoot() {
     const footRight = h11(
@@ -5860,11 +5776,22 @@ function makeDecide(ctx) {
   });
   let ruleRows = [];
   const ruleRow = makeRuleRow(ctx, {
+    onSelect(id) {
+      selectRule(id);
+    },
     onNew() {
       openRuleEditor(null, null);
     },
-    onList() {
-      showRuleList();
+    onEdit(row) {
+      openRuleEditor(row, null);
+    },
+    onToggle(row) {
+      void toggleRule(ctx, row).then(() => loadRules()).then(() => {
+        if (filters.rule === row.rule.id) showReadEmpty();
+        void reload();
+      }).catch((err) => {
+        filterBar.setError(err instanceof Error ? err.message : String(err));
+      });
     }
   });
   async function loadRules() {
@@ -5878,9 +5805,8 @@ function makeDecide(ctx) {
     }
   }
   function paintRules() {
-    ruleRow.paint(ruleRows);
+    ruleRow.paint(ruleRows, draft !== null ? null : filters.rule);
     paintAll();
-    if (listShown && draft === null && !currentOpenKey) paintRuleList();
   }
   function selectRule(id) {
     filters.rule = id;
@@ -7400,7 +7326,7 @@ ${JSON.stringify(listAttached("none"))}`;
         void reload();
       } else if (type === "rules") {
         void loadRules().then(() => {
-          if (filters.rule && !currentOpenKey && draft === null && !listShown && active)
+          if (filters.rule && !currentOpenKey && draft === null && active)
             showReadEmpty();
         });
       } else if (type === "filters") {

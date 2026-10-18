@@ -2749,69 +2749,14 @@ button.cb-cond-menu-row[aria-disabled='true'] {
   overflow: visible;
 }
 
-/* "+ rule" and "rules N", under the filters. */
+/* The rules row, under the filters and drawn as they are; an off rule's
+ * chip is muted. */
 .cb-rule-row {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--kit-line);
+  margin-top: 8px;
 }
-
-/* The rule list ("rules N") in the middle pane: a row per rule, an off
- * one muted. */
-.cb-rules-rows {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-}
-.cb-rules-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-top: 1px solid var(--kit-line);
-}
-.cb-rules-row:last-child {
-  border-bottom: 1px solid var(--kit-line);
-}
-.cb-rules-row-open {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  gap: 10px;
-  align-items: baseline;
-  padding: 8px 4px;
-  background: transparent;
-  border: 0;
-  text-align: left;
-  font: 13.5px var(--kit-sans);
-  color: var(--kit-fg);
-  cursor: pointer;
-}
-.cb-rules-row-open:hover {
-  background: color-mix(in srgb, var(--kit-line) 40%, transparent);
-}
-.cb-rules-row-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cb-rules-row-state,
-.cb-rules-row-n {
-  font: 12px var(--kit-mono);
-  color: var(--kit-muted);
-}
-.cb-rules-row-state[data-state='not valid'] {
-  color: var(--kit-signal);
-}
-.cb-rules-row-d {
-  font: 12.5px var(--kit-sans);
-  color: var(--kit-muted);
-}
-.cb-rules-row.cb-rule-off .cb-rules-row-name {
-  color: var(--kit-muted);
-}
-.cb-rules-row .cb-rule-menu {
-  position: relative;
+.cb-rule-chip.kit-chip.cb-rule-off:not(.on) {
+  opacity: 0.5;
+  border-style: dashed;
 }
 /* The rule editor's propose line and the rule card. */
 .cb-rule-propose {

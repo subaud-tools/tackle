@@ -3,7 +3,7 @@
 // pane.
 //
 // makeDecide(ctx) builds the kit list(), wires the filters, the rule row
-// ("+ rule", "rules N") and search, fetches items from GET /api/items
+// (a chip per rule, "+ rule") and search, fetches items from GET /api/items
 // (view=all), and opens items in the reading column via renderItem() from
 // item.ts. Each rule's recommendations are a group whose header is the rule
 // (its name, "rule", its decision, its count, ⋯); "Came back" leads.
@@ -74,7 +74,7 @@ import {
   ruleMenu,
   toggleRule,
 } from './rule-editor.ts';
-import { PREVIEW_DEBOUNCE_MS, renderRule, renderRuleList } from './rules.ts';
+import { PREVIEW_DEBOUNCE_MS, renderRule } from './rules.ts';
 import { parseFilterIds, filterLabel } from './filters-text.ts';
 
 // STRIP_MS is how long the strip after an outward decision ("Closed it ·
@@ -319,7 +319,7 @@ export function makeDecide(ctx: Ctx): Section {
     // editing a rule, which rule).
     else if (draft !== null && editing === 'rule' && editingId)
       ctx.setAttached({ rule: editingId, list: listAttached() });
-    else if (draft === null && !listShown && filters.rule)
+    else if (draft === null && filters.rule)
       ctx.setAttached({ rule: filters.rule });
     else ctx.setAttached({ list: listAttached() });
   }
@@ -342,7 +342,6 @@ export function makeDecide(ctx: Ctx): Section {
   function showReadEmpty(): void {
     currentOpenKey = null;
     shownDetail = null;
-    listShown = false;
     // A selected rule shows in the middle pane until an item is opened.
     const rr =
       filters.rule && draft === null
@@ -384,39 +383,6 @@ export function makeDecide(ctx: Ctx): Section {
       }),
     );
   }
-
-  // showRuleList puts every rule, off ones too, in the middle pane ("rules
-  // N"): a row opens its rule and narrows the list to it.
-  function showRuleList(): void {
-    if (draft !== null) closeFilterEditor(true);
-    if (currentOpenKey) goList();
-    currentOpenKey = null;
-    shownDetail = null;
-    listShown = true;
-    paintRuleList();
-    feedAttached();
-  }
-  function paintRuleList(): void {
-    readEl.replaceChildren(
-      renderRuleList(ctx, ruleRows, {
-        onOpen(row) {
-          listShown = false;
-          selectRule(row.rule.id);
-        },
-        onEdit(row) {
-          listShown = false;
-          openRuleEditor(row, null);
-        },
-        async onToggle(row) {
-          await toggleRule(ctx, row);
-          await loadRules();
-          void reload();
-        },
-      }),
-    );
-  }
-  // listShown: the middle pane shows the rule list (it follows the rules).
-  let listShown = false;
 
   // Initialise the reading column with the empty state so it is never blank.
   showReadEmpty();
@@ -555,17 +521,31 @@ export function makeDecide(ctx: Ctx): Section {
     },
   });
 
-  // ---- rules: "+ rule" and "rules N" under the filters ----------------------
+  // ---- rules: a chip per rule under the filters ------------------------------
 
   // ruleRows are serve's rules (GET /api/rules), off ones too: their names
-  // head their groups, and "rules N" lists them.
+  // head their groups, and each is a chip.
   let ruleRows: RuleRow[] = [];
   const ruleRow = makeRuleRow(ctx, {
+    onSelect(id) {
+      selectRule(id);
+    },
     onNew() {
       openRuleEditor(null, null);
     },
-    onList() {
-      showRuleList();
+    onEdit(row) {
+      openRuleEditor(row, null);
+    },
+    onToggle(row) {
+      void toggleRule(ctx, row)
+        .then(() => loadRules())
+        .then(() => {
+          if (filters.rule === row.rule.id) showReadEmpty();
+          void reload();
+        })
+        .catch((err: unknown) => {
+          filterBar.setError(err instanceof Error ? err.message : String(err));
+        });
     },
   });
   async function loadRules(): Promise<void> {
@@ -587,10 +567,9 @@ export function makeDecide(ctx: Ctx): Section {
     }
   }
   function paintRules(): void {
-    ruleRow.paint(ruleRows);
+    ruleRow.paint(ruleRows, draft !== null ? null : filters.rule);
     // The groups' headers name their rules.
     paintAll();
-    if (listShown && draft === null && !currentOpenKey) paintRuleList();
   }
   // selectRule makes id the selection (null: back to everything): the list
   // shows the rule's matches, the middle pane the rule.
@@ -2667,13 +2646,7 @@ export function makeDecide(ctx: Ctx): Section {
         // another): the rule row, the groups' headers and an open rule
         // follow.
         void loadRules().then(() => {
-          if (
-            filters.rule &&
-            !currentOpenKey &&
-            draft === null &&
-            !listShown &&
-            active
-          )
+          if (filters.rule && !currentOpenKey && draft === null && active)
             showReadEmpty();
         });
       } else if (type === 'filters') {
