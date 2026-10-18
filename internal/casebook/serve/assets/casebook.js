@@ -254,6 +254,7 @@ function makeWalkthrough(ctx) {
     if (running) return;
     running = true;
     ctx.pauseLive(true);
+    if (!location.hash) history.replaceState(history.state, "", "#/decide");
     const startHash = location.hash;
     const pane = ctx.dockPane();
     const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -281,6 +282,12 @@ function makeWalkthrough(ctx) {
     let ended = false;
     let raf = 0;
     let moving = false;
+    let pushed = 0;
+    function onHash() {
+      if (moving) pushed++;
+      else finish(false);
+    }
+    window.addEventListener("hashchange", onHash);
     function place() {
       const step = steps[at2];
       const target = step ? document.querySelector(step.target) : null;
@@ -332,14 +339,16 @@ function makeWalkthrough(ctx) {
         moving = false;
       });
     }
-    function finish() {
+    function finish(restore = true) {
       if (ended) return;
       ended = true;
       markSeen();
       cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("hashchange", onHash);
       overlay.remove();
-      if (location.hash !== startHash) {
+      if (restore && pushed > 0) history.go(-pushed);
+      else if (restore && location.hash !== startHash) {
         if (startHash) location.hash = startHash;
         else ctx.route.go("decide");
       }

@@ -152,6 +152,9 @@ export function makeWalkthrough(ctx: Ctx): { start(): void } {
     if (running) return;
     running = true;
     ctx.pauseLive(true);
+    // No address is decide's: say so in place (no history entry, no route
+    // change), so going back over the walkthrough's entries lands on it.
+    if (!location.hash) history.replaceState(history.state, '', '#/decide');
     const startHash = location.hash;
     const pane = ctx.dockPane();
     const focused =
@@ -186,6 +189,17 @@ export function makeWalkthrough(ctx: Ctx): { start(): void } {
     let raf = 0;
     // Each step moves on once; a click while one is getting ready waits.
     let moving = false;
+    // pushed counts the history entries the walkthrough's own navigation
+    // made (going to decide, opening the first item): the end goes back
+    // over them, so it leaves no history. An address change while no step
+    // is getting ready is Court's (Back, a link, the address bar): it ends
+    // the walkthrough there.
+    let pushed = 0;
+    function onHash(): void {
+      if (moving) pushed++;
+      else finish(false);
+    }
+    window.addEventListener('hashchange', onHash);
 
     // place follows the step's control every frame (a list loading, the
     // pane opening): the outline on it, the note beside it.
@@ -246,14 +260,18 @@ export function makeWalkthrough(ctx: Ctx): { start(): void } {
       });
     }
 
-    function finish(): void {
+    // finish ends it; restore (done, skip, Esc) goes back to where it
+    // started, Court's own navigation (restore false) stays where he went.
+    function finish(restore = true): void {
       if (ended) return;
       ended = true;
       markSeen();
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('hashchange', onHash);
       overlay.remove();
-      if (location.hash !== startHash) {
+      if (restore && pushed > 0) history.go(-pushed);
+      else if (restore && location.hash !== startHash) {
         if (startHash) location.hash = startHash;
         else ctx.route.go('decide');
       }

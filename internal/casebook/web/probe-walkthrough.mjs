@@ -349,6 +349,62 @@ export async function walkthroughScenarios(shared, t) {
       );
     }
 
+    // ---- review 2026-10-17: history and navigation ------------------------
+    {
+      const go = (h) =>
+        pg.evaluate((x) => {
+          location.hash = x;
+        }, h);
+      await go('#/apply');
+      await pg.waitForTimeout(300);
+      await go('#/decide');
+      await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
+        timeout: 8000,
+      });
+      await pg.keyboard.press('g');
+      await pg.keyboard.press('w');
+      for (const id of IDS.slice(1, IDS.indexOf('decision') + 1)) {
+        await until(pg, () => !!document.querySelector('.cb-walk'));
+        await pg.click('.cb-walk-next');
+        await until(
+          pg,
+          (x) => document.querySelector('.cb-walk')?.dataset.step === x,
+          id,
+        );
+      }
+      await pg.click('.cb-walk-skip');
+      await until(pg, () => !document.querySelector('.cb-walk:not([hidden])'));
+      await pg.evaluate(() => history.back());
+      check(
+        `the walkthrough leaves no history: Back after it goes where Back went before it (${await pg.evaluate(() => location.hash)})`,
+        await until(pg, () => location.hash === '#/apply'),
+      );
+      await go('#/decide');
+      await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
+        timeout: 8000,
+      });
+      await pg.keyboard.press('g');
+      await pg.keyboard.press('w');
+      await until(
+        pg,
+        () => document.querySelector('.cb-walk')?.dataset.step === 'decide',
+      );
+      await go('#/apply');
+      check(
+        'going elsewhere during it ends it there: the overlay goes, the address stays where Court went',
+        (await until(
+          pg,
+          () => !document.querySelector('.cb-walk:not([hidden])'),
+        )) &&
+          (await pg.waitForTimeout(500),
+          await pg.evaluate(() => location.hash)) === '#/apply',
+      );
+      await go('#/decide');
+      await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
+        timeout: 8000,
+      });
+    }
+
     // ---- an empty list: no decision step ----------------------------------
     {
       const all = (
