@@ -351,6 +351,8 @@ async function waitFor(sel, ms) {
   }
 }
 var ROW = ".kit-list:not([hidden]) .kit-row";
+var GROUP_CARET = ".kit-list:not([hidden]) .cb-group.collapsed .cb-group-caret";
+var HAS_ITEMS = `${ROW}, .kit-list:not([hidden]) .cb-group`;
 function makeWalkthrough(ctx) {
   let running = false;
   function start2() {
@@ -414,7 +416,12 @@ function makeWalkthrough(ctx) {
       for (; i < steps.length; i++) {
         const step = steps[i];
         if (step.id === "decision") {
-          const row = document.querySelector(ROW);
+          let row = document.querySelector(ROW);
+          if (!row) {
+            document.querySelector(GROUP_CARET)?.click();
+            row = await waitFor(ROW, 4e3);
+            if (ended) return;
+          }
           if (!row) continue;
           row.click();
         }
@@ -491,7 +498,7 @@ function makeWalkthrough(ctx) {
       if (at3 === "review" || at3 === "run") ctx.route.go("decide");
       await waitFor(".kit-list:not([hidden]) .kit-rows > *", 4e3);
       if (ended) return;
-      if (!document.querySelector(ROW))
+      if (!document.querySelector(HAS_ITEMS))
         steps = WALKTHROUGH_STEPS.filter((s) => s.id !== "decision");
       await show(0);
       moving = false;

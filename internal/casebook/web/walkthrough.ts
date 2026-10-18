@@ -144,6 +144,11 @@ async function waitFor(sel: string, ms: number): Promise<HTMLElement | null> {
 }
 
 const ROW = '.kit-list:not([hidden]) .kit-row';
+// decide's groups start collapsed (serve sends no rows for them): a list
+// with items has group headers before it has rows.
+const GROUP_CARET =
+  '.kit-list:not([hidden]) .cb-group.collapsed .cb-group-caret';
+const HAS_ITEMS = `${ROW}, .kit-list:not([hidden]) .cb-group`;
 
 export function makeWalkthrough(ctx: Ctx): { start(): void } {
   let running = false;
@@ -230,7 +235,13 @@ export function makeWalkthrough(ctx: Ctx): { start(): void } {
       for (; i < steps.length; i++) {
         const step = steps[i];
         if (step.id === 'decision') {
-          const row = document.querySelector<HTMLElement>(ROW);
+          // The first group opens (its rows load) when none is open yet.
+          let row = document.querySelector<HTMLElement>(ROW);
+          if (!row) {
+            document.querySelector<HTMLElement>(GROUP_CARET)?.click();
+            row = await waitFor(ROW, 4000);
+            if (ended) return;
+          }
           if (!row) continue;
           row.click();
         }
@@ -319,7 +330,7 @@ export function makeWalkthrough(ctx: Ctx): { start(): void } {
       if (at === 'review' || at === 'run') ctx.route.go('decide');
       await waitFor('.kit-list:not([hidden]) .kit-rows > *', 4000);
       if (ended) return;
-      if (!document.querySelector(ROW))
+      if (!document.querySelector(HAS_ITEMS))
         steps = WALKTHROUGH_STEPS.filter((s) => s.id !== 'decision');
       await show(0);
       moving = false;
