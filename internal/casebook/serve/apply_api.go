@@ -84,7 +84,8 @@ func (s *Server) buildEnv() apply.Env {
 }
 
 // postApplyPlan is POST /api/apply/plan.
-// Input: {"keys":["..."],"all":true}
+// Input: {"keys":["..."],"all":true,"preview":true}
+// preview (review showing a group) builds the plan and stores nothing.
 // Returns PlanView, 409 when the index observation is stale, or 422 when
 // there is nothing to plan (no job is made).
 //
@@ -97,6 +98,8 @@ func (s *Server) postApplyPlan(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Keys []string `json:"keys"`
 		All  bool     `json:"all"`
+		// Preview builds the plan to show and stores nothing (review).
+		Preview bool `json:"preview"`
 	}
 	if err := decode(r, &in); err != nil {
 		reply(w, nil, err)
@@ -200,6 +203,11 @@ func (s *Server) postApplyPlan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	plan.Head = s.Index.Head()
+
+	if in.Preview {
+		reply(w, PlanView{Plan: plan, Groups: plan.Groups(), Job: apply.Preview(plan, s.App.Cfg.Machine, now)}, nil)
+		return
+	}
 
 	if s.afterOverlapCheck != nil {
 		s.afterOverlapCheck()

@@ -1840,11 +1840,11 @@ function makeApply(ctx) {
   const order = () => runOrder(jobs);
   const groupName = (g) => {
     const kind = g.id.slice(g.id.indexOf("|") + 1);
-    return kindVocab(kind)?.nouns ?? kind;
+    return kindVocab(kind)?.nouns ?? "";
   };
   const choiceOf = (g) => {
     const kind = g.id.slice(g.id.indexOf("|") + 1);
-    return kindVocab(kind)?.choices?.find((c) => c.disposition === g.disposition)?.label ?? g.disposition;
+    return kindVocab(kind)?.choices?.find((c) => c.disposition === g.disposition)?.label ?? "";
   };
   const titleOf = (j) => planTitle(j, (kind) => {
     const kv = kindVocab(kind);
@@ -2442,7 +2442,10 @@ function makeApply(ctx) {
     if (!keys.length) return;
     opening = true;
     try {
-      const v = await ctx.api.post("/apply/plan", { keys });
+      const v = await ctx.api.post("/apply/plan", {
+        keys,
+        preview: true
+      });
       if (!planSeq.isLatest(mine) || reviewGroup !== g.id) return;
       reviewView = v;
       afterSync = null;
@@ -2542,8 +2545,8 @@ function makeApply(ctx) {
     const steps = j.steps ?? [];
     const go2 = () => {
       const now = runCheck();
-      if (!now?.can || now.v.job.id !== j.id) return;
-      void approve(j, needsSession(steps) ? runner()?.id ?? "" : "");
+      if (!now?.can || now.v !== rc.v) return;
+      void saveAndRun(rc.v, needsSession(steps) ? runner()?.id ?? "" : "");
     };
     const permanent = steps.filter((s) => s.permanent);
     if (!permanent.length) return go2();
@@ -2578,14 +2581,24 @@ function makeApply(ctx) {
       ]
     });
   }
-  async function approve(j, session) {
+  async function saveAndRun(shown2, session) {
     if (busy) return;
     busy = true;
     note = "";
     drawReview();
     try {
+      const saved = await ctx.api.post("/apply/plan", {
+        keys: reviewKeys
+      });
+      const want = (shown2.job.steps ?? []).map((x) => `${x.key} ${x.command}`);
+      const got = (saved.job.steps ?? []).map((x) => `${x.key} ${x.command}`);
+      if (want.join("\n") !== got.join("\n")) {
+        reviewView = { ...saved, job: { ...saved.job } };
+        note = "What would run changed since you looked; nothing ran. Look again.";
+        return;
+      }
       const v = await ctx.api.post("/apply/approve", {
-        plan_id: j.id,
+        plan_id: saved.job.id,
         session
       });
       patchJob(v);
@@ -2935,12 +2948,14 @@ function makeApply(ctx) {
   void loadItems();
   void loadSessions();
   void loadSummary();
-  void getVocab(ctx).then((v) => {
-    vocab2 = v;
-    paintList();
-    drawReview();
-  }).catch(() => {
-  });
+  const loadVocab = () => {
+    getVocab(ctx).then((v) => {
+      vocab2 = v;
+      paintList();
+      drawReview();
+    }).catch(() => setTimeout(loadVocab, 2e3));
+  };
+  loadVocab();
   const jobOf = (type, data) => {
     const d = data ?? {};
     if (type === "job") return d.id ?? null;

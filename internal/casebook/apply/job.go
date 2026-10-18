@@ -239,6 +239,27 @@ func (s *Store) Create(ctx context.Context, p Plan, machine string) (Job, error)
 	return job, nil
 }
 
+// Preview is the job Create would make of p, not stored (no ids): what
+// review shows before Court runs it.
+func Preview(p Plan, machine string, now time.Time) Job {
+	steps := make([]JobStep, len(p.Steps))
+	for i, ps := range p.Steps {
+		steps[i] = JobStep{
+			Key:          ps.Key,
+			Action:       ps.Action,
+			Lane:         ps.Lane,
+			Command:      ps.Command,
+			Precondition: ps.Precondition,
+			Posts:        ps.Posts,
+			ExpectedTip:  ps.ExpectedTip,
+			State:        StepPending,
+			UndoNote:     UndoNote(ps.Action),
+			Permanent:    Permanent(ps.Action),
+		}
+	}
+	return Job{Machine: machine, State: JobPlanned, CreatedAt: now, Steps: steps}
+}
+
 // Approve transitions a job from planned to approved, setting session and
 // approved_at. session may be empty only when the job has no agent-lane steps;
 // if agent-lane steps exist and session is empty, an error is returned.

@@ -302,3 +302,30 @@ func TestConcurrentPlansAndApprovesKeepAnItemInOneJob(t *testing.T) {
 		t.Fatalf("%d overlapping plans were approved at once (codes %v), want 1", ok, codes)
 	}
 }
+
+// TestPreviewMakesNoPlan (Court, 2026-10-17: two tabs reviewing one group
+// cancelled each other's plans): preview builds the plan to show and stores
+// nothing: no job is made and no plan holding the keys is cancelled.
+func TestPreviewMakesNoPlan(t *testing.T) {
+	r := newRig(t)
+	decideTwo(t, r)
+	pr := "pr:schuettc/hail#3"
+	var saved PlanView
+	if c := r.do(t, "POST", "/api/apply/plan", map[string]any{"keys": []string{pr}}, &saved); c != http.StatusOK {
+		t.Fatalf("plan: %d", c)
+	}
+	before, _ := r.s.Apply.List(ctx)
+	var v PlanView
+	if c := r.do(t, "POST", "/api/apply/plan", map[string]any{"keys": []string{pr, "issue:schuettc/hail#4"}, "preview": true}, &v); c != http.StatusOK {
+		t.Fatalf("preview: %d", c)
+	}
+	if v.Job.ID != 0 || v.Job.State != apply.JobPlanned || len(v.Job.Steps) == 0 || len(v.Groups) == 0 {
+		t.Fatalf("preview = job %d (%s) with %d steps, want an unsaved plan with steps", v.Job.ID, v.Job.State, len(v.Job.Steps))
+	}
+	if after, _ := r.s.Apply.List(ctx); len(after) != len(before) {
+		t.Fatalf("preview made a job: %d jobs, want %d", len(after), len(before))
+	}
+	if j, _ := r.s.Apply.Get(ctx, saved.Job.ID); j.State != apply.JobPlanned {
+		t.Fatalf("preview cancelled plan #%d (%s)", saved.Job.ID, j.State)
+	}
+}

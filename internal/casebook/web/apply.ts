@@ -302,13 +302,13 @@ export function makeApply(ctx: Ctx): Section {
   // decision as decide words it ("Delete it").
   const groupName = (g: GroupView): string => {
     const kind = g.id.slice(g.id.indexOf('|') + 1);
-    return kindVocab(kind)?.nouns ?? kind;
+    return kindVocab(kind)?.nouns ?? '';
   };
   const choiceOf = (g: GroupView): string => {
     const kind = g.id.slice(g.id.indexOf('|') + 1);
     return (
       kindVocab(kind)?.choices?.find((c) => c.disposition === g.disposition)
-        ?.label ?? g.disposition
+        ?.label ?? ''
     );
   };
   // titleOf names a plan with its counts, in serve's nouns: "Delete 7 repos".
@@ -1045,7 +1045,12 @@ export function makeApply(ctx: Ctx): Section {
     if (!keys.length) return;
     opening = true;
     try {
-      const v = await ctx.api.post<PlanView>('/apply/plan', { keys });
+      // Review only shows: the plan is stored when Court runs it, so two
+      // tabs reviewing one group change nothing.
+      const v = await ctx.api.post<PlanView>('/apply/plan', {
+        keys,
+        preview: true,
+      });
       if (!planSeq.isLatest(mine) || reviewGroup !== g.id) return;
       reviewView = v;
       afterSync = null;
@@ -1170,8 +1175,8 @@ export function makeApply(ctx: Ctx): Section {
     const steps = j.steps ?? [];
     const go = (): void => {
       const now = runCheck();
-      if (!now?.can || now.v.job.id !== j.id) return;
-      void approve(j, needsSession(steps) ? (runner()?.id ?? '') : '');
+      if (!now?.can || now.v !== rc.v) return;
+      void saveAndRun(rc.v, needsSession(steps) ? (runner()?.id ?? '') : '');
     };
     const permanent = steps.filter((s) => s.permanent);
     if (!permanent.length) return go();
@@ -1207,14 +1212,28 @@ export function makeApply(ctx: Ctx): Section {
     });
   }
 
-  async function approve(j: Job, session: string): Promise<void> {
+  // saveAndRun stores the plan for exactly the reviewed items and runs it.
+  // If serve now builds different steps (a sync since), nothing runs: the
+  // review shows the new plan to look at again.
+  async function saveAndRun(shown: PlanView, session: string): Promise<void> {
     if (busy) return;
     busy = true;
     note = '';
     drawReview();
     try {
+      const saved = await ctx.api.post<PlanView>('/apply/plan', {
+        keys: reviewKeys,
+      });
+      const want = (shown.job.steps ?? []).map((x) => `${x.key} ${x.command}`);
+      const got = (saved.job.steps ?? []).map((x) => `${x.key} ${x.command}`);
+      if (want.join('\n') !== got.join('\n')) {
+        reviewView = { ...saved, job: { ...saved.job } };
+        note =
+          'What would run changed since you looked; nothing ran. Look again.';
+        return;
+      }
       const v = await ctx.api.post<JobView>('/apply/approve', {
-        plan_id: j.id,
+        plan_id: saved.job.id,
         session,
       });
       patchJob(v);
@@ -1620,13 +1639,18 @@ export function makeApply(ctx: Ctx): Section {
   void loadSessions();
   void loadSummary();
   // The vocabulary words the waiting groups for a count.
-  void getVocab(ctx)
-    .then((v) => {
-      vocab = v;
-      paintList();
-      drawReview();
-    })
-    .catch(() => {});
+  // Asked again until it comes (a serve restarting, a slow start): the
+  // page never stays on raw words.
+  const loadVocab = (): void => {
+    getVocab(ctx)
+      .then((v) => {
+        vocab = v;
+        paintList();
+        drawReview();
+      })
+      .catch(() => setTimeout(loadVocab, 2000));
+  };
+  loadVocab();
 
   // Which job a live event is about.
   const jobOf = (type: string, data: unknown): number | null => {
