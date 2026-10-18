@@ -8818,8 +8818,14 @@ function makeDock(ctx) {
     composer.setAgent(sess?.harness ?? "");
     ctx.setAgentName(sess?.harness ?? "");
   }
+  function tellAttached(id) {
+    ctx.api.post("/page/attached", { session: id }).catch((err) => {
+      console.error("[dock] attached:", err);
+    });
+  }
   function detach() {
     auto = false;
+    if (currentSessionId) tellAttached("");
     currentSessionId = "";
     currentThreadId = 0;
     threads = [];
@@ -8834,6 +8840,7 @@ function makeDock(ctx) {
   }
   async function switchSession(id) {
     currentSessionId = id;
+    tellAttached(id);
     currentThreadId = 0;
     void batchTray.load(0);
     threads = [];

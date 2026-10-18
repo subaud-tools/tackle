@@ -893,10 +893,6 @@ func (s *Server) getSessions(w http.ResponseWriter, r *http.Request) {
 		reply(w, SessionsView{Sessions: nonNil(ss)}, nil)
 		return
 	}
-	// A tab's dock asks for the one session it is attached to.
-	if v := q["session"]; len(v) == 1 && v[0] != "" && !strings.Contains(v[0], ",") {
-		s.setPageSession(r.Context(), v[0])
-	}
 	named := map[string]bool{}
 	for _, v := range q["session"] {
 		for _, id := range strings.Split(v, ",") {
@@ -912,6 +908,20 @@ func (s *Server) getSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	reply(w, SessionsView{Sessions: out}, nil)
+}
+
+// postPageAttached records the agent a tab's dock attached ("" when it
+// detached): a restart reopens the page for the most recent one.
+func (s *Server) postPageAttached(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Session string `json:"session"`
+	}
+	if err := decode(r, &in); err != nil {
+		reply(w, nil, err)
+		return
+	}
+	s.setPageSession(r.Context(), in.Session)
+	reply(w, map[string]string{"session": in.Session}, nil)
 }
 
 // postMoveSession atomically moves all threads (and their queued messages) from

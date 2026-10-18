@@ -120,14 +120,52 @@ func TestRestartReopensThePageForItsAgent(t *testing.T) {
 	closeTab := stream(t, adv.Base, adv.Token)
 	defer closeTab()
 	time.Sleep(100 * time.Millisecond)
-	if c := call(t, adv, "GET", "/api/sessions?session=s1"); c != http.StatusOK {
-		t.Fatalf("sessions: %d", c)
+	if c := callBody(t, adv, "/api/page/attached", `{"session":"s1"}`); c != http.StatusOK {
+		t.Fatalf("attached: %d", c)
 	}
 	stop()
 	_, was, sess, stop := runOnceSession(t, r, &opened)
 	defer stop()
 	if !was || sess != "s1" {
 		t.Fatalf("restart reopened %v for %q, want the page for s1", was, sess)
+	}
+}
+
+// TestTheDockSaysWhichAgentItIsAttachedTo (review, 2026-10-18): the agent a
+// restart reopens the page for is the one the tab's dock last attached, as
+// it said so; a page reading a session (To apply's jobs, the dock's own
+// reads) doesn't choose it, and a detach clears it.
+func TestTheDockSaysWhichAgentItIsAttachedTo(t *testing.T) {
+	r := apptest.New(t)
+	var opened []string
+	restart := func(adv Advert, stop func(), do func(Advert)) (Advert, string, func()) {
+		closeTab := stream(t, adv.Base, adv.Token)
+		time.Sleep(100 * time.Millisecond)
+		do(adv)
+		stop()
+		closeTab()
+		adv, _, sess, stop := runOnceSession(t, r, &opened)
+		return adv, sess, stop
+	}
+	adv, _, _, stop := runOnceSession(t, r, &opened)
+	adv, sess, stop := restart(adv, stop, func(a Advert) {
+		call(t, a, "GET", "/api/sessions?session=s1")
+	})
+	if sess != "" {
+		t.Errorf("a sessions read for s1 chose it: restart for %q", sess)
+	}
+	adv, sess, stop = restart(adv, stop, func(a Advert) {
+		callBody(t, a, "/api/page/attached", `{"session":"s1"}`)
+	})
+	if sess != "s1" {
+		t.Errorf("after an attach to s1, restart for %q", sess)
+	}
+	_, sess, stop = restart(adv, stop, func(a Advert) {
+		callBody(t, a, "/api/page/attached", `{"session":""}`)
+	})
+	defer stop()
+	if sess != "" {
+		t.Errorf("after a detach, restart for %q", sess)
 	}
 }
 

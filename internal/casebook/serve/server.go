@@ -131,8 +131,8 @@ func (s *Server) takePageOpen(ctx context.Context) (bool, string) {
 	return v == "1", sess
 }
 
-// setPageSession records the agent a tab is attached to (its dock asks for
-// that one session): a restart reopens the page for it.
+// setPageSession records the agent a tab is attached to (its dock says so,
+// "" when it detached): a restart reopens the page for it.
 func (s *Server) setPageSession(ctx context.Context, id string) {
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES ('page_session', ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, id)
@@ -740,6 +740,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/proposals/withdraw", s.postWithdraw)
 	m.HandleFunc("GET /api/sessions", s.getSessions)
 	m.HandleFunc("POST /api/sessions/move", s.postMoveSession)
+	m.HandleFunc("POST /api/page/attached", s.postPageAttached)
 	m.HandleFunc("GET /api/threads", s.getThreads)
 	m.HandleFunc("POST /api/threads", s.postThread)
 	m.HandleFunc("POST /api/threads/move", s.postMoveThread)

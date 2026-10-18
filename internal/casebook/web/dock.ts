@@ -1093,9 +1093,18 @@ export function makeDock(ctx: Ctx): DockHandle {
     ctx.setAgentName(sess?.harness ?? '');
   }
 
+  // tellAttached tells serve the agent this tab is attached to ("" for
+  // none): a restart reopens the page for it.
+  function tellAttached(id: string) {
+    ctx.api.post('/page/attached', { session: id }).catch((err: unknown) => {
+      console.error('[dock] attached:', err);
+    });
+  }
+
   // detach drops a lone-session guess: no session, so the chooser asks.
   function detach() {
     auto = false;
+    if (currentSessionId) tellAttached('');
     currentSessionId = '';
     currentThreadId = 0;
     threads = [];
@@ -1111,6 +1120,7 @@ export function makeDock(ctx: Ctx): DockHandle {
 
   async function switchSession(id: string) {
     currentSessionId = id;
+    tellAttached(id);
     currentThreadId = 0;
     // The tray holds the previous session's batch until the new threads
     // load: empty it now, so it can never send that batch here.
