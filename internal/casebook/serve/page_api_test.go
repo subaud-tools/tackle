@@ -157,7 +157,7 @@ func TestVocabularyGroupWords(t *testing.T) {
 	if v.CountWords != (CountWords{One: "it", Two: "both", All: "all {n}", Some: "{n}"}) {
 		t.Fatalf("count words %+v", v.CountWords)
 	}
-	if v.ToApplyHint != "goes to apply first" || v.Untick != "untick" {
+	if v.ToApplyHint != "goes to review first" || v.Untick != "untick" {
 		t.Fatalf("hint %q, untick %q", v.ToApplyHint, v.Untick)
 	}
 	if v.LeftOpen != "left open" {

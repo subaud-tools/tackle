@@ -437,7 +437,7 @@ func decisionVocab() DecisionVocabView {
 		DiscardAll:     "discard all {n}",
 		Summary:        SummaryVocab{ToDecide: "{n} to decide", CameBack: "{n} came back", Group: "{who} \u00b7 {decision} \u00b7 {n}", NotRecommended: "{n} not recommended yet"},
 		CountWords:     countWords,
-		ToApplyHint:    "goes to apply first",
+		ToApplyHint:    "goes to review first",
 		Untick:         "untick",
 		LeftOpen:       "left open",
 		CameBack: map[string]string{
@@ -446,7 +446,7 @@ func decisionVocab() DecisionVocabView {
 			string(item.StatusConflict): "two decisions for it disagree",
 		},
 		CameBackFact:   "came back \u00b7 {reason}",
-		Waiting:        WaitingVocab{Text: "{done} \u00b7 waiting in {apply} \u00b7 {undo}", Apply: "apply", Undo: "undo"},
+		Waiting:        WaitingVocab{Text: "{done} \u00b7 waiting in {apply} \u00b7 {undo}", Apply: "review", Undo: "undo"},
 		Recommends:     "agent recommends",
 		RuleRecommends: "{rule} recommends",
 		Nav: NavVocab{

@@ -7,7 +7,13 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 ## [casebook 0.14.0] - 2026-10-17
 
 ### Added
-- A walkthrough the first time casebook opens, on the real page: the page pauses (nothing can be clicked and nothing live moves) while one control at a time is outlined with a short note, in the order casebook is used: decide, filters, rules, a decision button (on the first item in the list), apply, the agent. Each step has next and skip (Esc skips). It decides nothing, and puts the page back as it found it. Once done or skipped it doesn't show again on its own; `g w` (listed in the `?` overlay) shows it again.
+- A walkthrough the first time casebook opens, on the real page: the page pauses (nothing can be clicked and nothing live moves) while one control at a time is outlined with a short note, in the order casebook is used: decide, filters, rules, a decision button (on the first item in the list), review, the agent. Each step has next and skip (Esc skips). It decides nothing, and puts the page back as it found it. Once done or skipped it doesn't show again on its own; `g w` (listed in the `?` overlay) shows it again.
+
+### Changed
+- The page has three steps: decide · review · run (apply is gone). review lists the decisions waiting, grouped by what will happen; a group's button opens it: its title with its counts ("Delete 7 repos"), what it does ("Cannot be undone." in red when a step is permanent), "runs through <agent>", the exact commands, and one button named for the action. Pressing it runs it (a step that can't be undone asks first, naming each item) and the job opens in run. Leaving a group runs nothing. run lists the jobs running, then the finished ones, collapsed. The bar counts the decisions waiting in review and the jobs running.
+- The agent the page is attached to runs a group's outward steps; there is no session menu. With no agent attached, review says "Open casebook from an agent to run this." and its button is off; a group that is all local needs none.
+- There are no plans to approve or discard: opening a group plans exactly its items, reusing the plan casebook built for them, or replacing one that held any of them (an item is still in one job that hasn't finished). Plans left from before are reused or replaced the same way.
+- Old `#/apply` links open review (`#/apply/<job>` opens the job in run); the strip after a decision says "waiting in review"; `g v` goes to review and `g r` to run.
 
 ## [casebook 0.13.0] - 2026-10-17
 

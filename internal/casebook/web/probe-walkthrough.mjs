@@ -10,7 +10,7 @@
 //   the first open shows the overlay, and a list row can't be clicked
 //   each step outlines its control (to ±2 px), on screen, its note not
 //   covering it, in order: decide, filters, rules, a decision button
-//   (the first item opened), apply, the agent (the pane opened)
+//   (the first item opened), review, the agent (the pane opened)
 //   nothing live moves under it: a decision made meanwhile shows after
 //   keys don't reach the page; done and skip put the page back as it was
 //   and decide nothing; a reload shows no overlay; g w shows it again;
@@ -27,14 +27,14 @@ export function stopWalkthroughServes() {
   serves = [];
 }
 
-const IDS = ['decide', 'filters', 'rules', 'decision', 'apply', 'agent'];
+const IDS = ['decide', 'filters', 'rules', 'decision', 'review', 'agent'];
 // What each step points at, found the probe's own way.
 const TARGETS = {
   decide: '.kit-ctl[data-id="decide"]',
   filters: '.kit-list:not([hidden]) .cb-filters',
   rules: '.kit-list:not([hidden]) .cb-rule-row',
   decision: '.kit-read:not([hidden]) .cb-decide-row .cb-choice',
-  apply: '.kit-ctl[data-id="apply"]',
+  review: '.kit-ctl[data-id="review"]',
   agent: '.kit-rail',
 };
 
@@ -355,7 +355,7 @@ export async function walkthroughScenarios(shared, t) {
         pg.evaluate((x) => {
           location.hash = x;
         }, h);
-      await go('#/apply');
+      await go('#/review');
       await pg.waitForTimeout(300);
       await go('#/decide');
       await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
@@ -377,7 +377,7 @@ export async function walkthroughScenarios(shared, t) {
       await pg.evaluate(() => history.back());
       check(
         `the walkthrough leaves no history: Back after it goes where Back went before it (${await pg.evaluate(() => location.hash)})`,
-        await until(pg, () => location.hash === '#/apply'),
+        await until(pg, () => location.hash === '#/review'),
       );
       await go('#/decide');
       await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
@@ -389,7 +389,7 @@ export async function walkthroughScenarios(shared, t) {
         pg,
         () => document.querySelector('.cb-walk')?.dataset.step === 'decide',
       );
-      await go('#/apply');
+      await go('#/review');
       check(
         'going elsewhere during it ends it there: the overlay goes, the address stays where Court went',
         (await until(
@@ -397,7 +397,7 @@ export async function walkthroughScenarios(shared, t) {
           () => !document.querySelector('.cb-walk:not([hidden])'),
         )) &&
           (await pg.waitForTimeout(500),
-          await pg.evaluate(() => location.hash)) === '#/apply',
+          await pg.evaluate(() => location.hash)) === '#/review',
       );
       await go('#/decide');
       await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {

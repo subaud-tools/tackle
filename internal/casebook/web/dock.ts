@@ -224,7 +224,7 @@ function renderAgentBody(msg: MessageView): Node {
         href: '#',
         onclick(e: Event) {
           e.preventDefault();
-          go('apply', encodeURIComponent(id));
+          go('run', encodeURIComponent(id));
         },
       });
       a.textContent = `job ${id}`;

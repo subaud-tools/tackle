@@ -15,7 +15,7 @@ describe('WALKTHROUGH_STEPS', () => {
   test('in the order casebook is used, each with a note', () => {
     assert.deepEqual(
       WALKTHROUGH_STEPS.map((s) => s.id),
-      ['decide', 'filters', 'rules', 'decision', 'apply', 'agent'],
+      ['decide', 'filters', 'rules', 'decision', 'review', 'agent'],
     );
     for (const s of WALKTHROUGH_STEPS) {
       assert.ok(s.note.trim().length > 0, `${s.id} has a note`);
@@ -28,6 +28,11 @@ describe('WALKTHROUGH_STEPS', () => {
     for (const s of WALKTHROUGH_STEPS) {
       assert.doesNotMatch(s.note, /\b(accept|reject|session)\b/i, s.id);
     }
+  });
+  test('review says what runs it, and that run exists', () => {
+    const review = WALKTHROUGH_STEPS.find((s) => s.id === 'review');
+    assert.equal(review?.target, '.kit-ctl[data-id="review"]');
+    assert.match(review?.note ?? '', /\brun\b/);
   });
   test('the flag is kept under casebook.walkthrough', () => {
     assert.equal(WALKTHROUGH_SEEN, 'casebook.walkthrough');

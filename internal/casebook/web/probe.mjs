@@ -3,9 +3,9 @@
 // Spawns a real seeded casebook serve (via serve.mjs), opens its page in
 // headless Chrome (playwright-core), and checks the four shell invariants:
 //
-//   1. two places with counts               (decide / apply; no rules, no attention)
+//   1. three steps with counts              (decide / review / run; no rules, no attention)
 //   2. theme toggle works                   (html[data-theme] flips)
-//   3. routing switches places              (#/rules/<id> → decide?rule=<id>, #/apply, back)
+//   3. routing switches places              (#/rules/<id> → decide?rule=<id>, #/apply → #/review, #/run, back)
 //   4. the live pill reads live             (.kit-live is visible, data-state="live")
 //
 // Chrome is required in CI (KIT_BROWSER=required) and optional locally.
@@ -1952,12 +1952,12 @@ async function composerScenariosOn(context, serveHandle) {
         ),
       );
 
-      // The other place is shown: apply with nothing open attaches nothing.
+      // Another place is shown: review with nothing open attaches nothing.
       await pg.evaluate(() => {
-        location.hash = '#/apply';
+        location.hash = '#/review';
       });
       check(
-        'showing apply with nothing open sets its context ("nothing")',
+        'showing review with nothing open sets its context ("nothing")',
         await until(
           pg,
           () =>
@@ -1989,7 +1989,7 @@ async function composerScenariosOn(context, serveHandle) {
         after === 'nothing',
       );
       const primaryHidden = await pg.$eval('.kit-primary', (e) => e.hidden);
-      check("and the bar's primary stays apply's (none)", primaryHidden);
+      check("and the bar's primary stays review's (none)", primaryHidden);
 
       // Back to Attention: it re-feeds what is still selected.
       await pg.evaluate(() => {
@@ -2016,7 +2016,7 @@ async function composerScenariosOn(context, serveHandle) {
 //
 // Its own serve (KEYS_SEED), so what a failing key does (accept a proposal,
 // open a sheet) touches nothing another scenario reads. decide keeps its
-// open item and its selection while hidden; on #/apply neither a, r nor d may
+// open item and its selection while hidden; on #/review neither a, r nor d may
 // reach them.
 const KEYS_SEED = [
   seedRepo(
@@ -2080,24 +2080,24 @@ async function keyScopeScenariosOn(context, serveHandle) {
     );
     check('decide shows the open item with its pending proposal', opened);
 
-    // Show apply: decide's open item stays, hidden.
+    // Show review: decide's open item stays, hidden.
     await pg.evaluate(() => {
-      location.hash = '#/apply';
+      location.hash = '#/review';
     });
     await until(
       pg,
       () =>
         document
-          .querySelector('.kit-ctl[data-id="apply"]')
+          .querySelector('.kit-ctl[data-id="review"]')
           ?.classList.contains('on') ?? false,
     );
 
     // A wrong decide is a POST after ordering, not synchronous: give it the
-    // full window (kept: the check is that the key does nothing on #/apply).
+    // full window (kept: the check is that the key does nothing on #/review).
     await pressWithFocus(pg, '1');
     await pg.waitForTimeout(1500);
     check(
-      'on #/apply, "1" does not decide decide\'s hidden open item',
+      'on #/review, "1" does not decide decide\'s hidden open item',
       (await proposalState()) === 'pending',
     );
 
@@ -2140,23 +2140,23 @@ async function keyScopeScenariosOn(context, serveHandle) {
         !onDecide.includes('decide selection'),
     );
     await pg.evaluate(() => {
-      location.hash = '#/apply';
+      location.hash = '#/review';
     });
     await until(
       pg,
       () =>
         document
-          .querySelector('.kit-ctl[data-id="apply"]')
+          .querySelector('.kit-ctl[data-id="review"]')
           ?.classList.contains('on') ?? false,
     );
     const onApply = await overlay();
     check(
-      `on apply the overlay lists neither decide's "search" nor "pick choice 1" (${onApply.join(', ')})`,
+      `on review the overlay lists neither decide's "search" nor "pick choice 1" (${onApply.join(', ')})`,
       !onApply.includes('search') && !onApply.includes('pick choice 1'),
     );
     await pressWithFocus(pg, '/');
     check(
-      'on apply, "/" does not reach decide\'s hidden search',
+      'on review, "/" does not reach decide\'s hidden search',
       !(await pg.evaluate(() =>
         document.activeElement?.classList.contains('kit-search'),
       )),
@@ -2261,8 +2261,8 @@ const LIST = '.kit-app > .kit-list:not([hidden])';
 const READ = '.kit-app > .kit-read:not([hidden])';
 
 // attentionWords is every visible text in the bar, the list and the middle
-// pane that says "attention" (none should: decide and apply are the two
-// places).
+// pane that says "attention" (none should: decide, review and run are the
+// three steps).
 async function attentionWords(pg) {
   return pg.evaluate(() => {
     const out = [];
@@ -2466,7 +2466,7 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
     });
     await until(pg, (sel) => !!document.querySelector(sel), `${HEAD} .fill`);
     const applyBefore = await pg.$eval(
-      '.kit-ctl[data-id="apply"] .kit-n',
+      '.kit-ctl[data-id="review"] .kit-n',
       (e) => Number(e.textContent),
     );
     await pg.click(`${HEAD} .cb-group-acts .fill`);
@@ -2475,12 +2475,12 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
       await until(pg, (sel) => !document.querySelector(sel), HEAD, 8000),
     );
     check(
-      'and apply counts 6 more',
+      'and review counts 6 more',
       await until(
         pg,
         (n) =>
           Number(
-            document.querySelector('.kit-ctl[data-id="apply"] .kit-n')
+            document.querySelector('.kit-ctl[data-id="review"] .kit-n')
               ?.textContent,
           ) === n,
         applyBefore + 6,
@@ -2904,12 +2904,12 @@ async function run() {
     await page.waitForSelector('.kit-bar', { timeout: 8000 });
     // Wait for the summary API call to complete so counts are rendered.
     // The summary sets at least one .kit-n span inside a .kit-ctl[data-id].
-    // (decide's and apply's.)
+    // (decide's and review's.)
     await page
       .waitForFunction(
         () =>
           !!document.querySelector('.kit-ctl[data-id="decide"] .kit-n') &&
-          !!document.querySelector('.kit-ctl[data-id="apply"] .kit-n'),
+          !!document.querySelector('.kit-ctl[data-id="review"] .kit-n'),
         undefined,
         { timeout: 5000 },
       )
@@ -2919,31 +2919,34 @@ async function run() {
 
     console.log('\nscenario: the shell boots');
 
-    // 1. Two places, decide and apply, with counts; no rules control.
+    // 1. Three steps, decide, review and run, with counts; no rules control.
     {
       const controls = await page.$$('.kit-ctl[data-id]');
       const ids = await Promise.all(
         controls.map((c) => c.getAttribute('data-id')),
       );
       check('decide control present', ids.includes('decide'));
-      check('apply control present', ids.includes('apply'));
+      check(
+        'review and run controls present, no apply',
+        ids.includes('review') && ids.includes('run') && !ids.includes('apply'),
+      );
       check(
         'no rules control, no attention control',
         !ids.includes('rules') && !ids.includes('attention'),
       );
       checkList(
-        'the bar names the two places: decide and apply',
+        'the bar names the three steps in order: decide, review, run',
         await page.$$eval('.kit-ctl[data-id]', (els) =>
           els.map((e) => e.firstChild?.textContent?.trim() ?? ''),
         ),
-        ['decide', 'apply'],
+        ['decide', 'review', 'run'],
       );
 
       // Each section control must show a number (even "0").
       let allHaveCount = true;
       for (const ctrl of controls) {
         const id = await ctrl.getAttribute('data-id');
-        if (!id || !['decide', 'apply'].includes(id)) continue;
+        if (!id || !['decide', 'review', 'run'].includes(id)) continue;
         const text = (await ctrl.textContent()) ?? '';
         if (!/\d/.test(text)) {
           allHaveCount = false;
@@ -2964,7 +2967,7 @@ async function run() {
     }
 
     // 3. Routing: an old #/rules/<id> lands on decide, narrowed to the
-    // rule; #/apply and #/decide switch places.
+    // rule; an old #/apply lands on review; #/run and #/decide switch places.
     {
       const on = (id) =>
         page.$eval(
@@ -2982,10 +2985,28 @@ async function run() {
           (await on('decide')),
       );
       await page.evaluate(() => {
-        location.hash = '#/apply';
+        location.hash = '#/apply?group=probe%7Cnone';
       });
-      await page.waitForFunction(() => location.hash === '#/apply');
-      check('routing to #/apply activates apply', await on('apply'));
+      check(
+        'an old #/apply address lands on review, its group kept',
+        (await until(
+          page,
+          () => location.hash === '#/review?group=probe%7Cnone',
+        )) && (await on('review')),
+      );
+      await page.evaluate(() => {
+        location.hash = '#/apply/1';
+      });
+      check(
+        'an old #/apply/<job> address opens the job in run',
+        (await until(page, () => location.hash === '#/run/1')) &&
+          (await on('run')),
+      );
+      await page.evaluate(() => {
+        location.hash = '#/run';
+      });
+      await page.waitForFunction(() => location.hash === '#/run');
+      check('routing to #/run activates run', await on('run'));
       await page.evaluate(() => {
         location.hash = '#/decide';
       });
@@ -3899,7 +3920,7 @@ async function run() {
         );
         check(
           `and the strip says where it went ("${stripText}")`,
-          stripText === 'Closed it \u00b7 waiting in apply \u00b7 undo',
+          stripText === 'Closed it \u00b7 waiting in review \u00b7 undo',
         );
       } finally {
         await changePage.close();
@@ -4419,14 +4440,14 @@ async function run() {
               '[data-testid="dock-messages"] .cb-dock-card--agent .cb-dock-link',
             );
             await until(dockPage, () =>
-              /#\/(item|rules|apply)\//.test(location.hash),
+              /#\/(item|rules|run)\//.test(location.hash),
             );
             const hash = await dockPage.evaluate(() => location.hash);
             check(
               'an agent card link opens the route',
               hash.includes('#/item/') ||
                 hash.includes('#/rules/') ||
-                hash.includes('#/apply/'),
+                hash.includes('#/run/'),
             );
           } else {
             check('an agent card link opens the route', false);

@@ -185,7 +185,7 @@ async function overlayKeys(t, pg) {
 }
 
 // The keys every section lists: the switches, the walkthrough and the dock's.
-const PAGE_KEYS = ['g d', 'g a', 'g w', '.', '\u2318\u21b5'];
+const PAGE_KEYS = ['g d', 'g v', 'g r', 'g w', '.', '\u2318\u21b5'];
 const MOVE_OPEN = ['j', '\u2193', 'k', '\u2191', 'o', '\u21b5'];
 const SELECT = ['x', '\u21e7x'];
 const FAMILY = ['?', 'Esc'];
@@ -202,7 +202,8 @@ const EXPECT = {
     '[',
     ']',
   ],
-  apply: [...MOVE_OPEN, ...SELECT, ...FAMILY, ...PAGE_KEYS, 'a', 'p'],
+  review: [...MOVE_OPEN, ...SELECT, ...FAMILY, ...PAGE_KEYS, 'a'],
+  run: [...MOVE_OPEN, ...FAMILY, ...PAGE_KEYS, 'p'],
 };
 
 export async function shellScenarios(shared, t) {
@@ -645,24 +646,49 @@ async function keyboardScenario(shared, t) {
 
         const attCur = await curOf(pg);
 
-        // g a: apply. Its list selects (the decided items).
-        await press(pg, 'g', 'a');
+        // g r: run. Its list is the jobs: nothing to tick.
+        await press(pg, 'g', 'r');
         check(
-          'g a switches to apply',
+          'g r switches to run',
           await until(
             pg,
             () =>
-              location.hash === '#/apply' &&
+              location.hash === '#/run' &&
               document
-                .querySelector('.kit-ctl[data-id="apply"]')
+                .querySelector('.kit-ctl[data-id="run"]')
                 ?.classList.contains('on'),
           ),
         );
         checkList(
-          'on apply the ? overlay lists exactly its keys',
+          'on run the ? overlay lists exactly its keys',
           await overlayKeys(t, pg),
-          [...EXPECT.apply].sort(),
+          [...EXPECT.run].sort(),
         );
+        // g v: review. Its list selects (the decided items).
+        await press(pg, 'g', 'v');
+        check(
+          'g v switches to review',
+          await until(
+            pg,
+            () =>
+              location.hash === '#/review' &&
+              document
+                .querySelector('.kit-ctl[data-id="review"]')
+                ?.classList.contains('on'),
+          ),
+        );
+        checkList(
+          'on review the ? overlay lists exactly its keys',
+          await overlayKeys(t, pg),
+          [...EXPECT.review].sort(),
+        );
+        // Its groups start collapsed: open them to reach the rows.
+        await until(
+          pg,
+          () => !!document.querySelector('.cb-apply-part .cb-group-caret'),
+        );
+        for (const c of await pg.$$('.cb-apply-part.collapsed .cb-group-caret'))
+          await c.click();
         await until(
           pg,
           () =>
@@ -679,7 +705,7 @@ async function keyboardScenario(shared, t) {
           'x',
         );
         check(
-          `x ticks the apply row under the cursor (${applyRows[firstItem]?.id}): its group's button names one`,
+          `x ticks the review row under the cursor (${applyRows[firstItem]?.id}): its group's button names one`,
           await until(
             pg,
             (key) =>
@@ -709,7 +735,7 @@ async function keyboardScenario(shared, t) {
           ),
         );
         check(
-          `decide's list kept its cursor while apply was shown (${attCur})`,
+          `decide's list kept its cursor while review was shown (${attCur})`,
           (await curOf(pg)) === attCur,
         );
         await until(
@@ -724,7 +750,7 @@ async function keyboardScenario(shared, t) {
         await press(pg, 'j');
         const back1 = await curOf(pg);
         check(
-          `back on decide, k and j move its cursor (${back0} → ${back1}) and not To apply's`,
+          `back on decide, k and j move its cursor (${back0} → ${back1}) and not review's`,
           back0 === 0 &&
             back1 === 1 &&
             (await curOf(pg, '.kit-app > .kit-list.cb-apply-list')) ===
@@ -985,15 +1011,15 @@ async function downScenario(shared, t) {
             decide:
               document.querySelector('.kit-ctl[data-id="decide"] .kit-n')
                 ?.textContent ?? '',
-            apply:
-              document.querySelector('.kit-ctl[data-id="apply"] .kit-n')
+            review:
+              document.querySelector('.kit-ctl[data-id="review"] .kit-n')
                 ?.textContent ?? '',
             status: document.querySelector('.kit-status')?.textContent ?? '',
           }));
         const bar0 = await barNow();
         check(
-          `the boot's summary failed (${summaries} asked): no counts, no status ("${bar0.decide}", "${bar0.apply}", "${bar0.status}")`,
-          summaries > 0 && !bar0.decide && !bar0.apply && !bar0.status,
+          `the boot's summary failed (${summaries} asked): no counts, no status ("${bar0.decide}", "${bar0.review}", "${bar0.status}")`,
+          summaries > 0 && !bar0.decide && !bar0.review && !bar0.status,
         );
         await pg.unroute(SUMMARY);
         const EVENTS = /\/api\/events/;
@@ -1108,15 +1134,15 @@ async function downScenario(shared, t) {
         );
         const want = {
           decide: String(sum.counts?.all ?? 0),
-          apply: String(sum.counts?.['to-apply'] ?? 0),
+          review: String(sum.counts?.['to-apply'] ?? 0),
         };
         const got = await until(
           pg,
           (w) =>
             document.querySelector('.kit-ctl[data-id="decide"] .kit-n')
               ?.textContent === w.decide &&
-            document.querySelector('.kit-ctl[data-id="apply"] .kit-n')
-              ?.textContent === w.apply &&
+            document.querySelector('.kit-ctl[data-id="review"] .kit-n')
+              ?.textContent === w.review &&
             /^synced \d+m ago · probe$/.test(
               document.querySelector('.kit-status')?.textContent ?? '',
             ),
@@ -1129,7 +1155,7 @@ async function downScenario(shared, t) {
           f1.ok,
         );
         check(
-          `reconnected, the page asks for the summary it missed (${summaries - asked} asked): decide ${bar1.decide}, apply ${bar1.apply}, "${bar1.status}"`,
+          `reconnected, the page asks for the summary it missed (${summaries - asked} asked): decide ${bar1.decide}, review ${bar1.review}, "${bar1.status}"`,
           got && summaries > asked,
         );
         // "synced Nm ago" follows the clock, with no request (the clock is

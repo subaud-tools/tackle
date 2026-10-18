@@ -23,7 +23,13 @@ import {
   type Primary,
 } from '/_kit/kit.js';
 import type { Attached, SummaryView } from './wire.d.ts';
-import { onRoute, dispatchCurrent, go, type Route } from './router.ts';
+import {
+  onRoute,
+  dispatchCurrent,
+  go,
+  pathEscape,
+  type Route,
+} from './router.ts';
 import { makeKeyLayer } from './key-layer.ts';
 import { makeWalkthrough, walkthroughSeen } from './walkthrough.ts';
 
@@ -314,7 +320,8 @@ function start(first: SummaryView | null): void {
     brand: { name: 'casebook', mark },
     sections: [
       { id: 'decide', label: 'decide' },
-      { id: 'apply', label: 'apply' },
+      { id: 'review', label: 'review' },
+      { id: 'run', label: 'run' },
     ],
     active: 'decide',
     onSection(id) {
@@ -606,10 +613,11 @@ function start(first: SummaryView | null): void {
 
   // ---- keys -----------------------------------------------------------------
 
-  // g d / g a switch places, like the bar's controls.
+  // g d / g v / g r switch places, like the bar's controls.
   for (const [k, id, label] of [
     ['g d', 'decide', 'go to decide'],
-    ['g a', 'apply', 'go to apply'],
+    ['g v', 'review', 'go to review'],
+    ['g r', 'run', 'go to run'],
   ] as const) {
     ctx.keys.register({ keys: k, label, run: () => go(id) });
   }
@@ -628,8 +636,12 @@ function start(first: SummaryView | null): void {
 
     // An old address (#/attention…, #/rules…) shows as the decide address
     // it landed on (router-helpers.ts parse), without a new history entry.
-    if (/^#\/(attention|rules)(\/|\?|$)/.test(location.hash)) {
-      const hash = r.query ? `#/decide?${r.query}` : '#/decide';
+    // So does an apply address (#/apply…), as the review or run address.
+    if (/^#\/(attention|rules|apply)(\/|\?|$)/.test(location.hash)) {
+      const path = r.sub
+        ? `#/${r.section}/${pathEscape(r.sub)}`
+        : `#/${r.section}`;
+      const hash = r.query ? `${path}?${r.query}` : path;
       history.replaceState(
         null,
         '',
@@ -637,10 +649,12 @@ function start(first: SummaryView | null): void {
       );
     }
 
-    // apply is apply; everything else (an item too) is decide.
-    const sectionId = r.section === 'apply' ? 'apply' : 'decide';
+    // review and run are the apply section's two steps; everything else
+    // (an item too) is decide.
+    const step = r.section === 'review' || r.section === 'run' ? r.section : '';
+    const sectionId = step ? 'apply' : 'decide';
 
-    handle.setSection(sectionId);
+    handle.setSection(step || 'decide');
 
     for (const [id, sec] of sections) {
       const active = id === sectionId;
@@ -692,9 +706,10 @@ function start(first: SummaryView | null): void {
     summary = s;
     const counts = s.counts ?? {};
     // 'all' is everything to decide; 'to-apply' the decided items waiting
-    // to be applied.
+    // in review. run's count (jobs running or needing Court) is the apply
+    // section's own (it has the jobs).
     handle.setCount('decide', counts['all'] ?? 0);
-    handle.setCount('apply', counts['to-apply'] ?? 0);
+    handle.setCount('review', counts['to-apply'] ?? 0);
     paintStatus();
   }
   // paintStatus draws the status from the last summary; "synced Nm ago"

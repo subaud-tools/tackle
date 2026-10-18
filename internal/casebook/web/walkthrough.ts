@@ -4,7 +4,7 @@
 // takes every click and key, and the live stream is held (app.ts), so
 // nothing moves under it. One control at a time is outlined with a short
 // note, in the order casebook is used: decide, filters, rules, a decision
-// button (the first listed item is opened for it; no item, no step), apply,
+// button (the first listed item is opened for it; no item, no step), review,
 // the agent (the pane is opened for it). Each step has next and skip (Esc
 // skips, → goes on). It never decides or runs anything: the controls it
 // points at can't be clicked under it. Done or skipped, it is marked seen
@@ -19,7 +19,7 @@ import type { Ctx } from './app.ts';
 export const WALKTHROUGH_SEEN = 'casebook.walkthrough';
 
 export type WalkStepId =
-  'decide' | 'filters' | 'rules' | 'decision' | 'apply' | 'agent';
+  'decide' | 'filters' | 'rules' | 'decision' | 'review' | 'agent';
 
 export interface WalkStep {
   id: WalkStepId;
@@ -47,12 +47,12 @@ export const WALKTHROUGH_STEPS: WalkStep[] = [
   {
     id: 'decision',
     target: '.kit-read:not([hidden]) .cb-decide-row .cb-choice',
-    note: 'A button like this decides the item. Nothing happens yet: what you decide waits in apply.',
+    note: 'A button like this decides the item. Nothing happens yet: what you decide waits in review.',
   },
   {
-    id: 'apply',
-    target: '.kit-ctl[data-id="apply"]',
-    note: 'apply carries out what you decided, once you have read the plan and approved it.',
+    id: 'review',
+    target: '.kit-ctl[data-id="review"]',
+    note: 'review shows what each group of decisions will do, command by command. Its button runs it, and run shows the job as it goes.',
   },
   {
     id: 'agent',
@@ -315,7 +315,8 @@ export function makeWalkthrough(ctx: Ctx): { start(): void } {
     // list has no decision step.
     moving = true;
     void (async () => {
-      if (ctx.route.current().section === 'apply') ctx.route.go('decide');
+      const at = ctx.route.current().section;
+      if (at === 'review' || at === 'run') ctx.route.go('decide');
       await waitFor('.kit-list:not([hidden]) .kit-rows > *', 4000);
       if (ended) return;
       if (!document.querySelector(ROW))

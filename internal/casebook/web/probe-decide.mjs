@@ -34,7 +34,7 @@
 //   choosing Close opens a closing-comment field under the cards and
 //     decides nothing; Esc cancels it; a number key opens it too
 //   "close with this comment" (and ↵) records the text as the decision's
-//     note; To apply's step posts exactly that text
+//     note; review's step posts exactly that text
 //   "close without comment" records no note; the step has no comment
 //
 // And what Leave it open leaves behind (casebook 0.4.3), on a serve and repo
@@ -90,8 +90,8 @@
 //     decides differently (POST /proposals/change) and the rule's record
 //     says decided differently 1
 //   an outward decision moves on and the strip says "Closed it · waiting in
-//     apply · undo" for 6 s; its undo restores the item; a group's "Delete
-//     all 3" says "Deleted all 3 · waiting in apply · undo", and its undo
+//     review · undo" for 6 s; its undo restores the item; a group's "Delete
+//     all 3" says "Deleted all 3 · waiting in review · undo", and its undo
 //     returns all 3 to the group
 //
 // And a new recommendation on the open item (casebook 0.4.5), on a serve
@@ -1197,8 +1197,8 @@ const PANE = '.kit-app > .kit-read:not([hidden])';
 const SUGGEST_RULES =
   'Please suggest rules for the items in the attached list: look at what they have in common and draft rules (casebook_rule_save) that would recommend a decision for many of them at once. Recommend nothing item by item.';
 
-// groupHeads reads the shown list's group headers: label, the "goes to To
-// apply first" hint, count, and the texts of its button line (buttons,
+// groupHeads reads the shown list's group headers: label, the "goes to
+// review first" hint, count, and the texts of its button line (buttons,
 // untick).
 function groupHeads(pg) {
   return pg.evaluate(
@@ -1343,7 +1343,7 @@ async function groupsScenario(context, t, s) {
   const serveHeads = async () =>
     ((await api('GET', '/api/items?view=new&limit=1')).groups ?? []).map(
       (g) =>
-        `${g.label} | ${g.outward ? 'goes to apply first' : ''} | ${g.total}`,
+        `${g.label} | ${g.outward ? 'goes to review first' : ''} | ${g.total}`,
     );
 
   const pg = await context.newPage();
@@ -1371,9 +1371,9 @@ async function groupsScenario(context, t, s) {
       want,
     );
     checkList("and they are serve's groups for this seed", want, [
-      'Close it without merging | goes to apply first | 4',
+      'Close it without merging | goes to review first | 4',
       'Leave it open |  | 3',
-      'Merge it | goes to apply first | 1',
+      'Merge it | goes to review first | 1',
       'Not recommended yet |  | 3',
     ]);
     checkList(
@@ -1669,7 +1669,7 @@ async function groupsScenario(context, t, s) {
     );
     // Close's one left (#12) is newer than Leave it open's newest (#2).
     checkList('and serve agrees', got, [
-      'Close it without merging | goes to apply first | 1',
+      'Close it without merging | goes to review first | 1',
       'Leave it open |  | 3',
       'Not recommended yet |  | 3',
     ]);
@@ -1682,7 +1682,7 @@ async function groupsScenario(context, t, s) {
     );
     const jobs = await api('GET', '/api/jobs');
     check(
-      `the outward groups only went to To apply: no job was started (${(jobs.jobs ?? []).length} jobs)`,
+      `the outward groups only went to review: no job was started (${(jobs.jobs ?? []).length} jobs)`,
       (jobs.jobs ?? []).length === 0,
     );
   }
@@ -2845,15 +2845,15 @@ async function closeCommentScenario(context, t, s) {
     }),
   );
 
-  // ---- To apply: the steps post exactly that text, or nothing -------------
+  // ---- review: the steps post exactly that text, or nothing --------------
   {
     const plan = await api('POST', '/api/apply/plan', {
       keys: [CISSUE(1), CISSUE(3)],
     });
-    const id = plan.job?.id;
-    await pg.evaluate((j) => {
-      location.hash = `#/apply/${j}`;
-    }, id);
+    // The group opens in review: serve's plan of it, its commands shown.
+    await pg.evaluate(() => {
+      location.hash = '#/review?group=close%7Cissue';
+    });
     const cmdOf = (key) =>
       until(
         pg,
@@ -2871,13 +2871,13 @@ async function closeCommentScenario(context, t, s) {
       );
     const withComment = await cmdOf(CISSUE(1));
     check(
-      `To apply's step for issue #1 posts exactly the comment ("${withComment}")`,
+      `review's step for issue #1 posts exactly the comment ("${withComment}")`,
       withComment ===
         `gh issue close 1 -R 'schuettc/${CC}' --comment '${SAID}'`,
     );
     const without = await cmdOf(CISSUE(3));
     check(
-      `To apply's step for issue #3 has no comment ("${without}")`,
+      `review's step for issue #3 has no comment ("${without}")`,
       without === `gh issue close 3 -R 'schuettc/${CC}'` &&
         !without.includes('--comment'),
     );
@@ -3856,7 +3856,7 @@ async function itemPageScenario(context, t, s) {
     `the recommended Close it accepts (${posts.join(', ')}); the strip reads "${stripText}"`,
     posts.includes('/api/proposals/accept') &&
       !posts.includes('/api/decide') &&
-      stripText === 'Closed it \u00b7 waiting in apply \u00b7 undo',
+      stripText === 'Closed it \u00b7 waiting in review \u00b7 undo',
   );
   check(
     'the next item opens',
@@ -3870,8 +3870,8 @@ async function itemPageScenario(context, t, s) {
   );
   const stripHref = (await pg.locator(`${STRIP} a`).getAttribute('href')) ?? '';
   check(
-    `the strip's "apply" links to the group it joined (${stripHref})`,
-    stripHref === '#/apply?group=close%7Cissue',
+    `the strip's "review" links to the group it joined (${stripHref})`,
+    stripHref === '#/review?group=close%7Cissue',
   );
   await pg.screenshot({ path: shotPath('part2-strip') });
   await pg.click(`${STRIP} button`);
@@ -3998,7 +3998,7 @@ async function itemPageScenario(context, t, s) {
     const says = await pg.$eval(`${OLD} .cb-group-act`, (e) => e.title);
     check(
       `the group's button says what it does on hover ("${says}")`,
-      /until you run it in apply\.$/.test(says),
+      /until you run it in review\.$/.test(says),
     );
   }
   await pg.click(`${OLD} .cb-group-act`);
@@ -4013,7 +4013,7 @@ async function itemPageScenario(context, t, s) {
     .trim();
   check(
     `the group's Delete all 3 says "${groupStrip}"`,
-    groupStrip === 'Deleted all 3 \u00b7 waiting in apply \u00b7 undo',
+    groupStrip === 'Deleted all 3 \u00b7 waiting in review \u00b7 undo',
   );
   await pg.screenshot({ path: shotPath('part2-group-strip') });
   await pg.click(`${STRIP} button`);
