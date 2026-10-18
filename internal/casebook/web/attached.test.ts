@@ -50,14 +50,21 @@ describe('attachedLabel', () => {
       'job #3 \u00b7 close stale prs',
     );
   });
-  test('a section, with nothing open in it, reads "section rules", as the agent reads it', () => {
-    assert.equal(attachedLabel({ section: 'rules' }), 'section rules');
-    assert.ok(!isEmpty({ section: 'rules' }));
+  test('the narrowed list reads "list · 2 filters · rule x · search foo"', () => {
     assert.equal(
-      attachedLabel({ section: 'rules', rule: 'x' }),
-      'rule x',
-      'an open rule says more than its section',
+      attachedLabel({ list: { filters: ['a', 'b'], rule: 'x', q: 'foo' } }),
+      'list \u00b7 2 filters \u00b7 rule x \u00b7 search foo',
     );
+    assert.equal(
+      attachedLabel({ list: { filters: ['a'] } }),
+      'list \u00b7 1 filter',
+    );
+    assert.equal(
+      attachedLabel({ list: { group: 'none' } }),
+      'list \u00b7 group none',
+    );
+    assert.equal(attachedLabel({ list: {} }), 'list', 'the whole list');
+    assert.ok(!isEmpty({ list: {} }));
   });
   test('nothing attached is empty', () => {
     assert.equal(attachedLabel({}), '');
@@ -72,7 +79,9 @@ describe('attachedText and parseAttached', () => {
     { open: 'pr:o/r#4' },
     { rule: 'landed-branches' },
     { job: '3' },
-    { section: 'rules' },
+    { list: { filters: ['a', 'b'], rule: 'x', q: 'foo' } },
+    { list: { q: 'two words', group: 'none' } },
+    { list: {} },
     { keys: ['pr:o/r#1', 'pr:o/r#2'], open: 'issue:o/r#9', rule: 'x' },
     {},
   ];
