@@ -7,6 +7,7 @@
 //
 // Later tasks import registerSection and registerDock to fill in the sections.
 
+import { browserShared } from './shared-stream.ts';
 import {
   bar,
   type BarHandle,
@@ -533,10 +534,14 @@ function start(first: SummaryView | null): void {
 
   // The stream, polling /api/state?since=<cursor> every 2 s while it is down
   // (the kit's live()). A poll that answers means serve is back.
+  const sharedStream = browserShared('casebook-live');
   function startLive(cursor?: string): ReturnType<typeof live> {
     return live({
       events: '/api/events',
       poll: '/api/state',
+      // One connection for every tab: each tab holding its own used up the
+      // browser's six and stopped every other request.
+      EventSource: sharedStream,
       cursor,
       onEvent(e) {
         if (livePaused) held.push({ type: e.type, data: e.data });

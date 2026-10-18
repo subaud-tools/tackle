@@ -1,3 +1,103 @@
+// shared-stream.ts
+function sharedEventSource(deps) {
+  return class Shared {
+    onopen = null;
+    onmessage = null;
+    onerror = null;
+    closed = false;
+    opened = false;
+    leading = false;
+    real = null;
+    release = null;
+    abort = new AbortController();
+    ch;
+    constructor(url) {
+      this.ch = deps.channel();
+      this.ch.onmessage = (e) => this.heard(e.data);
+      queueMicrotask(() => {
+        if (!this.closed) this.ch.postMessage({ k: "hello" });
+      });
+      deps.lock(() => this.granted(url), this.abort.signal);
+    }
+    // heard is another tab's note.
+    heard(n) {
+      if (this.closed) return;
+      if (this.leading) {
+        if (n.k === "hello" && this.opened)
+          this.ch.postMessage({ k: "open" });
+        return;
+      }
+      if (n.k === "open" && !this.opened) {
+        this.opened = true;
+        this.onopen?.();
+      } else if (n.k === "msg") {
+        this.onmessage?.({ data: n.data, lastEventId: n.id });
+      } else if (n.k === "error") {
+        this.onerror?.();
+      }
+    }
+    // granted: this tab holds the lock. A stream that was following another
+    // tab's has an old cursor in its address: it asks live() to reconnect
+    // (a fresh one takes the lock) instead of replaying from it.
+    granted(url) {
+      if (this.closed) return Promise.resolve();
+      if (this.opened) {
+        this.onerror?.();
+        return Promise.resolve();
+      }
+      this.leading = true;
+      const done = new Promise((r) => this.release = r);
+      const real = new deps.EventSource(url);
+      this.real = real;
+      real.onopen = () => {
+        if (this.closed) return;
+        this.opened = true;
+        this.ch.postMessage({ k: "open" });
+        this.onopen?.();
+      };
+      real.onmessage = (m) => {
+        if (this.closed) return;
+        this.ch.postMessage({
+          k: "msg",
+          data: m.data,
+          id: m.lastEventId
+        });
+        this.onmessage?.(m);
+      };
+      real.onerror = () => {
+        if (this.closed) return;
+        this.ch.postMessage({ k: "error" });
+        this.onerror?.();
+      };
+      return done;
+    }
+    close() {
+      if (this.closed) return;
+      this.closed = true;
+      if (this.leading) {
+        this.ch.postMessage({ k: "error" });
+        this.real?.close();
+        this.real = null;
+      }
+      this.abort.abort();
+      this.release?.();
+      this.ch.close();
+    }
+  };
+}
+function browserShared(name) {
+  const locks = navigator.locks;
+  if (!locks || typeof BroadcastChannel === "undefined") return EventSource;
+  return sharedEventSource({
+    EventSource,
+    channel: () => new BroadcastChannel(name),
+    lock(granted, signal) {
+      locks.request(name, { signal }, granted).catch(() => {
+      });
+    }
+  });
+}
+
 // app.ts
 import {
   bar,
@@ -646,10 +746,14 @@ function start(first) {
   }
   app.append(rail);
   document.body.append(app);
+  const sharedStream = browserShared("casebook-live");
   function startLive(cursor) {
     return live({
       events: "/api/events",
       poll: "/api/state",
+      // One connection for every tab: each tab holding its own used up the
+      // browser's six and stopped every other request.
+      EventSource: sharedStream,
       cursor,
       onEvent(e) {
         if (livePaused) held.push({ type: e.type, data: e.data });
