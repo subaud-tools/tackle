@@ -20,7 +20,7 @@
 //   a filter that does not validate: marked with serve's reason, not
 //     selectable, editable into a valid one.
 
-import { startServe } from './serve.mjs';
+import { openGroups, startServe } from './serve.mjs';
 import { createAgent } from './agent.mjs';
 
 let serves = [];
@@ -116,7 +116,9 @@ export async function filtersScenarios(shared, t) {
 }
 
 // rowKeys is the list's rows top to bottom, as item keys.
-function rowKeys(pg) {
+// decide's groups start collapsed: it opens them first, as Court would.
+async function rowKeys(pg) {
+  await openGroups(pg, { rows: false });
   return pg.$$eval(`${LIST} .kit-rows > .kit-row .kit-kicker`, (els) =>
     els.map((e) => (e.textContent ?? '').replace(' \u00b7 ', ':')),
   );

@@ -17,7 +17,7 @@
 //   a list load on its way …       a view or search change while the list
 //                                  loads is queued, not dropped (0.4.7)
 
-import { probeGit, startServe } from './serve.mjs';
+import { openGroups, probeGit, startServe } from './serve.mjs';
 import { createAgent } from './agent.mjs';
 
 let serves = [];
@@ -281,6 +281,7 @@ async function keyboardScenario(shared, t) {
           waitUntil: 'domcontentloaded',
           timeout: 15000,
         });
+        await openGroups(pg, { rows: false });
         const ready = await until(
           pg,
           ([l, th]) =>
@@ -705,16 +706,18 @@ async function keyboardScenario(shared, t) {
           'x',
         );
         check(
-          `x ticks the review row under the cursor (${applyRows[firstItem]?.id}): its group's button names one`,
+          `x ticks the review row under the cursor (${applyRows[firstItem]?.id}): its group's review opens for it alone`,
           await until(
             pg,
             (key) =>
               !!document
                 .querySelector(`.cb-apply-list .kit-row[data-key="${key}"]`)
                 ?.classList.contains('sel') &&
-              [...document.querySelectorAll('.cb-apply-part .cb-group-plan')]
-                .map((b) => b.textContent)
-                .some((t) => / 1 \S+\u2026$/.test(t)),
+              / 1 \S+$/.test(
+                document.querySelector('[data-testid="review-group"] .kit-h1')
+                  ?.textContent ?? '',
+              ) &&
+              !!document.querySelector('[data-testid="run-group"]'),
             applyRows[firstItem]?.id,
           ),
         );
@@ -808,6 +811,7 @@ async function pollFallbackScenario(shared, t) {
             waitUntil: 'domcontentloaded',
             timeout: 15000,
           });
+          await openGroups(pg, { rows: false });
           check(
             'the page is live with the two fb-poll PRs',
             await until(
@@ -964,6 +968,7 @@ async function downScenario(shared, t) {
           waitUntil: 'domcontentloaded',
           timeout: 15000,
         });
+        await openGroups(pg, { rows: false });
         await until(
           pg,
           () => document.querySelector('.kit-live')?.dataset.state === 'live',
@@ -1286,6 +1291,7 @@ async function staleScenario(shared, t) {
           waitUntil: 'domcontentloaded',
           timeout: 15000,
         });
+        await openGroups(pg, { rows: false });
         await until(
           pg,
           () => document.querySelector('.kit-live')?.dataset.state === 'live',
@@ -1419,6 +1425,7 @@ async function offlineQueuedScenario(shared, t) {
             waitUntil: 'domcontentloaded',
             timeout: 15000,
           });
+          await openGroups(pg, { rows: false });
           await until(
             pg,
             () =>
@@ -1534,6 +1541,7 @@ async function slowPushScenario(shared, t) {
             waitUntil: 'domcontentloaded',
             timeout: 15000,
           });
+          await openGroups(pg, { rows: false });
           const two = await until(
             pg,
             (sel) => document.querySelectorAll(`${sel} .kit-row`).length === 2,
@@ -1672,6 +1680,7 @@ async function pushFailedScenario(shared, t) {
             waitUntil: 'domcontentloaded',
             timeout: 15000,
           });
+          await openGroups(pg, { rows: false });
           const look = () =>
             pg.evaluate(() => {
               const st = document.querySelector('.kit-status');
@@ -1844,6 +1853,7 @@ async function staleApiScenario(shared, t) {
           waitUntil: 'domcontentloaded',
           timeout: 15000,
         });
+        await openGroups(pg, { rows: false });
         await until(
           pg,
           () => document.querySelector('.kit-live')?.dataset.state === 'live',
@@ -1970,6 +1980,7 @@ async function pageCapScenario(shared, t) {
             waitUntil: 'domcontentloaded',
             timeout: 15000,
           });
+          await openGroups(pg, { rows: false });
           const rowKeys = () =>
             pg.$$eval(`${SHOWN} .kit-row .kit-title`, (els) =>
               els.map((e) => e.textContent ?? ''),
@@ -2163,6 +2174,7 @@ async function heldLoadScenario(shared, t) {
               () => new URL(location.href).searchParams.get('q') === 'ledger',
             );
             release();
+            await openGroups(pg, { rows: false });
             const shown = await listIs(pg, ledger.keys);
             checkList(
               'typed "ledger" while the load was held, the list shows what serve finds for it',

@@ -113,6 +113,79 @@ export async function seenWalkthrough(context) {
   });
 }
 
+/**
+ * openGroups opens decide's groups, as Court does: every group starts
+ * collapsed (serve sends only the open groups' rows, open=), so a probe
+ * that reads rows opens them first. One at a time, each waited for (a
+ * click reloads the list; a second click before it repaints would close
+ * the group again). The left-open group stays as it is. Then, unless
+ * rows is false, it waits for a row (with rows false an empty list is
+ * fine).
+ */
+export async function openGroups(pg, { rows = true, timeout = 8000 } = {}) {
+  const list = '.kit-app > .kit-list';
+  // An empty list has neither: with rows false, there is nothing to open.
+  const any = await pg
+    .waitForSelector(`${list} .cb-group[data-group], ${list} .kit-row`, {
+      timeout,
+    })
+    .then(
+      () => true,
+      (e) => {
+        if (rows) throw e;
+        return false;
+      },
+    );
+  if (!any) return;
+  const end = Date.now() + timeout;
+  for (;;) {
+    const id = await pg.evaluate(
+      (list) =>
+        [
+          ...document.querySelectorAll(
+            `${list} .cb-group.collapsed[data-group]`,
+          ),
+        ]
+          .map((e) => e.dataset.group)
+          .find((g) => g !== 'left-open') ?? null,
+      list,
+    );
+    if (id === null) break;
+    if (Date.now() > end) {
+      const head = await pg.evaluate(
+        ({ list, id }) =>
+          [...document.querySelectorAll(`${list} .cb-group[data-group]`)]
+            .find((e) => e.dataset.group === id)
+            ?.outerHTML.slice(0, 400) ?? '',
+        { list, id },
+      );
+      throw new Error(`openGroups: ${id} stayed collapsed (${head})`);
+    }
+    await pg.evaluate(
+      ({ list, id }) =>
+        [...document.querySelectorAll(`${list} .cb-group[data-group]`)]
+          .find((e) => e.dataset.group === id)
+          ?.querySelector('.cb-group-caret')
+          ?.click(),
+      { list, id },
+    );
+    await pg
+      .waitForFunction(
+        // Open, or gone (a list narrowed meanwhile no longer has it).
+        ({ list, id }) => {
+          const g = [
+            ...document.querySelectorAll(`${list} .cb-group[data-group]`),
+          ].find((e) => e.dataset.group === id);
+          return !g || !g.classList.contains('collapsed');
+        },
+        { list, id },
+        { timeout: Math.max(1000, end - Date.now()) },
+      )
+      .catch(() => {});
+  }
+  if (rows) await pg.waitForSelector(`${list} .kit-row`, { timeout });
+}
+
 // The args we always pass to casebook serve. Never remove --no-open.
 const SERVE_ARGS = ['serve', '--foreground', '--no-open'];
 

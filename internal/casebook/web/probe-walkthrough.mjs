@@ -27,6 +27,11 @@ export function stopWalkthroughServes() {
   serves = [];
 }
 
+// decide's groups start collapsed (serve sends only the open groups'
+// rows): a list with items shows group headers before any row.
+const ITEMS =
+  '.kit-list:not([hidden]) .kit-row, .kit-list:not([hidden]) .cb-group[data-group]';
+
 const IDS = ['decide', 'filters', 'rules', 'decision', 'review', 'agent'];
 // What each step points at, found the probe's own way.
 const TARGETS = {
@@ -130,9 +135,9 @@ export async function walkthroughScenarios(shared, t) {
       'the first open shows the walkthrough',
       await until(pg, () => !!document.querySelector('.cb-walk:not([hidden])')),
     );
-    await until(pg, () => !!document.querySelector('.kit-list .kit-row'));
-    const rowHit = await pg.evaluate(() => {
-      const row = document.querySelector('.kit-list:not([hidden]) .kit-row');
+    await until(pg, (sel) => !!document.querySelector(sel), ITEMS);
+    const rowHit = await pg.evaluate((sel) => {
+      const row = document.querySelector(sel);
       if (!row) return 'no row';
       const r = row.getBoundingClientRect();
       const at = document.elementFromPoint(
@@ -142,9 +147,9 @@ export async function walkthroughScenarios(shared, t) {
       return at && document.querySelector('.cb-walk')?.contains(at)
         ? 'overlay'
         : String(at?.className ?? 'nothing');
-    });
+    }, ITEMS);
     check(
-      `a click on a list row reaches the overlay, not the row (${rowHit})`,
+      `a click on the list (a group header) reaches the overlay, not the list (${rowHit})`,
       rowHit === 'overlay',
     );
     // The first open's address has no hash: decide's. Done puts it back
@@ -260,15 +265,15 @@ export async function walkthroughScenarios(shared, t) {
         st.hash === startHash && st.folded && st.seen === 'seen',
       );
     }
+    // The groups start collapsed, so the count stands for the list.
     check(
-      'and what was live meanwhile shows now: the list and the count catch up',
+      `and what was live meanwhile shows now: the count catches up (${n0} → ${n0} - 1)`,
       await until(
         pg,
         (want) =>
-          document.querySelectorAll('.kit-list:not([hidden]) .kit-row')
-            .length ===
-          want - 1,
-        rows0,
+          (document.querySelector('.kit-ctl[data-id="decide"] .kit-n')
+            ?.textContent ?? '') === want,
+        String(Number(n0) - 1),
       ),
     );
     check(
@@ -280,7 +285,7 @@ export async function walkthroughScenarios(shared, t) {
 
     // ---- a reload: seen ---------------------------------------------------------
     await pg.reload({ waitUntil: 'domcontentloaded' });
-    await pg.waitForSelector('.kit-list .kit-row', { timeout: 8000 });
+    await pg.waitForSelector(ITEMS, { timeout: 8000 });
     await pg.waitForTimeout(1500);
     check('a reload shows no walkthrough', !(await state(pg)).shown);
 
@@ -300,7 +305,7 @@ export async function walkthroughScenarios(shared, t) {
     // ---- skipped at every step (dark) ---------------------------------------
     await pg.evaluate(() => localStorage.setItem('casebook.theme', 'dark'));
     await pg.reload({ waitUntil: 'domcontentloaded' });
-    await pg.waitForSelector('.kit-list .kit-row', { timeout: 8000 });
+    await pg.waitForSelector(ITEMS, { timeout: 8000 });
     check(
       'dark',
       (await pg.evaluate(() => document.documentElement.dataset.theme)) ===
@@ -358,7 +363,7 @@ export async function walkthroughScenarios(shared, t) {
       await go('#/review');
       await pg.waitForTimeout(300);
       await go('#/decide');
-      await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
+      await pg.waitForSelector(ITEMS, {
         timeout: 8000,
       });
       await pg.keyboard.press('g');
@@ -380,7 +385,7 @@ export async function walkthroughScenarios(shared, t) {
         await until(pg, () => location.hash === '#/review'),
       );
       await go('#/decide');
-      await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
+      await pg.waitForSelector(ITEMS, {
         timeout: 8000,
       });
       await pg.keyboard.press('g');
@@ -400,7 +405,7 @@ export async function walkthroughScenarios(shared, t) {
           await pg.evaluate(() => location.hash)) === '#/review',
       );
       await go('#/decide');
-      await pg.waitForSelector('.kit-list:not([hidden]) .kit-row', {
+      await pg.waitForSelector(ITEMS, {
         timeout: 8000,
       });
     }
@@ -412,7 +417,10 @@ export async function walkthroughScenarios(shared, t) {
       ).map((it) => it.key);
       if (all.length)
         await api('POST', '/api/decide', { keys: all, disposition: 'keep' });
-      await eventually(async () => (await rows()) === 0);
+      await eventually(
+        async () =>
+          !(await pg.evaluate((sel) => !!document.querySelector(sel), ITEMS)),
+      );
       await pg.waitForTimeout(300);
       await pg.keyboard.press('g');
       await pg.keyboard.press('w');

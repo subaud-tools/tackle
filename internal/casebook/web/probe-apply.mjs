@@ -252,6 +252,26 @@ async function applyScenariosIn(context, t) {
 const HEAD = (id) => `.cb-apply-part[data-part="${id}"] .cb-group-plan`;
 const groupHash = (id) => `#/review?group=${encodeURIComponent(id)}`;
 const RUN_BTN = '[data-testid="run-group"] .kit-btn';
+// A waiting group's header names it: its kind, plural, and its decision in
+// serve's words ("repos Archive it on GitHub"). NAME_OF reads it in the page.
+const NAME_OF = (part) =>
+  `[...(document.querySelector('${part}')?.querySelectorAll('.cb-group-plan .cb-group-label, .cb-group-plan .cb-group-choice') ?? [])].map((x) => x.textContent).join(' ')`;
+const nameIs = (pg, id, want) =>
+  pg
+    .waitForFunction(
+      `${NAME_OF(`.cb-apply-part[data-part="${id}"]`)} === ${JSON.stringify(want)}`,
+      null,
+      { timeout: 8000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+// The open review's title (it follows the ticks).
+const reviewTitle = (pg) =>
+  pg.evaluate(
+    () =>
+      document.querySelector('[data-testid="review-group"] .kit-h1')
+        ?.textContent ?? '',
+  );
 
 // openedGroup waits for group id to be open in review, its plan (job) shown.
 function openedGroup(t, pg, id, jobId) {
@@ -312,8 +332,9 @@ const shownText = (pg) =>
       `${document.querySelector('.cb-apply-list')?.innerText ?? ''}\n${document.querySelector('.cb-apply-read')?.innerText ?? ''}`,
   );
 
-// sameGroupScenario: two tabs open the same group: serve builds one plan
-// and the second reuses it (opening a group is not a plan of its own).
+// sameGroupScenario: two tabs open the same group: each previews it and
+// serve stores nothing (a plan is stored only when Court runs it). Three
+// tabs share one live connection (web/shared-stream.ts).
 async function sameGroupScenario(context, t, serveHandle) {
   const { check, checkList, until } = t;
   console.log('\nscenario: review — two tabs open the same group: one plan');
@@ -323,22 +344,25 @@ async function sameGroupScenario(context, t, serveHandle) {
     keys: [ITEM],
     disposition: 'archive',
   });
+  const events = [];
+  const onEvents = (r) => {
+    if (new URL(r.url()).pathname === '/api/events') events.push(r.url());
+  };
+  context.on('request', onEvents);
   const pg = await context.newPage();
   const pg2 = await context.newPage();
+  const pg3 = await context.newPage();
   const errors = [];
   pg.on('pageerror', (e) => errors.push(String(e)));
   pg2.on('pageerror', (e) => errors.push(`tab 2: ${e}`));
+  pg3.on('pageerror', (e) => errors.push(`tab 3: ${e}`));
   const planOf = async (p) => {
     await p.setViewportSize({ width: 1600, height: 900 });
     await p.goto(serveHandle.url + '#/review', {
       waitUntil: 'domcontentloaded',
       timeout: 15000,
     });
-    await until(
-      p,
-      (b) => document.querySelector(b)?.textContent === 'Archive 1 repo\u2026',
-      HEAD('archive|repo'),
-    );
+    await nameIs(p, 'archive|repo', 'repos Archive it on GitHub');
     const resp = p.waitForResponse(
       (r) =>
         r.url().includes('/api/apply/plan') && r.request().method() === 'POST',
@@ -350,29 +374,50 @@ async function sameGroupScenario(context, t, serveHandle) {
   try {
     const a = await planOf(pg);
     const b = await planOf(pg2);
+    const stepsOf = (v) =>
+      (v.job?.steps ?? []).map((x) => `${x.key} ${x.command}`).join('\n');
     check(
-      `the first tab's group is serve's plan (${a.status}, job ${a.body.job?.id})`,
-      a.status === 200 && !!a.body.job?.id,
+      `the first tab's group is serve's preview (${a.status}, ${(a.body.job?.steps ?? []).length} step)`,
+      a.status === 200 && (a.body.job?.steps ?? []).length === 1,
     );
     check(
-      `the second tab's is the same plan, reused (${b.status}, job ${b.body.job?.id})`,
-      b.status === 200 && b.body.job?.id === a.body.job?.id,
+      `the second tab's preview has the same steps (${b.status})`,
+      b.status === 200 && stepsOf(b.body) === stepsOf(a.body),
     );
     const jobs = (await agent.api('GET', '/api/jobs')).jobs ?? [];
     checkList(
-      'serve has one plan, not yet run',
-      jobs.map((j) => `#${j.id} ${j.state} ${(j.steps ?? []).length}`),
-      [`#${a.body.job?.id} planned 1`],
+      'previewing stores no plan: serve has no job',
+      jobs.map((j) => `#${j.id} ${j.state}`),
+      [],
     );
     check(
       'both tabs show it in review with its one button',
-      (await openedGroup(t, pg, 'archive|repo', a.body.job?.id)) &&
-        (await openedGroup(t, pg2, 'archive|repo', a.body.job?.id)),
+      (await openedGroup(t, pg, 'archive|repo', 0)) &&
+        (await openedGroup(t, pg2, 'archive|repo', 0)),
+    );
+    await pg3.setViewportSize({ width: 1600, height: 900 });
+    await pg3.goto(serveHandle.url + '#/decide', {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000,
+    });
+    const live = async (p) =>
+      until(
+        p,
+        () => document.querySelector('.kit-live')?.dataset.state === 'live',
+      );
+    const allLive = (await live(pg)) && (await live(pg2)) && (await live(pg3));
+    // Kept: a window for a second connection to go out.
+    await pg.waitForTimeout(1000);
+    check(
+      `three tabs share one live connection: one GET /api/events in the browser (${events.length}), every tab live (${allLive})`,
+      allLive && events.length === 1,
     );
     check(`no page errors (${errors.join(' | ')})`, errors.length === 0);
   } finally {
+    context.off('request', onEvents);
     await pg.close();
     await pg2.close();
+    await pg3.close();
   }
 }
 
@@ -388,6 +433,9 @@ const T11_SEED = {
   seedRepos: [
     dormant('t11-x'),
     dormant('t11-y'),
+    // Already archived on GitHub: decided archive, it is done with nothing
+    // run.
+    { ...dormant('t11-gone'), archived: true },
     {
       repo: 'schuettc/t11-prs',
       pushed_at: '2026-09-20T00:00:00Z',
@@ -450,8 +498,8 @@ async function listScenario(context, t, serveHandle) {
       plan_id: runJob.job.id,
       session: S,
     });
-    // Waiting: the other two branches. (feat/c is in the group too: an
-    // applied item waits until a sync observes it gone.)
+    // Waiting: the other two branches. (feat/c, verified done, has left
+    // review at once.)
     await agent.api('POST', '/api/decide', {
       keys: [B('feat/a'), B('feat/b')],
       disposition: 'delete',
@@ -466,17 +514,17 @@ async function listScenario(context, t, serveHandle) {
       pg.$$eval('.cb-apply-list .cb-apply-part', (els) =>
         els.map(
           (e) =>
-            `${e.dataset.part} ${(e.querySelector('.cb-group-label') ?? e.querySelector('.cb-group-plan'))?.textContent} ${e.querySelector('.cb-group-n').textContent}${e.classList.contains('collapsed') ? ' collapsed' : ''}${e.querySelector('.cb-group-plan') && e.querySelector('.cb-group-label') ? ' [label and button]' : ''}`,
+            `${e.dataset.part} ${[...e.querySelectorAll('.cb-group-label, .cb-group-choice')].map((x) => x.textContent).join(' ')} ${e.querySelector('.cb-group-n').textContent}${e.classList.contains('collapsed') ? ' collapsed' : ''}`,
         ),
       );
-    const want = ['delete|branch Delete 3 branches\u2026 3 collapsed'];
+    const want = ['delete|branch branches Delete it 2 collapsed'];
     await until(
       pg,
       (n) => document.querySelectorAll('.cb-apply-part').length === n,
       want.length,
     );
     checkList(
-      'review lists only the waiting groups, each collapsed under its header, its button',
+      'review lists only the waiting groups, each collapsed under its name (kind and decision); the verified feat/c is gone from it',
       await parts(),
       want,
     );
@@ -506,7 +554,7 @@ async function listScenario(context, t, serveHandle) {
       `nothing runs from the list: no approve or run there, no primary (${top.approve.join(', ') || 'none'}; "${top.primary}")`,
       top.approve.length === 0 && top.primary === '',
     );
-    // Ticking names the ticked: "Delete 1 branch\u2026".
+    // Ticking an item opens its group's review, for the ticked.
     await pg.click('.cb-apply-part[data-part="delete|branch"] .cb-group-caret');
     await until(
       pg,
@@ -517,28 +565,50 @@ async function listScenario(context, t, serveHandle) {
     await pg.click(
       `.cb-apply-list .kit-row[data-key="${B('feat/a')}"] .kit-box`,
     );
+    const reviewKeys = () =>
+      pg.evaluate(() =>
+        [
+          ...new Set(
+            [
+              ...document.querySelectorAll(
+                '[data-testid="review-group"] .cb-plan-step',
+              ),
+            ].map((e) => e.dataset.key),
+          ),
+        ]
+          .sort()
+          .join(','),
+      );
     check(
-      'ticking one item names it on the group button ("Delete 1 branch\u2026")',
-      await until(
-        pg,
-        (b) =>
-          document.querySelector(b)?.textContent === 'Delete 1 branch\u2026' &&
-          document
-            .querySelector(
-              '.cb-apply-part[data-part="delete|branch"] .cb-group-box',
-            )
-            ?.getAttribute('aria-checked') === 'mixed',
-        HEAD('delete|branch'),
-      ),
+      'ticking one item opens its review for it alone, the group box mixed',
+      (await openedGroup(t, pg, 'delete|branch', 0)) &&
+        (await eventually(async () => (await reviewKeys()) === B('feat/a'))) &&
+        (await until(
+          pg,
+          () =>
+            document
+              .querySelector(
+                '.cb-apply-part[data-part="delete|branch"] .cb-group-box',
+              )
+              ?.getAttribute('aria-checked') === 'mixed',
+        )),
     );
     await pg.click(
       `.cb-apply-list .kit-row[data-key="${B('feat/a')}"] .kit-box`,
     );
+    check(
+      'unticked, the review follows: every waiting item of the group',
+      await eventually(
+        async () =>
+          (await reviewKeys()) === [B('feat/a'), B('feat/b')].sort().join(','),
+      ),
+    );
+    await pg.evaluate(() => {
+      location.hash = '#/review';
+    });
     await until(
       pg,
-      (b) =>
-        document.querySelector(b)?.textContent === 'Delete 3 branches\u2026',
-      HEAD('delete|branch'),
+      () => !!document.querySelector('[data-testid="review-overview"]'),
     );
     await inThemes(t, pg, 'review list');
 
@@ -554,9 +624,9 @@ async function listScenario(context, t, serveHandle) {
     const opened = await openedGroup(t, pg, 'delete|branch', planId);
     const plan = await readGroup(pg);
     checkList(
-      "the group's button plans its items",
+      "the group's name previews its items",
       plan.keys,
-      [B('feat/a'), B('feat/b'), B('feat/c')].sort(),
+      [B('feat/a'), B('feat/b')].sort(),
     );
     check(
       `the group opens in the middle pane with each item's exact command, serve's (${plan.cmds.length})`,
@@ -586,11 +656,13 @@ async function listScenario(context, t, serveHandle) {
     );
     check(
       `its title has its counts ("${plan.title}")`,
-      plan.title === 'Delete 3 local branches, delete 3 remote branches',
+      plan.title === 'Delete 2 local branches, delete 2 remote branches',
     );
+    const jobCount = async () =>
+      ((await agent.api('GET', '/api/jobs')).jobs ?? []).length;
     check(
-      `opening it runs nothing: serve has it planned, and the group stays in review (${(await job(planId)).job.state})`,
-      (await job(planId)).job.state === 'planned' &&
+      `opening it runs nothing and stores nothing (serve has its 2 jobs, the done and the running), and the group stays in review (${await jobCount()} jobs)`,
+      (await jobCount()) === 2 &&
         (await until(
           pg,
           (b) => !!document.querySelector(b),
@@ -601,11 +673,11 @@ async function listScenario(context, t, serveHandle) {
       location.hash = '#/review';
     });
     check(
-      'leaving the group runs nothing (serve still has it planned) and review shows its overview',
+      'leaving the group runs nothing (no job stored) and review shows its overview',
       (await until(
         pg,
         () => !!document.querySelector('[data-testid="review-overview"]'),
-      )) && (await job(planId)).job.state === 'planned',
+      )) && (await jobCount()) === 2,
     );
 
     // run: the jobs, running on top, Done collapsed.
@@ -681,14 +753,16 @@ async function listScenario(context, t, serveHandle) {
     });
     await pg2.click('.cb-decide-row .cb-choice[data-d="archive"]');
     check(
-      'a decision in a second tab shows as a group here, live ("Archive 1 repo\u2026")',
-      await until(
-        pg,
-        (b) =>
-          window.__sameLoad === true &&
-          document.querySelector(b)?.textContent === 'Archive 1 repo\u2026',
-        HEAD('archive|repo'),
-      ),
+      'a decision in a second tab shows as a group here, live ("repos Archive it on GitHub", 1)',
+      (await nameIs(pg, 'archive|repo', 'repos Archive it on GitHub')) &&
+        (await until(
+          pg,
+          () =>
+            window.__sameLoad === true &&
+            document.querySelector(
+              '.cb-apply-part[data-part="archive|repo"] .cb-group-n',
+            )?.textContent === '1',
+        )),
     );
     await agent.api('POST', '/api/decide', {
       keys: [Y],
@@ -745,6 +819,26 @@ async function listScenario(context, t, serveHandle) {
         doneJob.job.id,
       ),
     );
+    // An item found already so, with nothing run, says so on its page.
+    const GONE = 'repo:schuettc/t11-gone';
+    await agent.api('POST', '/api/decide', {
+      keys: [GONE],
+      disposition: 'archive',
+    });
+    await pg.evaluate((k) => {
+      location.hash = `#/item/${encodeURIComponent(k)}`;
+    }, GONE);
+    const factsLine = async () =>
+      pg.evaluate(
+        () => document.querySelector('.cb-item .kit-facts')?.textContent ?? '',
+      );
+    const foundSo = await eventually(async () =>
+      (await factsLine()).includes('done: found so, nothing ran'),
+    );
+    check(
+      `a done item with no job says how: "done: found so, nothing ran" in its facts ("${await factsLine()}")`,
+      foundSo,
+    );
     check(`no page errors (${errors.join(' | ')})`, errors.length === 0);
   } finally {
     clearInterval(keep);
@@ -797,17 +891,32 @@ async function applyScenariosOn(context, t, serveHandle) {
     await openedGroup(t, pg, id, body.job?.id);
     return body;
   };
-  // runOpen presses the open group's button (or "a"); serve's job.
-  const runOpen = async (pg, how = 'click') => {
+  // runOpen presses the open group's button (or "a"): the page stores the
+  // plan (POST /api/apply/plan, no preview) and approves it; serve's job.
+  const runOpen = async (pg, how = 'click', press = true) => {
+    const store = pg.waitForResponse(
+      (r) =>
+        r.url().includes('/api/apply/plan') &&
+        r.request().method() === 'POST' &&
+        !r.request().postDataJSON()?.preview,
+    );
     const resp = pg.waitForResponse(
       (r) =>
         r.url().includes('/api/apply/approve') &&
         r.request().method() === 'POST',
     );
-    if (how === 'key') await pressWithFocus(pg, 'a');
-    else await pg.click(`${RUN_BTN}.fill`);
+    if (press) {
+      if (how === 'key') await pressWithFocus(pg, 'a');
+      else await pg.click(`${RUN_BTN}.fill`);
+    }
+    const st = await store;
     const r = await resp;
-    return { sent: r.request().postDataJSON(), body: await r.json() };
+    return {
+      storeSent: st.request().postDataJSON(),
+      stored: await st.json(),
+      sent: r.request().postDataJSON(),
+      body: await r.json(),
+    };
   };
   const inRun = (pg, id) =>
     until(
@@ -855,10 +964,10 @@ async function applyScenariosOn(context, t, serveHandle) {
     );
     const served = await agent.api('GET', '/api/items?view=to-apply');
     const LABELS = {
-      'archive|repo': 'Archive 2 repos\u2026',
-      'close|pr': 'Close 1 PR\u2026',
-      'delete|branch': 'Delete 2 branches\u2026',
-      'delete|repo': 'Delete 1 repo\u2026',
+      'archive|repo': 'repos Archive it on GitHub',
+      'close|pr': 'PRs Close it without merging',
+      'delete|branch': 'branches Delete it',
+      'delete|repo': 'repos Delete it',
     };
     await until(
       pg,
@@ -866,11 +975,11 @@ async function applyScenariosOn(context, t, serveHandle) {
       served.groups.length,
     );
     checkList(
-      "the groups are serve's, in its order, each collapsed under its button named for what will happen",
+      "the groups are serve's, in its order, each collapsed under its name: its kind and its decision in serve's words",
       await pg.$$eval('.cb-apply-part', (els) =>
         els.map(
           (e) =>
-            `${e.dataset.part} ${e.querySelector('.cb-group-plan')?.textContent ?? ''}${e.classList.contains('collapsed') ? ' collapsed' : ''}`,
+            `${e.dataset.part} ${[...e.querySelectorAll('.cb-group-plan .cb-group-label, .cb-group-plan .cb-group-choice')].map((x) => x.textContent).join(' ')}${e.classList.contains('collapsed') ? ' collapsed' : ''}`,
         ),
       ),
       served.groups.map((g) => `${g.id} ${LABELS[g.id] ?? g.id} collapsed`),
@@ -897,17 +1006,49 @@ async function applyScenariosOn(context, t, serveHandle) {
       ),
       served.items.map((i) => i.key),
     );
-    // Tick two rows: their groups' buttons name the ticked.
+    // Ticking an item opens its group's review, and the review follows
+    // the ticks; it only previews (serve stores no plan).
     await pg.click(`.cb-apply-list .kit-row[data-key="${REPO_B}"] .kit-box`);
+    const titled = (want) =>
+      until(
+        pg,
+        (w) =>
+          document.querySelector('[data-testid="review-group"]')?.dataset
+            .group === 'archive|repo' &&
+          document.querySelector('[data-testid="review-group"] .kit-h1')
+            ?.textContent === w &&
+          !!document.querySelector('[data-testid="run-group"]'),
+        want,
+      );
+    check(
+      `ticking an item opens its group's review, for it ("${await reviewTitle(pg)}")`,
+      await titled('Archive 1 repo'),
+    );
+    await pg.click(`.cb-apply-list .kit-row[data-key="${REPO_A}"] .kit-box`);
+    check(
+      'the review follows the ticks: another ticked, "Archive 2 repos"',
+      await titled('Archive 2 repos'),
+    );
+    await pg.click(`.cb-apply-list .kit-row[data-key="${REPO_A}"] .kit-box`);
+    check(
+      'one unticked, "Archive 1 repo" again',
+      await titled('Archive 1 repo'),
+    );
+    check(
+      `the review only previews: serve stores no plan (${(await jobsNow()).length} jobs)`,
+      (await jobsNow()).length === 0,
+    );
     await pg.click(`.cb-apply-list .kit-row[data-key="${PR}"] .kit-box`);
     check(
-      'ticked, a group button names the ticked items ("Archive 1 repo\u2026")',
+      "ticked, a group's box says so (PR's checked, archive's mixed)",
       await until(
         pg,
         () =>
-          document.querySelector(
-            '.cb-apply-part[data-part="archive|repo"] .cb-group-plan',
-          )?.textContent === 'Archive 1 repo\u2026' &&
+          document
+            .querySelector(
+              '.cb-apply-part[data-part="archive|repo"] .cb-group-box',
+            )
+            ?.getAttribute('aria-checked') === 'mixed' &&
           document
             .querySelector('.cb-apply-part[data-part="close|pr"] .cb-group-box')
             ?.getAttribute('aria-checked') === 'true',
@@ -924,6 +1065,13 @@ async function applyScenariosOn(context, t, serveHandle) {
     );
     await pg.click(`.cb-apply-list .kit-row[data-key="${REPO_B}"] .kit-box`);
     await pg.click(`.cb-apply-list .kit-row[data-key="${PR}"] .kit-box`);
+    await pg.evaluate(() => {
+      location.hash = '#/review';
+    });
+    await until(
+      pg,
+      () => !!document.querySelector('[data-testid="review-overview"]'),
+    );
 
     // ---- a group opens in the middle pane -------------------------------
     console.log('\nscenario: review — a group opens in the middle pane');
@@ -943,8 +1091,8 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pg.waitForTimeout(500);
     pg.off('request', onPlanPost);
     check(
-      `a double press of a group's button asks serve once (${planPosts.length} POST /api/apply/plan)`,
-      planPosts.length === 1 && (await jobsNow()).length === 1,
+      `a double press of a group's name asks serve once, a preview that stores nothing (${planPosts.length} POST /api/apply/plan)`,
+      planPosts.length === 1 && (await jobsNow()).length === 0,
     );
     checkList(
       "it plans the group's items",
@@ -957,10 +1105,10 @@ async function applyScenariosOn(context, t, serveHandle) {
     );
     const local = await readGroup(pg);
     check(
-      `its title has its counts and its button is the same words ("${local.title}"; ${local.btns.join(', ')}; primary "${local.primary}")`,
+      `its title has its counts and its one button is the same words, none in the bar ("${local.title}"; ${local.btns.join(', ')}; primary "${local.primary}")`,
       local.title === 'Delete 2 local branches, delete 2 remote branches' &&
         local.btns.join(',') === local.title &&
-        local.primary === local.title,
+        local.primary === '',
     );
     check(
       `it says what it does, all local, nothing red, and names no runner (an all-local group needs no agent) ("${local.what}")`,
@@ -1000,33 +1148,19 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pg.evaluate(() => {
       location.hash = '#/review';
     });
+    const stepsOf = (v) =>
+      (v.job?.steps ?? []).map((x) => `${x.key} ${x.command}`).join('\n');
     check(
-      'leaving it runs nothing: serve still has it planned',
+      'leaving it runs nothing: serve stores nothing',
       (await until(
         pg,
         () => !!document.querySelector('[data-testid="review-overview"]'),
-      )) && (await job(branchPlan.job.id)).job.state === 'planned',
+      )) && (await jobsNow()).length === 0,
     );
     const again = await openGroup(pg, 'delete|branch');
     check(
-      `opening it again shows the same plan (job ${again.job?.id}), no new job`,
-      again.job?.id === branchPlan.job.id && (await jobsNow()).length === 1,
-    );
-    // Two plans for one group, as an older casebook could have left them:
-    // opening the group cancels both and builds one fresh.
-    const twin = await copyPlan(home, branchPlan.job.id);
-    await pg.evaluate(() => {
-      location.hash = '#/review';
-    });
-    const fresh = await openGroup(pg, 'delete|branch');
-    const states = Object.fromEntries(
-      (await jobsNow()).map((j) => [j.id, j.state]),
-    );
-    check(
-      `two older plans holding the group are cancelled, and one fresh plan built (#${branchPlan.job.id} ${states[branchPlan.job.id]}, #${twin} ${states[twin]}, #${fresh.job?.id} ${states[fresh.job?.id]})`,
-      states[branchPlan.job.id] === 'cancelled' &&
-        states[twin] === 'cancelled' &&
-        states[fresh.job?.id] === 'planned',
+      `opening it again previews the same steps, and stores nothing (${(await jobsNow()).length} jobs)`,
+      stepsOf(again) === stepsOf(branchPlan) && (await jobsNow()).length === 0,
     );
 
     // ---- outward steps with no agent ----------------------------------
@@ -1034,7 +1168,7 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pg.evaluate(() => {
       location.hash = '#/review';
     });
-    const archPlan = await openGroup(pg, 'archive|repo');
+    await openGroup(pg, 'archive|repo');
     const noAgent = await readGroup(pg);
     check(
       `with no agent attached it says so, its button is off, and there is no primary ("${noAgent.noAgent}"; ${noAgent.btns.join(', ')}; "${noAgent.primary}")`,
@@ -1045,8 +1179,8 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pressWithFocus(pg, 'a');
     await pg.waitForTimeout(400); // kept: "a" must run nothing; a window for it
     check(
-      '"a" with no agent runs nothing (serve still has it planned)',
-      (await job(archPlan.job.id)).job.state === 'planned',
+      '"a" with no agent runs nothing (serve stores no plan)',
+      (await jobsNow()).length === 0,
     );
     await inThemes(t, pg, 'review, no agent', ['light']);
 
@@ -1056,13 +1190,35 @@ async function applyScenariosOn(context, t, serveHandle) {
       location.hash = '#/review';
     });
     const branch = await openGroup(pg, 'delete|branch');
+    // Two stored plans holding the group, as an older casebook could have
+    // left them: storing it to run cancels both and stores one fresh.
+    const old = await agent.api('POST', '/api/apply/plan', {
+      keys: [BR('feat/l1'), BR('feat/l2')],
+    });
+    const twin = await copyPlan(home, old.job.id);
+    await pg.evaluate(() => {
+      window.__ranNoReload = true;
+    });
     const ran = await runOpen(pg);
     const branchJob = ran.body.job?.id;
     check(
-      `pressing it runs it at once (nothing permanent): serve approves plan #${branch.job?.id} with no session (${JSON.stringify(ran.sent)})`,
-      branchJob === branch.job?.id &&
-        ran.sent.plan_id === branch.job?.id &&
+      `pressing it stores the plan for the reviewed items (no preview) and runs it at once (nothing permanent): serve approves plan #${ran.stored.job?.id} with no session (${JSON.stringify(ran.storeSent)} ${JSON.stringify(ran.sent)})`,
+      !ran.storeSent.preview &&
+        stepsOf(ran.stored) === stepsOf(branch) &&
+        branchJob === ran.stored.job?.id &&
+        ran.sent.plan_id === branchJob &&
         ran.sent.session === '',
+    );
+    const states = Object.fromEntries(
+      (await jobsNow()).map((j) => [j.id, j.state]),
+    );
+    check(
+      `two older plans holding the group are cancelled, and the one it runs is fresh (#${old.job.id} ${states[old.job.id]}, #${twin} ${states[twin]}, #${branchJob} ${states[branchJob]})`,
+      states[old.job.id] === 'cancelled' &&
+        states[twin] === 'cancelled' &&
+        branchJob !== old.job.id &&
+        branchJob !== twin &&
+        !['planned', 'cancelled'].includes(states[branchJob]),
     );
     check(
       `the job opens in run (#/run/${branchJob}), run is the bar's place`,
@@ -1116,6 +1272,18 @@ async function applyScenariosOn(context, t, serveHandle) {
         null &&
         gitIn(home, 't9-local', 'rev-parse --verify refs/heads/main') !== null,
     );
+    check(
+      'verified, the branches leave review at once: the bar counts 4 waiting, not 6, with no reload',
+      await until(
+        pg,
+        () =>
+          window.__ranNoReload === true &&
+          document.querySelector('.kit-ctl[data-id="review"] .kit-n')
+            ?.textContent === '4',
+        undefined,
+        10000,
+      ),
+    );
     // The section fills the list and reading columns.
     const geo = await pg.evaluate(() => {
       const r = (sel) => {
@@ -1158,7 +1326,17 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pg.evaluate(() => {
       location.hash = '#/review';
     });
-    const prPlan = await openGroup(pg, 'close|pr');
+    check(
+      "review no longer lists the verified branches' group (no reload)",
+      await until(
+        pg,
+        () =>
+          window.__ranNoReload === true &&
+          !!document.querySelector('.cb-apply-part[data-part="close|pr"]') &&
+          !document.querySelector('.cb-apply-part[data-part="delete|branch"]'),
+      ),
+    );
+    await openGroup(pg, 'close|pr');
     check(
       'with the agent attached the group says who runs it, and its button is on',
       await until(
@@ -1174,9 +1352,9 @@ async function applyScenariosOn(context, t, serveHandle) {
     );
     const out = await readGroup(pg);
     check(
-      `one button named for the action, no menu, no session's name on a button (${out.btns.join(', ')}; "${out.primary}")`,
+      `one button named for the action, none in the bar, no menu, no session's name on a button (${out.btns.join(', ')}; "${out.primary}")`,
       out.btns.join(',') === 'Close 1 PR' &&
-        out.primary === 'Close 1 PR' &&
+        out.primary === '' &&
         out.selects === 0 &&
         !out.btns.some((b) => /t9|probe/.test(b)),
     );
@@ -1196,7 +1374,8 @@ async function applyScenariosOn(context, t, serveHandle) {
     const jobId = prRan.body.job?.id;
     check(
       `"a" runs it through the attached agent: serve has job ${jobId} approved for ${SESSION}`,
-      jobId === prPlan.job?.id &&
+      jobId === prRan.stored.job?.id &&
+        prRan.sent.plan_id === jobId &&
         prRan.sent.session === SESSION &&
         (await eventually(async () => {
           const j = (await job(jobId)).job;
@@ -1243,45 +1422,24 @@ async function applyScenariosOn(context, t, serveHandle) {
     await until(
       pg,
       (id) =>
-        document.querySelector(
-          `.cb-apply-list .kit-row[data-job="${id}"] .kit-sub`,
-        )?.textContent === '1 needs you',
+        !!document.querySelector(
+          `.cb-apply-list .kit-row[data-job="${id}"] .cb-pb`,
+        ),
       jobId,
     );
     const row = await readRow();
     checkList('the row names its lane in its colour', row.lanes, [
       `pi \u00b7 outward=${agentC}`,
     ]);
-    check(
-      `the row has a thin bar (${row.barH}px), and what needs Court is a signal line ("${row.sub}")`,
-      row.barH === 3 && row.sub === '1 needs you' && row.subColour === signal,
-    );
+    check(`the row has a thin bar (${row.barH}px)`, row.barH === 3);
 
-    // The batch card: confirm.
+    // Approving was the go: no batch card, nothing more to confirm.
+    // Kept: a window for a card to arrive, if one did.
+    await pg.waitForTimeout(500);
     check(
-      'a batch card needs Court (signal edge): confirm · skip batch',
-      (await until(
-        pg,
-        () => !!document.querySelector('.cb-needs-card[data-kind="batch"]'),
-      )) &&
-        (await pg.$eval('.cb-needs-card[data-kind="batch"]', (e) =>
-          [...e.querySelectorAll('.kit-btn')]
-            .map((b) => b.textContent)
-            .join(' \u00b7 '),
-        )) === 'confirm \u00b7 skip batch',
-    );
-    await pg.click(
-      '.cb-needs-card[data-kind="batch"] .kit-btn:has-text("confirm")',
-    );
-    check(
-      'confirming clears the batch card (serve answered it)',
-      (await until(
-        pg,
-        () => !document.querySelector('.cb-needs-card[data-kind="batch"]'),
-      )) &&
-        (await eventually(async () =>
-          ((await job(jobId)).needs_you ?? []).every((c) => c.kind !== 'batch'),
-        )),
+      `approving opens no batch card: nothing more to confirm, on the page or in serve (cards: ${(await read.cards(pg)).join(', ') || 'none'})`,
+      !(await pg.$('.cb-needs-card[data-kind="batch"]')) &&
+        ((await job(jobId)).needs_you ?? []).every((c) => c.kind !== 'batch'),
     );
 
     // ---- pause and resume --------------------------------------------
@@ -1442,6 +1600,11 @@ async function applyScenariosOn(context, t, serveHandle) {
         textCard.quote === draft &&
         textCard.fill === 'post and close',
     );
+    const asked = await readRow();
+    check(
+      `the job's row says what needs Court in a signal line ("${asked.sub}")`,
+      asked.sub === '1 needs you' && asked.subColour === signal,
+    );
     check(
       `it says what and where ("${textCard.head}"; "${textCard.what}")`,
       textCard.head ===
@@ -1561,13 +1724,6 @@ async function applyScenariosOn(context, t, serveHandle) {
     const archRan = await runOpen(pg);
     const archJob = archRan.body.job?.id;
     await inRun(pg, archJob);
-    await until(
-      pg,
-      () => !!document.querySelector('.cb-needs-card[data-kind="batch"]'),
-    );
-    await pg.click(
-      '.cb-needs-card[data-kind="batch"] .kit-btn:has-text("confirm")',
-    );
     const repoA = stepFor(await job(archJob), REPO_A);
     await agent.api('POST', '/api/agent/job-step', {
       session: SESSION,
@@ -1641,7 +1797,9 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pg.evaluate(() => {
       location.hash = '#/review';
     });
-    const delPlan = await openGroup(pg, 'delete|repo');
+    await openGroup(pg, 'delete|repo');
+    const holds = async (key) =>
+      (await jobsNow()).some((j) => (j.steps ?? []).some((x) => x.key === key));
     await until(
       pg,
       () => !!document.querySelector('[data-testid="runs-through"]'),
@@ -1683,21 +1841,20 @@ async function applyScenariosOn(context, t, serveHandle) {
     await inThemes(t, pg, 'confirm', ['light']);
     await pg.click('.kit-sheet .kit-btn:has-text("cancel")');
     check(
-      'cancel runs nothing: the sheet goes, serve still has it planned, review stays',
+      'cancel runs nothing: the sheet goes, serve stores no plan for it, review stays',
       (await until(pg, () => !document.querySelector('.kit-sheet'))) &&
-        (await job(delPlan.job.id)).job.state === 'planned' &&
+        !(await holds(REPO_C)) &&
         (await pg.evaluate(() => location.hash)) === groupHash('delete|repo'),
     );
     await pg.click(`${RUN_BTN}.fill`);
     await until(pg, () => !!document.querySelector('.kit-sheet'));
-    const delResp = pg.waitForResponse((r) =>
-      r.url().includes('/api/apply/approve'),
-    );
+    const delRun = runOpen(pg, 'click', false);
     await pg.click('.kit-sheet .kit-btn.fill');
-    const delRan = await (await delResp).json();
+    const delRan = await delRun;
+    const delJob = delRan.body.job?.id;
     check(
-      `confirmed, it runs and opens in run (job ${delRan.job?.id})`,
-      delRan.job?.id === delPlan.job.id && (await inRun(pg, delPlan.job.id)),
+      `confirmed, it is stored and runs, and opens in run (job ${delJob})`,
+      !!delJob && delRan.stored.job?.id === delJob && (await inRun(pg, delJob)),
     );
 
     // ---- undo ----------------------------------------------------------
@@ -1779,7 +1936,7 @@ async function applyScenariosOn(context, t, serveHandle) {
     // ---- sections: context, keys, primary -----------------------------
     console.log('\nscenario: run — only the active section feeds the composer');
     // The repo delete's job is still running (its agent hasn't reported).
-    const liveJob = delPlan.job.id;
+    const liveJob = delJob;
     await pg.evaluate((id) => {
       location.hash = `#/run/${id}`;
     }, liveJob);
@@ -1874,14 +2031,21 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pg.evaluate(() => {
       location.hash = '#/review';
     });
-    const last = await openGroup(pg, 'archive|repo');
+    await openGroup(pg, 'archive|repo');
     check(
-      'a group open in review, with the agent attached, is the primary ("Archive 1 repo")',
+      'a group open in review, with the agent attached: its button is on ("Archive 1 repo"), and the bar has no primary',
       await until(
         pg,
-        () =>
-          document.querySelector('.kit-primary')?.textContent ===
-          'Archive 1 repo',
+        (b) => {
+          const p = document.querySelector('.kit-primary');
+          const btn = document.querySelector(b);
+          return (
+            btn?.textContent === 'Archive 1 repo' &&
+            !btn.disabled &&
+            (!p || p.hidden || p.textContent === '')
+          );
+        },
+        `${RUN_BTN}.fill`,
       ),
     );
     await pg.evaluate(() => {
@@ -1902,8 +2066,8 @@ async function applyScenariosOn(context, t, serveHandle) {
     await pressWithFocus(pg, 'a');
     await pg.waitForTimeout(600); // kept: "a" must run nothing; a window for it
     check(
-      'on decide, "a" does not run the group open in review',
-      (await job(last.job.id)).job.state === 'planned',
+      'on decide, "a" does not run the group open in review (no plan stored for it)',
+      !(await holds('repo:schuettc/t9-prs')),
     );
     check(`no page errors (${errors.join(' | ')})`, errors.length === 0);
   } finally {
@@ -2121,8 +2285,8 @@ async function staleScenario(context, t, serveHandle) {
         sum1.syncing === false,
     );
     check(
-      'serve has one plan (no second sync, no second plan)',
-      ((await agent.api('GET', '/api/jobs')).jobs ?? []).length === 1,
+      'serve stores no plan (the reopened group is a preview; no second sync)',
+      ((await agent.api('GET', '/api/jobs')).jobs ?? []).length === 0,
     );
     const tab2Cleared = await until(
       pg2,

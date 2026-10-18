@@ -20,7 +20,7 @@
 
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { startServe } from './serve.mjs';
+import { openGroups, startServe } from './serve.mjs';
 import { createAgent } from './agent.mjs';
 
 let serves = [];
@@ -143,6 +143,7 @@ async function loadScenario(context, t, s, agent, ids) {
       waitUntil: 'load',
       timeout: 15000,
     });
+    await openGroups(pg);
     const rows = pg.locator(
       '.kit-app > .kit-list:not([hidden]) .kit-rows > .kit-row',
     );

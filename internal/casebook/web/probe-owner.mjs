@@ -11,7 +11,7 @@
 // Its own seeded serve (serve.mjs: --no-open, CASEBOOK_NO_BROWSER=1, its own
 // CASEBOOK_HOME), so its sessions are the only ones there.
 
-import { startServe } from './serve.mjs';
+import { openGroups, startServe } from './serve.mjs';
 import { createAgent } from './agent.mjs';
 
 let serves = [];
@@ -839,6 +839,7 @@ export async function ownerScenarios(context, t) {
             };
             return `item ${r('.cb-item')} row ${r('.cb-decide-row')}`;
           });
+        await openGroups(pg);
         await pg.click('.kit-app > .kit-list .kit-rows > .kit-row');
         await pg.waitForSelector('.cb-item .cb-decide-row', { timeout: 8000 });
         const item0 = await itemBox();

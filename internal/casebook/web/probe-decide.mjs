@@ -173,7 +173,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startServe } from './serve.mjs';
+import { openGroups, startServe } from './serve.mjs';
 import { createAgent } from './agent.mjs';
 
 let serves = [];
@@ -538,7 +538,7 @@ async function decideScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
 
   const sheetsBefore = await sheets();
 
@@ -1090,6 +1090,7 @@ async function decideScenario(context, t, s) {
     await pg.evaluate(() => {
       location.hash = '#/decide';
     });
+    await openGroups(pg);
     await row(pg, ISSUE(4)).waitFor({ timeout: 8000 });
     {
       const ok = await until(
@@ -1192,6 +1193,21 @@ async function decideScenario(context, t, s) {
 // ---- the groups -----------------------------------------------------------------
 
 const LIST = '.kit-app > .kit-list:not([hidden])';
+// openNewGroup waits for a group the list didn't have (an item moved to
+// it, collapsed as every group starts) and opens it, as Court would.
+async function openNewGroup(pg) {
+  await pg
+    .waitForFunction(
+      (l) =>
+        !!document.querySelector(
+          `${l} .cb-group.collapsed[data-group]:not([data-group="left-open"])`,
+        ),
+      LIST,
+      { timeout: 8000 },
+    )
+    .catch(() => {});
+  await openGroups(pg, { rows: false });
+}
 // PANE is decide's middle pane (its summary with nothing open).
 const PANE = '.kit-app > .kit-read:not([hidden])';
 const SUGGEST_RULES =
@@ -1350,7 +1366,7 @@ async function groupsScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await setTheme(pg, 'light');
 
   // ---- groups: headers -----------------------------------------------------
@@ -1855,7 +1871,7 @@ async function discardScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await setTheme(pg, 'light');
   await pg.click(`.cb-dock-chooser .cb-dock-pick-item[data-session="${A}"]`);
   await until(
@@ -1976,6 +1992,7 @@ async function discardScenario(context, t, s) {
     'discard withdraws every recommendation in the view',
     await eventually(async () => (await pendingKeys()).length === 0),
   );
+  await openNewGroup(pg);
   {
     const ok = await until(
       pg,
@@ -2078,6 +2095,7 @@ async function discardScenario(context, t, s) {
       LIST,
       8000,
     );
+    await openNewGroup(pg);
     const rs = await subs();
     const heads = (await groupHeads(pg)).map(headLine);
     check(
@@ -2151,6 +2169,7 @@ async function manyScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
+  await openGroups(pg);
   const HEAD = `${LIST} .cb-group[data-d="close"]`;
   {
     const ok = await until(
@@ -2263,6 +2282,7 @@ async function reloadPagesScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
+  await openGroups(pg);
   const rowCount = () =>
     pg.evaluate(
       (list) => document.querySelectorAll(`${list} .kit-row`).length,
@@ -2407,7 +2427,7 @@ async function pagesScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await pg.click('.cb-foot-more');
   check(
     'show more brings in page two',
@@ -2458,7 +2478,7 @@ async function pagesScenario(context, t, s) {
   await pg2.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg2.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg2);
   await pg2.evaluate((k) => {
     location.hash = '#/item/' + encodeURIComponent(k);
   }, fresh[199]);
@@ -2592,7 +2612,7 @@ async function closeCommentScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await setTheme(pg, 'light');
 
   // kickerOf reads the open item's kicker: its text, and its link (if any).
@@ -3061,7 +3081,7 @@ async function leftOpenScenario(context, t, s) {
     await pg.goto(`${s.url}#/decide`, {
       waitUntil: 'domcontentloaded',
     });
-    await pg.waitForSelector('.kit-row', { timeout: 8000 });
+    await openGroups(pg);
     await setTheme(pg, 'light');
   };
   await load();
@@ -3340,7 +3360,7 @@ async function openRecScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   // A reload would lose this.
   await pg.evaluate(() => {
     window.__openRecNoReload = true;
@@ -3451,7 +3471,9 @@ async function openRecScenario(context, t, s) {
   const before = await readCol(pg);
   await agent.propose(A, [OISSUE(2)], 'keep', 'still being discussed');
   {
-    // The list hears it: issue #2's row gets its line.
+    // The list hears it: issue #2 moves to a new group (collapsed, as
+    // every group starts); opened, its row has the line.
+    await openNewGroup(pg);
     const heard = await until(
       pg,
       (k) =>
@@ -3712,7 +3734,7 @@ async function itemPageScenario(context, t, s) {
     if (r.method() === 'POST') posts.push(new URL(r.url()).pathname);
   });
   await pg.goto(`${s.url}#/decide`, { waitUntil: 'domcontentloaded' });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
 
   // geo reads the open item's parts, top to bottom, and whether anything
   // in it scrolls on its own.
@@ -3891,7 +3913,7 @@ async function itemPageScenario(context, t, s) {
     8000,
   );
   await pg.reload({ waitUntil: 'domcontentloaded' });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await row(pg, IPISSUE(1)).click();
   await opened(t, pg, IPISSUE(1));
   await until(
@@ -4119,7 +4141,7 @@ async function lookIntoScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await pg.evaluate(() => {
     window.__lookNoReload = true;
   });
@@ -4492,8 +4514,9 @@ async function lookIntoScenario(context, t, s) {
       `still looking while the message is worked on ("${got.item}")`,
       got.item === LOOKING,
     );
-    // With the recommendation on the row too (once the list has it), the
-    // marker matches its line.
+    // With the recommendation on the row too (once the list has it, in
+    // its new group), the marker matches its line.
+    await openNewGroup(pg);
     await until(
       pg,
       (k) =>
@@ -4770,7 +4793,7 @@ async function steadyScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await setTheme(pg, 'light');
   const bar = await classicScrollbar(pg);
   check(`the list's scrollbar is a classic 15px one (${bar}px)`, bar === 15);
@@ -5138,7 +5161,7 @@ async function navScenario(context, t, s) {
   await pg.goto(`${s.url}#/decide`, {
     waitUntil: 'domcontentloaded',
   });
-  await pg.waitForSelector('.kit-row', { timeout: 8000 });
+  await openGroups(pg);
   await setTheme(pg, 'light');
   {
     const bar = await classicScrollbar(pg);
@@ -5715,8 +5738,26 @@ async function navScenario(context, t, s) {
   await pg.setViewportSize({ width: 1600, height: 900 });
 
   // ---- nav: into a collapsed group ---------------------------------------------
+  // Merge is collapsed, so serve sent none of its rows (open= lists only
+  // the open groups): ] has to fetch them before it can open the first.
   await row(pg, KEEP_LAST).click();
   await opened(t, pg, KEEP_LAST);
+  {
+    const st = await pg.evaluate(
+      ({ sel, list, key }) => ({
+        collapsed: !!document
+          .querySelector(sel)
+          ?.classList.contains('collapsed'),
+        rows: document.querySelectorAll(`${list} .kit-row[data-key="${key}"]`)
+          .length,
+      }),
+      { sel: groupSel('merge'), list: LIST, key: M1 },
+    );
+    check(
+      `nav: before ], Merge is collapsed with none of its rows loaded (collapsed ${st.collapsed}, ${M1}'s rows ${st.rows})`,
+      st.collapsed && st.rows === 0,
+    );
+  }
   await press(pg, ']');
   {
     const ok = await opened(t, pg, M1);
@@ -5856,7 +5897,14 @@ async function navScenario(context, t, s) {
     location.hash = '#/decide';
   });
   await pg.reload({ waitUntil: 'domcontentloaded' });
-  await pg.waitForSelector('.kit-row', { state: 'attached', timeout: 8000 });
+  // Every group starts collapsed: the list is in once its headers are.
+  await pg.waitForSelector(
+    '.kit-app .cb-group[data-group], .kit-app .kit-row',
+    {
+      state: 'attached',
+      timeout: 8000,
+    },
+  );
   await until(pg, () => !!document.querySelector('.cb-list-show'));
   {
     const l = await layout();
@@ -5873,6 +5921,7 @@ async function navScenario(context, t, s) {
         .querySelector('.kit-app > .kit-list:not([hidden])')
         ?.getBoundingClientRect().width === 520,
   );
+  await openGroups(pg);
   {
     const l = await layout();
     check(

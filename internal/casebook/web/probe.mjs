@@ -16,7 +16,20 @@
 // module load so no future edit can accidentally open Court's browser.
 
 import pkg from 'playwright-core';
-import { startServe, gitGuard, seenWalkthrough } from './serve.mjs';
+import { openGroups, startServe, gitGuard, seenWalkthrough } from './serve.mjs';
+
+// untilOpen is until() on decide, opening each group as it appears (they
+// start collapsed; a live recommendation's group arrives collapsed), as
+// Court would before looking at its rows.
+async function untilOpen(pg, fn, arg, ms = 8000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    await openGroups(pg, { rows: false, timeout: 300 }).catch(() => {});
+    if (await pg.evaluate(fn, arg).catch(() => false)) return true;
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
 import { createAgent } from './agent.mjs';
 import { applyScenarios, stopApplyServes } from './probe-apply.mjs';
 import { shellScenarios, stopShellServes } from './probe-shell.mjs';
@@ -326,6 +339,9 @@ async function openDock(context, serveHandle, fx, opts = {}) {
     10000,
   );
   if (!shown) throw new Error(`the dock did not show session ${fx.label}`);
+  // decide's groups start collapsed: open them, as Court would, to reach
+  // the rows.
+  if (opts.groups !== false) await openGroups(pg, { rows: false });
   return pg;
 }
 
@@ -2439,6 +2455,9 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
     await pg.click(
       `${READ} .cb-rules-row[data-id="r8-landed"] .cb-rules-row-open`,
     );
+    // Its group came back collapsed, as every group starts: open it.
+    await until(pg, () => location.hash === '#/decide?rule=r8-landed');
+    await openGroups(pg, { rows: false });
     check(
       'a row opens the rule in the middle pane and narrows the list (rule=r8-landed)',
       await until(
@@ -2465,6 +2484,8 @@ async function ruleGroupsScenariosOn(context, serveHandle) {
       waitUntil: 'domcontentloaded',
     });
     await until(pg, (sel) => !!document.querySelector(sel), `${HEAD} .fill`);
+    // A collapsed group shows its buttons once expanded.
+    await openGroups(pg, { rows: false });
     const applyBefore = await pg.$eval(
       '.kit-ctl[data-id="review"] .kit-n',
       (e) => Number(e.textContent),
@@ -2669,7 +2690,7 @@ const applyHelpers = { check, checkList, until, eventually };
 // run() below is the scenario list. A full run (no PROBE_ONLY) must pass at
 // least MIN_CHECKS checks: a scenario that stops early, or is skipped, can't
 // leave the probe green. Raise it whenever checks are added.
-const MIN_CHECKS = 974;
+const MIN_CHECKS = 985;
 
 // PROBE_ONLY runs one group of scenarios, for working on them: a partial
 // run. It has to say so: under CI (the CI env var) it is refused outright,
@@ -3059,8 +3080,8 @@ async function run() {
     // Wait for the attention list panel.
     await page.waitForSelector('.kit-list', { timeout: 5000 }).catch(() => {});
 
-    // Wait for rows to appear (the API call may take a moment).
-    await page.waitForSelector('.kit-row', { timeout: 8000 }).catch(() => {});
+    // Wait for rows to appear: the groups start collapsed; open them.
+    await untilOpen(page, () => !!document.querySelector('.kit-row'));
 
     // Check: seeded items appear in the list.
     {
@@ -3396,6 +3417,7 @@ async function run() {
       });
       await page.waitForFunction(() => location.hash === '#/decide');
       const landed = await listShows(page);
+      await untilOpen(page, () => !!document.querySelector('.kit-row'));
       const geo = await page.evaluate(() => {
         const l = document.querySelector('.kit-app > .kit-list:not([hidden])');
         const r = l?.getBoundingClientRect();
@@ -3583,7 +3605,7 @@ async function run() {
 
         check(
           "fake-agent proposal shows live: the item is in the agent's group",
-          await until(
+          await untilOpen(
             propCountPage,
             (key) =>
               [
@@ -3954,18 +3976,13 @@ async function run() {
             location.hash = '#/decide';
           });
           await keyPage.waitForFunction(() => location.hash === '#/decide');
-          await keyPage
-            .waitForSelector('.kit-row', { timeout: 6000 })
-            .catch(() => {});
           // The recommended item's row is in the session's group.
-          await until(
-            keyPage,
-            () =>
-              !!document.querySelector(
-                '.kit-app > .kit-list:not([hidden]) .cb-group[data-group^="pi:probe-key-a-sess|"]',
+          await untilOpen(keyPage, () =>
+            [
+              ...document.querySelectorAll(
+                '.kit-app > .kit-list:not([hidden]) .kit-row',
               ),
-            undefined,
-            8000,
+            ].some((e) => e.textContent?.includes('schuettc/hail#7')),
           );
 
           // Click its row to open the item.
@@ -4113,7 +4130,7 @@ async function run() {
 
         if (proposedClaude > 0) {
           // Wait for the proposals live event and list reload.
-          await until(claudePage, () =>
+          await untilOpen(claudePage, () =>
             [...document.querySelectorAll('.kit-row .kit-sub')].some(
               (e) => e.textContent === 'claude probe note',
             ),
