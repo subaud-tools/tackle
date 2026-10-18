@@ -4024,9 +4024,14 @@ async function itemPageScenario(context, t, s) {
     );
   }
   await pg.click(`${OLD} .cb-group-act`);
+  // The strip of the decision before (shown for 6s) may still be up: wait for
+  // the group's own, not just any strip.
   await until(
     pg,
-    (sel) => !!document.querySelector(sel)?.checkVisibility(),
+    (sel) => {
+      const e = document.querySelector(sel);
+      return !!e?.checkVisibility() && /all 3/.test(e.textContent ?? '');
+    },
     STRIP,
     8000,
   );
