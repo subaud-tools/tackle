@@ -536,6 +536,9 @@ func (s *Server) agentOpen(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Session string `json:"session"`
 		Key     string `json:"key"`
+		// View is what an agent's channel started before views went still
+		// sends; it is ignored, so that agent can still open the page.
+		View string `json:"view"`
 	}
 	if err := decode(r, &in); err != nil {
 		reply(w, nil, err)
