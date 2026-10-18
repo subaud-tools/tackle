@@ -234,6 +234,7 @@ async function applyScenariosIn(context, t) {
     ],
     ['list', T11_SEED, listScenario],
     ['same', { seedRepos: [dormant('t10-same')] }, sameGroupScenario],
+    ['ticked', TICKED_SEED, tickedRunScenario],
   ];
   for (const [name, seed, run] of groups) {
     if (!runs(name)) continue;
@@ -2334,6 +2335,77 @@ async function staleScenario(context, t, serveHandle) {
     );
     check(`no page errors (${errors.join(' | ')})`, errors.length === 0);
   } finally {
+    await pg.close();
+  }
+}
+
+// ---- running ticked items stays on the job ---------------------------------
+// Court 2026-10-18: after running one ticked PR, the page went to run and,
+// 200ms later, jumped back to review showing every PR left in the group.
+const TPR = (n) => `pr:schuettc/tk-prs#${n}`;
+const TICKED_SEED = {
+  seedRepos: [
+    {
+      repo: 'schuettc/tk-prs',
+      pushed_at: '2026-09-20T00:00:00Z',
+      default_branch: 'main',
+      prs: [1, 2, 3].map((number) => ({
+        repo: 'schuettc/tk-prs',
+        number,
+        title: `bump dep ${number}`,
+        author: 'dependabot[bot]',
+        state: 'OPEN',
+        created_at: '2026-03-01T00:00:00Z',
+        updated_at: '2026-03-01T00:00:00Z',
+      })),
+      issues: [],
+    },
+  ],
+};
+async function tickedRunScenario(context, t, s) {
+  const { check, until } = t;
+  console.log('\nscenario: run ticked items — the page stays on the job');
+  const agent = createAgent(s.base, s.token);
+  const S = 'probe-ticked-pi';
+  const here = () => agent.presence(S, 'pi \u00b7 tk', '/home/court/tk', 'pi');
+  await here();
+  const keep = setInterval(() => void here(), 1000);
+  const pg = await context.newPage();
+  try {
+    await agent.api('POST', '/api/decide', {
+      keys: [1, 2, 3].map(TPR),
+      disposition: 'close',
+    });
+    await pg.goto(`${s.url}&session=${S}#/review`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await pg.waitForSelector('.cb-apply-part[data-part="close|pr"]');
+    await pg.click('.cb-apply-part[data-part="close|pr"] .cb-group-caret');
+    await pg.click(`.cb-apply-list .kit-row[data-key="${TPR(1)}"] .kit-box`);
+    await until(
+      pg,
+      () =>
+        !!document.querySelector(
+          '[data-testid="run-group"] .kit-btn:not([disabled])',
+        ),
+    );
+    await until(
+      pg,
+      () =>
+        document.querySelector('.kit-app > .kit-read:not([hidden]) .kit-h1')
+          ?.textContent === 'Close 1 PR',
+    );
+    await pg.click('[data-testid="run-group"] .kit-btn');
+    await until(pg, () => location.hash.startsWith('#/run/'));
+    const at = await pg.evaluate(() => location.hash);
+    await pg.waitForTimeout(1000);
+    const after = await pg.evaluate(() => location.hash);
+    check(
+      `after running one ticked PR the page stays on its job in run (${at} then ${after}), not back on review with the rest`,
+      after === at,
+    );
+  } finally {
+    clearInterval(keep);
     await pg.close();
   }
 }

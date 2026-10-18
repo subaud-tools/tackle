@@ -402,9 +402,11 @@ export function makeApply(ctx: Ctx): Section {
       if (followTimer) clearTimeout(followTimer);
       followTimer = setTimeout(() => {
         followTimer = null;
-        if (!g) return;
+        // Only while review is still shown, and the group still ticked or
+        // open: a run unticks its items and leaves for run, which must stay.
+        if (!g || mode !== 'review') return;
         if (reviewGroup === g.id) void openGroup(g, true);
-        else if (!reviewGroup) openFromHead(g);
+        else if (!reviewGroup && tickedIn(g).length) openFromHead(g);
       }, 250);
     },
     foot,
@@ -1101,6 +1103,8 @@ export function makeApply(ctx: Ctx): Section {
 
   function closeReview(): void {
     planSeq.next(); // a plan on its way no longer draws
+    if (followTimer) clearTimeout(followTimer);
+    followTimer = null;
     reviewGroup = '';
     reviewView = null;
     reviewKeys = [];

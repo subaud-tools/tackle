@@ -2030,9 +2030,9 @@ function makeApply(ctx) {
       if (followTimer) clearTimeout(followTimer);
       followTimer = setTimeout(() => {
         followTimer = null;
-        if (!g) return;
+        if (!g || mode !== "review") return;
         if (reviewGroup === g.id) void openGroup(g, true);
-        else if (!reviewGroup) openFromHead(g);
+        else if (!reviewGroup && tickedIn(g).length) openFromHead(g);
       }, 250);
     },
     foot
@@ -2600,6 +2600,8 @@ function makeApply(ctx) {
   }
   function closeReview() {
     planSeq.next();
+    if (followTimer) clearTimeout(followTimer);
+    followTimer = null;
     reviewGroup = "";
     reviewView = null;
     reviewKeys = [];
