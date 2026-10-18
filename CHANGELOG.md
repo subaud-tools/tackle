@@ -4,6 +4,20 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [casebook 0.10.0] - 2026-10-17
+
+### Added
+- After a decision that goes to apply, the next item opens and a strip says where it went for 6 seconds: "Closed it · waiting in apply · undo" ("apply" opens apply). A group's button says it for the lot ("Deleted all 3 · waiting in apply · undo"), and its undo takes them all back.
+- `POST /api/decisions/undo` takes a list (`{items: [{key, expect, restore}]}`): one undo for one item or a batch, one rebuild. An item decided elsewhere since is left as it is and named in `errors`.
+
+### Changed
+- The item page reads what it is, then decide, then reading: kicker, title and one line of facts ("came back · ‹reason›" first when it came back); one fixed-height row of short decision buttons with "Look into it" last; then the recommendation's reason and source, the description, evidence and history. The page scrolls; nothing in it has its own scrollbar. The empty recommendation box and the fixed description box are gone.
+- Each decision button is named for its decision, the recommended one marked "recommended", and its hover says what happens on GitHub and when ("Decides to close this issue. Nothing happens on GitHub until you run it in apply."; "Decides to keep it as it is. Nothing to run.").
+- Pressing the recommended button accepts the recommendation; pressing another decides the item your way and counts against the rule or agent as decided differently.
+
+### Removed
+- The recommendation card's accept, change… and reject, and the `a` and `r` keys.
+
 ## [casebook 0.9.0] - 2026-10-17
 
 ### Added
