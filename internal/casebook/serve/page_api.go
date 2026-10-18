@@ -206,6 +206,20 @@ func (s *Server) getItems(w http.ResponseWriter, r *http.Request) {
 	group.Limit = atoi(q.Get("limit"))
 	query := group
 	query.Offset = atoi(q.Get("offset"))
+	// open= (a JSON list of group ids: a label may hold a comma) lists the
+	// open groups' rows alone, the page starting with every group
+	// collapsed; the groups and their counts stay every group's.
+	if q.Has("open") {
+		var ids []string
+		if err := json.Unmarshal([]byte(q.Get("open")), &ids); err != nil {
+			reply(w, nil, httpError{code: http.StatusBadRequest, msg: "open: " + err.Error()})
+			return
+		}
+		query.Open = map[string]bool{}
+		for _, id := range ids {
+			query.Open[id] = true
+		}
+	}
 	items, total := s.Index.List(query, pending)
 	if items == nil {
 		items = []ItemView{}

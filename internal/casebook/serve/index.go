@@ -93,6 +93,7 @@ type Query struct {
 	Rule     string          // rule id whose matched keys are in MatchSet
 	MatchSet map[string]bool // the keys a rule matched (Rule != ""): only those items; nil: no such filter
 	Group    string          // a group's ID (GroupView.ID): only its items
+	Open     map[string]bool // the groups the page has open (open=): only their items; nil: every group's
 	Flat     bool            // group=false: one list, newest first; items keep their Group and Groups still count
 	Filtered bool            // filters=: every item, whatever its status, in MatchSet
 	Now      time.Time       // clock for the age filter; zero falls back to time.Now()
@@ -222,6 +223,9 @@ func choiceOf(k item.Kind, d item.Disposition) (item.Choice, int) {
 // "" for none), passes q's filters.
 func matches(q Query, it engine.Item, group string) bool {
 	if q.Group != "" && group != q.Group {
+		return false
+	}
+	if q.Open != nil && !q.Open[group] {
 		return false
 	}
 	if q.Kind != "" && string(it.Kind) != q.Kind {
@@ -374,7 +378,7 @@ func (x *Index) List(q Query, pending map[string]propose.Proposal) ([]ItemView, 
 func (x *Index) Groups(q Query, pending map[string]propose.Proposal) []GroupView {
 	x.mu.RLock()
 	defer x.mu.RUnlock()
-	q.Group = ""
+	q.Group, q.Open = "", nil
 	_, gs := x.listed(q, pending)
 	return gs
 }

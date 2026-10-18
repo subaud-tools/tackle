@@ -5392,7 +5392,7 @@ function makeDecide(ctx) {
   let searchDebounceTimer = null;
   let totalItemsForView = 0;
   let groups = [];
-  const collapsed = /* @__PURE__ */ new Set([LEFT_OPEN]);
+  const opened = /* @__PURE__ */ new Set();
   const groupOfKey = /* @__PURE__ */ new Map();
   const proposalOfKey = /* @__PURE__ */ new Map();
   const busyGroups = /* @__PURE__ */ new Set();
@@ -5926,6 +5926,8 @@ function makeDecide(ctx) {
     p["limit"] = String(PAGE_SIZE);
     if (filters.q) p["q"] = filters.q;
     if (flat) p["group"] = "false";
+    else
+      p["open"] = JSON.stringify([...opened].filter((id) => id !== LEFT_OPEN));
     return p;
   }
   const reload = coalesced(reloadNow);
@@ -5963,7 +5965,7 @@ function makeDecide(ctx) {
         return;
       }
       totalItems = data.total;
-      totalItemsForView = data.total;
+      totalItemsForView = viewTotal(data);
       loadedItems = items;
       leftOpen = data.left_open ?? [];
       leftOpenTotal = data.left_open_total ?? 0;
@@ -5977,7 +5979,7 @@ function makeDecide(ctx) {
       if (draft !== null) {
         editor?.showError(null);
         paintPreviewLine(
-          draft.length ? `previewing a draft ${editing} · ${pluralize(data.total, "item")}` : "add a condition to preview"
+          draft.length ? `previewing a draft ${editing} · ${pluralize(viewTotal(data), "item")}` : "add a condition to preview"
         );
       }
       setRows();
@@ -6011,6 +6013,10 @@ function makeDecide(ctx) {
       reloading = false;
     }
   }
+  function viewTotal(data) {
+    if (flat || !data.groups?.length) return data.total;
+    return data.groups.reduce((n, g) => n + g.total, 0);
+  }
   async function loadMore() {
     if (reloading || loadingMore || offset >= totalItems) return;
     loadingMore = true;
@@ -6028,7 +6034,7 @@ function makeDecide(ctx) {
       lastOrder = loadedItems.map((it) => it.key);
       offset = loadedItems.length;
       totalItems = data.total;
-      totalItemsForView = data.total;
+      totalItemsForView = viewTotal(data);
       setRows();
       markOpenRow();
       updateFoot();
@@ -6039,8 +6045,8 @@ function makeDecide(ctx) {
   }
   function setRows() {
     const withLeft = offset >= totalItems && leftOpenTotal > 0;
-    const left = withLeft && !collapsed.has(LEFT_OPEN) ? leftOpen : [];
-    const open = flat ? loadedItems : loadedItems.filter((it) => !collapsed.has(it.group));
+    const left = withLeft && opened.has(LEFT_OPEN) ? leftOpen : [];
+    const open = flat ? loadedItems : loadedItems.filter((it) => opened.has(it.group));
     shown = [...open, ...left];
     handle.setItems(shown);
     const rowEls = handle.el.querySelectorAll(
@@ -6188,8 +6194,8 @@ function makeDecide(ctx) {
     }
     if (!target2 || currentOpenKey !== key) return;
     const group = navOrder().find((r) => r.key === target2)?.group ?? "";
-    if (collapsed.has(group)) {
-      collapsed.delete(group);
+    if (!opened.has(group)) {
+      opened.add(group);
       setRows();
     }
     openKey(target2);
@@ -6211,10 +6217,8 @@ function makeDecide(ctx) {
     const body = handle.el.querySelector(".kit-rows");
     heads = [];
     if (!body) return;
-    const loaded = new Set(loadedItems.map((it) => it.group));
     let last = null;
     for (const g of groups) {
-      if (!loaded.has(g.id)) continue;
       const head = groupHead(g);
       heads.push(head);
       const first = open.findIndex((it) => it.group === g.id);
@@ -6231,12 +6235,14 @@ function makeDecide(ctx) {
     }
   }
   function headShell(id, label, n, box, hint, data, tags = [], more = null) {
-    const isOpen = !collapsed.has(id);
+    const isOpen = opened.has(id);
     const toggleOpen = () => {
-      if (collapsed.has(id)) collapsed.delete(id);
-      else collapsed.add(id);
-      setRows();
-      markOpenRow();
+      if (opened.has(id)) opened.delete(id);
+      else opened.add(id);
+      if (id === LEFT_OPEN) {
+        setRows();
+        markOpenRow();
+      } else void reload();
     };
     const top = h11(
       "div",
@@ -6460,11 +6466,11 @@ ${k}`)
     }
     try {
       const items = await fetchGroup(g);
-      if (collapsed.delete(g.id)) {
-        setRows();
-        markOpenRow();
-      }
       selection.all(items.map((it) => it.key));
+      if (!opened.has(g.id)) {
+        opened.add(g.id);
+        void reload();
+      }
     } catch (err) {
       showReadError(err instanceof Error ? err.message : String(err));
     }
@@ -6618,6 +6624,7 @@ ${JSON.stringify(listAttached("none"))}`;
     const p = buildQuery(0);
     delete p["offset"];
     delete p["limit"];
+    delete p["open"];
     return p;
   }
   function discarded() {

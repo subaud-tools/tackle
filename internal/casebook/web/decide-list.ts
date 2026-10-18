@@ -192,11 +192,11 @@ export function makeDecide(ctx: Ctx): Section {
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let totalItemsForView = 0; // updated after every load
   // The view's groups (serve's order and counts, every page) and the ones
-  // Court collapsed (in memory only). A collapsed group's rows are not
-  // given to the list, so j and k pass over them.
+  // Court opened (in memory only). Every group starts collapsed (Court,
+  // 2026-10-17: what's waiting reads as a list of groups); serve sends the
+  // rows of the open ones alone (open=), so j and k pass over the rest.
   let groups: GroupView[] = [];
-  // The left-open group starts collapsed.
-  const collapsed = new Set<string>([LEFT_OPEN]);
+  const opened = new Set<string>();
   // What the page knows of each item it has seen in a group (loaded rows
   // and a group fetched whole): its group and its pending proposal's id.
   // A ticked item on a page not loaded is counted and acted on from here.
@@ -916,6 +916,8 @@ export function makeDecide(ctx: Ctx): Section {
     p['limit'] = String(PAGE_SIZE);
     if (filters.q) p['q'] = filters.q;
     if (flat) p['group'] = 'false';
+    else
+      p['open'] = JSON.stringify([...opened].filter((id) => id !== LEFT_OPEN));
     return p;
   }
 
@@ -975,7 +977,7 @@ export function makeDecide(ctx: Ctx): Section {
         return;
       }
       totalItems = data.total;
-      totalItemsForView = data.total;
+      totalItemsForView = viewTotal(data);
       loadedItems = items;
       leftOpen = data.left_open ?? [];
       leftOpenTotal = data.left_open_total ?? 0;
@@ -990,7 +992,7 @@ export function makeDecide(ctx: Ctx): Section {
         editor?.showError(null);
         paintPreviewLine(
           draft.length
-            ? `previewing a draft ${editing} \u00b7 ${pluralize(data.total, 'item')}`
+            ? `previewing a draft ${editing} \u00b7 ${pluralize(viewTotal(data), 'item')}`
             : 'add a condition to preview',
         );
       }
@@ -1029,6 +1031,13 @@ export function makeDecide(ctx: Ctx): Section {
     }
   }
 
+  // viewTotal is how many the view holds: grouped, every group's count
+  // (serve's total is the open groups' rows, what the pages go through).
+  function viewTotal(data: ItemsView): number {
+    if (flat || !data.groups?.length) return data.total;
+    return data.groups.reduce((n, g) => n + g.total, 0);
+  }
+
   // loadMore adds the next page ("show more"). Not while the first page is
   // loading (it starts the rows again); a page that comes back after a
   // first-page load started is not added (the rows it followed are gone).
@@ -1049,7 +1058,7 @@ export function makeDecide(ctx: Ctx): Section {
       lastOrder = loadedItems.map((it) => it.key);
       offset = loadedItems.length;
       totalItems = data.total;
-      totalItemsForView = data.total;
+      totalItemsForView = viewTotal(data);
       setRows();
       markOpenRow();
       updateFoot();
@@ -1066,10 +1075,10 @@ export function makeDecide(ctx: Ctx): Section {
   // left-open group last: its header and (expanded) its muted rows.
   function setRows(): void {
     const withLeft = offset >= totalItems && leftOpenTotal > 0;
-    const left = withLeft && !collapsed.has(LEFT_OPEN) ? leftOpen : [];
+    const left = withLeft && opened.has(LEFT_OPEN) ? leftOpen : [];
     const open = flat
       ? loadedItems
-      : loadedItems.filter((it) => !collapsed.has(it.group));
+      : loadedItems.filter((it) => opened.has(it.group));
     shown = [...open, ...left];
     handle.setItems(shown);
     const rowEls = handle.el.querySelectorAll<HTMLElement>(
@@ -1264,8 +1273,8 @@ export function makeDecide(ctx: Ctx): Section {
     }
     if (!target || currentOpenKey !== key) return;
     const group = navOrder().find((r) => r.key === target)?.group ?? '';
-    if (collapsed.has(group)) {
-      collapsed.delete(group);
+    if (!opened.has(group)) {
+      opened.add(group);
       setRows();
     }
     openKey(target);
@@ -1303,10 +1312,9 @@ export function makeDecide(ctx: Ctx): Section {
     const body = handle.el.querySelector<HTMLElement>('.kit-rows');
     heads = [];
     if (!body) return;
-    const loaded = new Set(loadedItems.map((it) => it.group));
+    // Every group has its header, from serve's counts, loaded rows or not.
     let last: Element | null = null;
     for (const g of groups) {
-      if (!loaded.has(g.id)) continue;
       const head = groupHead(g);
       heads.push(head);
       const first = open.findIndex((it) => it.group === g.id);
@@ -1339,12 +1347,16 @@ export function makeDecide(ctx: Ctx): Section {
     tags: HTMLElement[] = [],
     more: HTMLElement | null = null,
   ): { el: HTMLElement; acts: HTMLElement } {
-    const isOpen = !collapsed.has(id);
+    const isOpen = opened.has(id);
+    // Opening a group asks serve for its rows (the left-open group's come
+    // with every load); closing one drops them.
     const toggleOpen = (): void => {
-      if (collapsed.has(id)) collapsed.delete(id);
-      else collapsed.add(id);
-      setRows();
-      markOpenRow();
+      if (opened.has(id)) opened.delete(id);
+      else opened.add(id);
+      if (id === LEFT_OPEN) {
+        setRows();
+        markOpenRow();
+      } else void reload();
     };
     const top = h(
       'div',
@@ -1634,11 +1646,11 @@ export function makeDecide(ctx: Ctx): Section {
     }
     try {
       const items = await fetchGroup(g);
-      if (collapsed.delete(g.id)) {
-        setRows();
-        markOpenRow();
-      }
       selection.all(items.map((it) => it.key));
+      if (!opened.has(g.id)) {
+        opened.add(g.id);
+        void reload();
+      }
     } catch (err) {
       showReadError(err instanceof Error ? err.message : String(err));
     }
@@ -1840,6 +1852,7 @@ export function makeDecide(ctx: Ctx): Section {
     const p = buildQuery(0);
     delete p['offset'];
     delete p['limit'];
+    delete p['open'];
     return p;
   }
 
