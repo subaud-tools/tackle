@@ -904,12 +904,8 @@ func buildJobBody(job apply.Job, user string) (string, error) {
 		job.ID, len(agentSteps))
 	b.WriteString("Work through each step in order. Check preconditions live before running.\n")
 
-	// The batch is not confirmed until Court says so. The agent must not touch
-	// the world until then, and must do nothing at all if Court skips it.
-	b.WriteString("\nWAIT FOR THE BATCH:\n")
-	fmt.Fprintf(&b, "Do not run any step until %s confirms the batch.\n", user)
-	b.WriteString("The confirmation arrives as a message in this thread.\n")
-	fmt.Fprintf(&b, "If %s skips the batch, run nothing.\n", user)
+	// Approving was the user's go: the agent starts now.
+	fmt.Fprintf(&b, "%s approved these steps: run them now.\n", user)
 
 	// List agent-lane steps.
 	if len(agentSteps) > 0 {

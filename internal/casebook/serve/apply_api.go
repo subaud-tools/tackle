@@ -383,22 +383,14 @@ func (s *Server) postApplyApprove(w http.ResponseWriter, r *http.Request) {
 
 	s.publish(ctx, "job", map[string]any{"id": job.ID, "state": apply.JobApproved})
 
-	// Step 2: Count agent-lane steps and open batch card BEFORE dispatching.
+	// Step 2: Count agent-lane steps. Approving is Court's go (and for what
+	// can't be undone, the page has already asked him to confirm): no
+	// second confirm before the agent starts (Court, 2026-10-18).
 	var agentCount int
 	for _, st := range job.Steps {
 		if st.Lane == apply.LaneAgent {
 			agentCount++
 		}
-	}
-	var batchCard apply.NeedsYou
-	if agentCount > 0 {
-		q := fmt.Sprintf("The agent has been dispatched with %d step(s). Confirm when ready to proceed.", agentCount)
-		batchCard, err = s.Apply.OpenNeedsYou(ctx, job.ID, 0, "batch", q, "")
-		if err != nil {
-			reply(w, nil, err)
-			return
-		}
-		s.publish(ctx, "needs_you", batchCard)
 	}
 
 	// Step 3: Dispatch the agent job ONCE (idempotent via dispatched_at).

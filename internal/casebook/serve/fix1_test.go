@@ -22,9 +22,9 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 	return out
 }
 
-// Fix A: the agent-lane job body tells the agent, in plain words, to wait for
-// Court's batch confirmation before running any step.
-func TestBuildJobBodyTellsAgentToWaitForBatch(t *testing.T) {
+// The job body tells the agent to start: approving was the user's go
+// (Court, 2026-10-18: no second confirm), and names no batch to wait for.
+func TestBuildJobBodyTellsAgentToStart(t *testing.T) {
 	r := newRig(t)
 	job, err := r.s.Apply.Create(ctx, agentTestPlan(), "mbp")
 	if err != nil {
@@ -34,14 +34,11 @@ func TestBuildJobBodyTellsAgentToWaitForBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildJobBody: %v", err)
 	}
-	for _, want := range []string{
-		"Do not run any step until schuettc confirms the batch.",
-		"The confirmation arrives as a message in this thread.",
-		"If schuettc skips the batch, run nothing.",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("job body missing %q; got:\n%s", want, body)
-		}
+	if want := "schuettc approved these steps: run them now."; !strings.Contains(body, want) {
+		t.Errorf("job body missing %q; got:\n%s", want, body)
+	}
+	if strings.Contains(body, "batch") {
+		t.Errorf("job body still names a batch:\n%s", body)
 	}
 }
 
@@ -377,7 +374,7 @@ func TestAgentTextNamesTheConfiguredUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for user, want := range map[string]string{"lena": "Do not run any step until lena confirms the batch.", "": "Do not run any step until the user confirms the batch."} {
+	for user, want := range map[string]string{"lena": "lena approved these steps: run them now.", "": "the user approved these steps: run them now."} {
 		r.App.Cfg.User = user
 		body, err := buildJobBody(job, r.s.userName())
 		if err != nil {
