@@ -505,22 +505,23 @@ func (s *Store) List(ctx context.Context) ([]Job, error) {
 }
 
 // VerifiedSince is each item key with a step verified after t and not
-// undone: what casebook has done since the observation of t.
-func (s *Store) VerifiedSince(ctx context.Context, t time.Time) (map[string]bool, error) {
+// undone, with when (its latest): what casebook has done since then.
+func (s *Store) VerifiedSince(ctx context.Context, t time.Time) (map[string]time.Time, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT DISTINCT key FROM steps WHERE state = ? AND verified_at > ? AND undone_at = 0`,
+		`SELECT key, MAX(verified_at) FROM steps WHERE state = ? AND verified_at > ? AND undone_at = 0 GROUP BY key`,
 		StepVerified, ms(t))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[string]bool{}
+	out := map[string]time.Time{}
 	for rows.Next() {
 		var k string
-		if err := rows.Scan(&k); err != nil {
+		var at int64
+		if err := rows.Scan(&k, &at); err != nil {
 			return nil, err
 		}
-		out[k] = true
+		out[k] = time.UnixMilli(at)
 	}
 	return out, rows.Err()
 }

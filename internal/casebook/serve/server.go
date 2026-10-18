@@ -64,6 +64,7 @@ type Server struct {
 
 	laneMu            sync.Mutex        // guards laneRun
 	laneRun           map[int64]bool    // job id → a casebook lane is running for it
+	reads             ownerReads        // when GitHub was last read for each owner (applied)
 	onLaneStart       func(jobID int64) // test hook: called once per lane that actually starts
 	onBeforeLaneExit  func(jobID int64) // test hook: called just before the lane goroutine clears laneRun
 	activity          atomic.Int64      // unix ms of the last API request
@@ -208,13 +209,7 @@ func New(ctx context.Context, a *app.App, d *db.DB) (*Server, error) {
 		Now: time.Now, Wait: 60 * time.Second, WatchEvery: watchEvery, waiters: map[string]chan struct{}{}, laneRun: map[int64]bool{}}
 	// What casebook verified done since the index's observation leaves To
 	// apply at once (the next sync sees it gone).
-	s.Index.Applied = func(since time.Time) map[string]bool {
-		m, err := s.Apply.VerifiedSince(context.Background(), since)
-		if err != nil {
-			return nil
-		}
-		return m
-	}
+	s.Index.Applied = s.applied
 	// Record the serve lifetime context now so lanes started during New (a
 	// restart resume) are cancelled when serve stops. Run passes the same
 	// cancelable context and re-records it alongside s.stop.
