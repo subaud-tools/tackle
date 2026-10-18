@@ -4,6 +4,20 @@ All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` an
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [casebook 0.13.0] - 2026-10-17
+
+### Added
+- The agent pane is a thin strip until there's a conversation in its thread; a click on it, a message arriving, or asking the agent opens it, and its › folds it back. A click is kept for the tab.
+- What you're looking at always goes with a message: the ticked items, else the open item, else the open rule, else the list as it is narrowed ("list · 2 filters · rule x · search foo"), never thousands of keys. The agent reads it as `attached: list filters a,b · rule x · search "foo" · group none`.
+- `casebook_attention` takes `rule` (a rule id: what it matches) and `group` (one group of the list: `none` is the not recommended), the parts of an attached list.
+- "Not recommended yet" offers "ask agent to suggest rules" (the message carries its group of the list), and "ask agent to recommend these" when items in it, or in "Came back", are ticked.
+
+### Changed
+- Buttons that hand work to the agent say "agent", never the session's name: "ask agent to recommend these", "hand to agent". A recommendation reads "agent recommends" (a rule's, "‹rule› recommends"); the dock's header still names the session.
+
+### Removed
+- A group's "Look into N" and the left-open group's "Look into all N": at scale the agent is asked for rules, and one open item still has "Look into it".
+
 ## [casebook 0.12.0] - 2026-10-17
 
 ### Added
