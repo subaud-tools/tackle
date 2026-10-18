@@ -1,8 +1,10 @@
 # Changelog
 
-All notable changes to `scratch`, `proj`, `creel`, `casebook`, `cull`, `sift` and `imprint` are documented here (proj, creel, casebook, cull, sift and imprint entries are headed with the tool's name; older proj and casebook releases have none). The format follows
+All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` are documented here (proj, creel, cull, sift and imprint entries are headed with the tool's name; older proj releases have none). The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [Semantic Versioning](https://semver.org/).
+
+casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
 ## [casebook 0.14.0] - 2026-10-17
 
