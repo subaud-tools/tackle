@@ -3546,8 +3546,12 @@ function renderItem(ctx, detail, hooks = {}) {
   const title = it.title ?? keyWithoutKind(it.key);
   el2.append(h5("h1", { class: "cb-title kit-h1", title }, title));
   const factPairs = [];
+  if (it.status)
+    factPairs.push([
+      "status",
+      detail.done_how ? `${it.status}: ${detail.done_how}` : it.status
+    ]);
   if (it.repo) factPairs.push(["repo", it.repo]);
-  if (it.status) factPairs.push(["status", it.status]);
   if (it.author)
     factPairs.push(["author", it.author + (it.author_is_bot ? " (bot)" : "")]);
   if (it.created_at) factPairs.push(["opened", fmtDate(it.created_at)]);

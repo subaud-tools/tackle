@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -90,4 +91,17 @@ func (s *Server) applied(built time.Time) map[string]bool {
 		at, ok := reads[owner]
 		return at, ok
 	}, built)
+}
+
+// doneHow says how a done item got done, in the page's words: casebook's job
+// and when it was verified, or found already so with nothing run. Not done:
+// "".
+func doneHow(status string, job int64, verified time.Time, loc *time.Location) string {
+	if status != "done" {
+		return ""
+	}
+	if job == 0 {
+		return "found so, nothing ran"
+	}
+	return fmt.Sprintf("by job #%d, verified %s", job, verified.In(loc).Format("Jan 2 15:04"))
 }

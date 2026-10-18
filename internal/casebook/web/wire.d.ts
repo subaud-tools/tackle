@@ -64,6 +64,7 @@ export interface ItemDetailView {
   evidence: Evidence[] | null;
   history: Event[] | null;
   decisions: LogEntry[] | null;
+  done_how: string;
 }
 
 export interface DecideResult {

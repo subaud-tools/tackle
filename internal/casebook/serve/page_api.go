@@ -325,7 +325,9 @@ func (s *Server) itemDetail(ctx context.Context, it engine.Item, k item.Key) Ite
 		hist = hist[len(hist)-50:]
 	}
 	log, _ := s.App.Repo.Log(ctx, k.File())
+	job, verified, _ := s.Apply.LastVerified(ctx, it.ID)
 	return ItemDetailView{
+		DoneHow:   doneHow(string(v.Status), job, verified, time.Local),
 		Item:      v,
 		Proposals: nonNil(proposals),
 		Evidence:  nonNil(evidence),

@@ -526,6 +526,22 @@ func (s *Store) VerifiedSince(ctx context.Context, t time.Time) (map[string]time
 	return out, rows.Err()
 }
 
+// LastVerified is the job and time of key's latest verified step that
+// wasn't undone (0 when none).
+func (s *Store) LastVerified(ctx context.Context, key string) (int64, time.Time, error) {
+	var job, at int64
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT job_id, verified_at FROM steps WHERE key = ? AND state = ? AND undone_at = 0 ORDER BY verified_at DESC LIMIT 1`,
+		key, StepVerified).Scan(&job, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, time.Time{}, nil
+	}
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	return job, time.UnixMilli(at), nil
+}
+
 // Steps returns all steps for a job in position order.
 func (s *Store) Steps(ctx context.Context, jobID int64) ([]JobStep, error) {
 	rows, err := s.DB.QueryContext(ctx,

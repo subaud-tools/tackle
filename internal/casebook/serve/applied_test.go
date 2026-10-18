@@ -33,3 +33,20 @@ func TestDoneUntilObserved(t *testing.T) {
 		}
 	}
 }
+
+// TestDoneSaysHow (Court, 2026-10-18: "we can't claim something in browser
+// if it's not real"): a done item says whether casebook did it (which job,
+// verified when) or found it already so, with nothing run.
+func TestDoneSaysHow(t *testing.T) {
+	at := time.Date(2026, 10, 18, 4, 31, 48, 0, time.UTC)
+	loc := time.FixedZone("CDT", -5*3600)
+	if got, want := doneHow("done", 20, at, loc), "by job #20, verified Oct 17 23:31"; got != want {
+		t.Errorf("by casebook: %q, want %q", got, want)
+	}
+	if got, want := doneHow("done", 0, time.Time{}, loc), "found so, nothing ran"; got != want {
+		t.Errorf("found so: %q, want %q", got, want)
+	}
+	if got := doneHow("to-apply", 0, time.Time{}, loc); got != "" {
+		t.Errorf("not done: %q, want empty", got)
+	}
+}
