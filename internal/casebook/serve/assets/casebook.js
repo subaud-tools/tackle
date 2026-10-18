@@ -11,6 +11,7 @@ function sharedEventSource(deps) {
     release = null;
     abort = new AbortController();
     ch;
+    unwake = null;
     constructor(url) {
       this.ch = deps.channel();
       this.ch.onmessage = (e) => this.heard(e.data);
@@ -18,6 +19,9 @@ function sharedEventSource(deps) {
         if (!this.closed) this.ch.postMessage({ k: "hello" });
       });
       deps.lock(() => this.granted(url), this.abort.signal);
+      this.unwake = deps.onWake?.(() => {
+        if (!this.closed && !this.leading && this.opened) this.onerror?.();
+      }) ?? null;
     }
     // heard is another tab's note.
     heard(n) {
@@ -81,6 +85,7 @@ function sharedEventSource(deps) {
       }
       this.abort.abort();
       this.release?.();
+      this.unwake?.();
       this.ch.close();
     }
   };
@@ -94,6 +99,17 @@ function browserShared(name) {
     lock(granted, signal) {
       locks.request(name, { signal }, granted).catch(() => {
       });
+    },
+    onWake(cb) {
+      const shown = () => {
+        if (document.visibilityState === "visible") cb();
+      };
+      document.addEventListener("visibilitychange", shown);
+      document.addEventListener("resume", cb);
+      return () => {
+        document.removeEventListener("visibilitychange", shown);
+        document.removeEventListener("resume", cb);
+      };
     }
   });
 }

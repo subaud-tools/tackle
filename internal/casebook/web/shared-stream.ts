@@ -37,6 +37,12 @@ export interface SharedDeps {
   channel(): Channel;
   /** Run granted while holding the one lock; its promise ending releases it. */
   lock(granted: () => Promise<void>, signal: AbortSignal): void;
+  /**
+   * Calls cb when the tab comes back (shown again, or unfrozen): a following
+   * tab may have missed what was passed on while it was frozen. Returns a
+   * function that stops it.
+   */
+  onWake?(cb: () => void): () => void;
 }
 
 type Note =
@@ -66,6 +72,7 @@ export function sharedEventSource(
     private release: (() => void) | null = null;
     private readonly abort = new AbortController();
     private readonly ch: Channel;
+    private unwake: (() => void) | null = null;
 
     constructor(url: string) {
       this.ch = deps.channel();
@@ -76,6 +83,12 @@ export function sharedEventSource(
         if (!this.closed) this.ch.postMessage({ k: 'hello' } satisfies Note);
       });
       deps.lock(() => this.granted(url), this.abort.signal);
+      // A following tab that wakes reconnects: live() reads what it missed
+      // from its cursor (the leader's stream does that itself).
+      this.unwake =
+        deps.onWake?.(() => {
+          if (!this.closed && !this.leading && this.opened) this.onerror?.();
+        }) ?? null;
     }
 
     // heard is another tab's note.
@@ -143,6 +156,7 @@ export function sharedEventSource(
       }
       this.abort.abort();
       this.release?.();
+      this.unwake?.();
       this.ch.close();
     }
   };
@@ -162,6 +176,17 @@ export function browserShared(name: string): typeof EventSource {
       locks.request(name, { signal }, granted).catch(() => {
         // aborted while waiting: the stream closed before its turn
       });
+    },
+    onWake(cb) {
+      const shown = (): void => {
+        if (document.visibilityState === 'visible') cb();
+      };
+      document.addEventListener('visibilitychange', shown);
+      document.addEventListener('resume', cb);
+      return () => {
+        document.removeEventListener('visibilitychange', shown);
+        document.removeEventListener('resume', cb);
+      };
     },
   }) as unknown as typeof EventSource;
 }

@@ -136,3 +136,24 @@ test('a stream error at the leader reaches every tab', async () => {
   b.real[0].onerror?.();
   assert.deepEqual(errs.sort(), ['a', 'c']);
 });
+
+// A tab Chrome froze in the background misses the events another tab
+// passed on (Court, 2026-10-18: a job stayed "0 of 1" after it was done).
+// When it wakes it errs, so live() reads what it missed from its cursor.
+test('a following tab that wakes asks live() to catch up', async () => {
+  const b = browser();
+  const wakes: Array<() => void> = [];
+  const lead = new (sharedEventSource(b.tab()))('/e');
+  const follow = new (sharedEventSource({
+    ...b.tab(),
+    onWake: (cb) => wakes.push(cb),
+  }))('/e');
+  let errs = 0;
+  follow.onerror = () => errs++;
+  await flush();
+  b.real[0].onopen?.();
+  await flush();
+  for (const w of wakes) w();
+  assert.equal(errs, 1);
+  void lead;
+});
