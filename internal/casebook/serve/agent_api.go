@@ -768,22 +768,11 @@ func (s *Server) agentJobStep(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.publish(ctx, "step", map[string]any{"id": step.ID, "job_id": in.Job, "state": apply.StepReported})
-		// Verify the outcome with a fresh gh read.
-		obs := apply.ObserveGh(ctx, step, s.App.Gh)
-		verState := apply.Verify(step, obs)
-		if verState != apply.StepReported { // StepReported means inconclusive: leave as-is
-			detail := ""
-			if verState == apply.StepFailed {
-				detail = apply.DetailDrift
-			}
-			if err := s.Apply.SetStepState(ctx, step.ID, verState, detail); err == nil {
-				s.publish(ctx, "step", map[string]any{"id": step.ID, "job_id": in.Job, "state": verState})
-				if verState == apply.StepVerified {
-					// Done: the item leaves To apply now, and the counts say so.
-					pending, _ := s.Props.Pending(ctx)
-					s.publish(ctx, "index", map[string]any{"counts": s.Index.Counts(pending), "head": s.Index.Head()})
-				}
-			}
+		// Verify the outcome with a fresh gh read. GitHub can still show the
+		// old state just after a change: an inconclusive read is tried again
+		// a few times in the background.
+		if !s.verifyStep(ctx, in.Job, step) {
+			s.verifyLater(in.Job, step)
 		}
 		// Check whether the job has reached a terminal state after this report.
 		s.settleJob(ctx, job.ID)

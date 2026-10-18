@@ -65,6 +65,7 @@ type Server struct {
 	laneMu            sync.Mutex        // guards laneRun
 	laneRun           map[int64]bool    // job id → a casebook lane is running for it
 	reads             ownerReads        // when GitHub was last read for each owner (applied)
+	VerifyRetry       time.Duration     // between reads of a reported step GitHub hasn't caught up on (3s)
 	onLaneStart       func(jobID int64) // test hook: called once per lane that actually starts
 	onBeforeLaneExit  func(jobID int64) // test hook: called just before the lane goroutine clears laneRun
 	activity          atomic.Int64      // unix ms of the last API request
@@ -242,6 +243,8 @@ func New(ctx context.Context, a *app.App, d *db.DB) (*Server, error) {
 	if err := s.resumeInterruptedJobs(ctx); err != nil {
 		return nil, err
 	}
+	// Reported steps GitHub hadn't caught up on are read again.
+	s.verifyReported(ctx)
 	s.pruneEvents(ctx)
 	s.pruneSessions(ctx)
 	s.activity.Store(time.Now().UnixMilli())
