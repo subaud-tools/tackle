@@ -191,10 +191,11 @@ func TestOpenLandsOnAnItemOrTheFront(t *testing.T) {
 	}{
 		{`{}`, 200, "?t=" + adv.Token},
 		{`{"key":"pr:schuettc/hail#3"}`, 200, "?t=" + adv.Token + "#/item/pr:schuettc%2Fhail%233"},
-		{`{"view":"new"}`, 400, ""},
+		// An older channel's view is ignored (TestOpenAttachesThePageToTheCallingSession).
+		{`{"view":"new"}`, 200, "?t=" + adv.Token},
 		{`{"key":"pr:schuettc/hail#999"}`, 404, ""},
 		{`{"key":"not a key"}`, 400, ""},
-		{`{"key":"pr:schuettc/hail#3","view":"new"}`, 400, ""},
+		{`{"key":"pr:schuettc/hail#3","view":"new"}`, 200, "?t=" + adv.Token + "#/item/pr:schuettc%2Fhail%233"},
 	} {
 		before := len(opened)
 		if got := callBody(t, adv, "/api/agent/open", c.body); got != c.code {

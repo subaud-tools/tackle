@@ -329,3 +329,41 @@ func TestPreviewMakesNoPlan(t *testing.T) {
 		t.Fatalf("preview cancelled plan #%d (%s)", saved.Job.ID, j.State)
 	}
 }
+
+// TestAVerifiedItemLeavesReview (Court, 2026-10-17: nine repos deleted and
+// still listed in review): an item whose step casebook verified since the
+// last sync leaves review and its count at once; the next sync, which sees
+// it gone, takes over. An item whose step failed stays.
+func TestAVerifiedItemLeavesReview(t *testing.T) {
+	r := newRig(t)
+	decideTwo(t, r)
+	pr, issue := "pr:schuettc/hail#3", "issue:schuettc/hail#4"
+	var v PlanView
+	if c := r.do(t, "POST", "/api/apply/plan", map[string]any{"keys": []string{pr, issue}}, &v); c != http.StatusOK {
+		t.Fatalf("plan: %d", c)
+	}
+	for _, st := range v.Job.Steps {
+		for _, s := range []apply.StepState{apply.StepRunning, apply.StepReported} {
+			if err := r.s.Apply.SetStepState(ctx, st.ID, s, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		end := apply.StepVerified
+		if st.Key == issue {
+			end = apply.StepFailed
+		}
+		if err := r.s.Apply.SetStepState(ctx, st.ID, end, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var l ItemsView
+	if c := r.do(t, "GET", "/api/items?view=to-apply&limit=200", nil, &l); c != http.StatusOK {
+		t.Fatalf("items %d", c)
+	}
+	if got := ids(l.Items); len(got) != 1 || got[0] != issue || l.Total != 1 {
+		t.Fatalf("review lists %v (total %d), want only the failed %s", got, l.Total, issue)
+	}
+	if n := r.summary(t).Counts["to-apply"]; n != 1 {
+		t.Fatalf("review count %d, want 1", n)
+	}
+}

@@ -778,6 +778,11 @@ func (s *Server) agentJobStep(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.Apply.SetStepState(ctx, step.ID, verState, detail); err == nil {
 				s.publish(ctx, "step", map[string]any{"id": step.ID, "job_id": in.Job, "state": verState})
+				if verState == apply.StepVerified {
+					// Done: the item leaves To apply now, and the counts say so.
+					pending, _ := s.Props.Pending(ctx)
+					s.publish(ctx, "index", map[string]any{"counts": s.Index.Counts(pending), "head": s.Index.Head()})
+				}
 			}
 		}
 		// Check whether the job has reached a terminal state after this report.
