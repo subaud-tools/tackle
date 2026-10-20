@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.9.0] - 2026-10-19
+
+### Changed
+- `proj reap` with no session opens the picker for cleaning up only, so a tmux key can run it in a popup (`display-popup -E 'proj reap'`). It shows the sessions and saved tabs (`tab` switches between them), `^x ^x` reaps a live session or forgets a saved one, and esc closes it. It never opens, creates or restores a session: ↵ does nothing, and its footer and `?` keys list only what works there. `proj reap <session>` is unchanged.
+
 ## [proj 0.8.0] - 2026-10-19
 
 ### Added

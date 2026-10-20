@@ -65,8 +65,8 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	app.Register(tools.Command{
 		Name:     "reap",
 		Summary:  "forget a session and kill it if it is running",
-		Synopsis: "reap <session> [--socket S]",
-		Help:     "Forgets a session from proj's saved record and kills its tmux session if it is running, as the picker's ^x ^x does. It may reap the session it runs in. Socket resolves from --socket, then the ambient server, then a server search by session name.",
+		Synopsis: "reap [<session>] [--socket S]",
+		Help:     "Forgets a session from proj's saved record and kills its tmux session if it is running, as the picker's ^x ^x does. It may reap the session it runs in. Socket resolves from --socket, then the ambient server, then a server search by session name. A bare `proj reap` opens the picker to reap or forget sessions (^x ^x); it never opens one.",
 		NewFlags: func() *flag.FlagSet { fs, _ := newReapFlags(); return fs },
 		Run:      cmdReap,
 	})
@@ -74,7 +74,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	// PRESERVE the special routes BEFORE delegating to Dispatch.
 	// No args → the Bubble Tea picker.
 	if len(args) == 0 {
-		return runPicker("", "")
+		return startPicker("", "", false)
 	}
 	switch args[0] {
 	case "__autojoin-project":
@@ -89,7 +89,13 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
 	// Built-ins from tools-common: version/help/update (+ aliases).
-	case "list", "current", "new", "sidebar", "reap",
+	// A bare `proj reap` is the cleanup-only picker (a tmux popup's key).
+	case "reap":
+		if len(args) == 1 {
+			return startPicker("", "", true)
+		}
+		return app.Dispatch(args, out, errw)
+	case "list", "current", "new", "sidebar",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}
@@ -102,7 +108,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			fmt.Fprintf(os.Stderr, "proj: %v\n", err)
 			return 2
 		}
-		return runPicker(project, agent)
+		return startPicker(project, agent, false)
 	}
 	// Unknown flag/command → let Dispatch report it (exit 2).
 	return app.Dispatch(args, out, errw)
@@ -170,12 +176,22 @@ func cmdSnapshot(args []string) int {
 	return 0
 }
 
+// startPicker is runPicker, a seam so tests can see which picker a route opens.
+var startPicker = runPicker
+
 // runPicker builds the Bubble Tea model, runs it, and executes the user's
-// Result: "new" → EnsureSession then Goto; "jump" → Goto.
-func runPicker(project, agent string) int {
+// Result: "new" → EnsureSession then Goto; "jump" → Goto. With reap it runs
+// the cleanup-only picker and acts on no Result.
+func runPicker(project, agent string, reap bool) int {
 	// The picker primes the record (hooks + a snapshot of every live server)
 	// in the background from Init; see projtui withRecord.
-	m, err := projtui.NewFor(project, agent)
+	var m projtui.Model
+	var err error
+	if reap {
+		m, err = projtui.NewReap()
+	} else {
+		m, err = projtui.NewFor(project, agent)
+	}
 	if err != nil {
 		if errors.Is(err, proj.ErrNoRoots) {
 			printNoRootsGuidance()
@@ -189,6 +205,9 @@ func runPicker(project, agent string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "proj: %v\n", err)
 		return 1
+	}
+	if reap {
+		return 0
 	}
 	res := final.(projtui.Model).Result
 

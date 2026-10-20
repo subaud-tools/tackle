@@ -1,7 +1,9 @@
 package projcli
 
 import (
+	"fmt"
 	"os/exec"
+	"slices"
 	"testing"
 
 	"github.com/subaud-tools/tackle/internal/proj"
@@ -49,9 +51,9 @@ func recorded(t *testing.T, name string) bool {
 	return ok
 }
 
-func TestReapRequiresSession(t *testing.T) {
-	if _, code := captureStdout(t, []string{"reap"}); code != 2 {
-		t.Fatalf("proj reap: got exit %d, want 2", code)
+func TestReapRejectsExtraArgs(t *testing.T) {
+	if _, code := captureStdout(t, []string{"reap", "a/w", "b/w"}); code != 2 {
+		t.Fatalf("proj reap a/w b/w: got exit %d, want 2", code)
 	}
 }
 
@@ -102,5 +104,21 @@ func TestReapSessionItRunsIn(t *testing.T) {
 	}
 	if hasSession(sock, name) {
 		t.Fatal("session still running")
+	}
+}
+
+func TestReapBareOpensReapPicker(t *testing.T) {
+	var got []string
+	orig := startPicker
+	startPicker = func(project, agent string, reap bool) int {
+		got = append(got, fmt.Sprint(project, agent, reap))
+		return 0
+	}
+	t.Cleanup(func() { startPicker = orig })
+	if _, code := captureStdout(t, []string{"reap"}); code != 0 {
+		t.Fatalf("proj reap: got exit %d, want 0", code)
+	}
+	if !slices.Equal(got, []string{"true"}) {
+		t.Fatalf("proj reap opened the picker as %q, want reap mode only", got)
 	}
 }

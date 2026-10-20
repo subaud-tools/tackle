@@ -166,8 +166,12 @@ var scopeTabs = []struct {
 // never shift.
 func (m Model) titleBar(width int) string {
 	title := titleLabelStyle.Render(" proj ") + titleInfoStyle.Render(" ")
-	for i, t := range scopeTabs {
-		if i > 0 {
+	first := true
+	for _, t := range scopeTabs {
+		if m.reapOnly && t.scope == scopeFolders {
+			continue
+		}
+		if !first {
 			title += titleInfoStyle.Render(" · ")
 		}
 		if m.view == viewEntrance && m.scope == t.scope {
@@ -175,6 +179,7 @@ func (m Model) titleBar(width int) string {
 		} else {
 			title += tabIdleStyle.Render(t.label)
 		}
+		first = false
 	}
 	if m.view == viewProject {
 		title += titleInfoStyle.Render("  › " + m.project)
@@ -248,6 +253,8 @@ func (m Model) emptyMessage() string {
 		msg = "no live sessions (tab for saved)"
 	case m.scope == scopeSaved && !m.savedLoaded:
 		msg = "loading saved sessions…"
+	case m.scope == scopeSaved && m.reapOnly:
+		msg = "no saved sessions to forget"
 	case m.scope == scopeSaved:
 		msg = "nothing to restore: every saved session is open"
 	case len(m.projects) == 0:
@@ -439,12 +446,18 @@ func (m Model) renderRow(r Row, selected bool, width int) string {
 	if r.Kind == RowHeader {
 		return lipgloss.NewStyle().MaxWidth(width).Render(headerStyle.Render("  " + r.Label))
 	}
+	// Reap mode restores nothing, so a saved row shows no restore checkbox.
+	noBox := m.reapOnly && r.Kind == RowSaved
 	if selected {
 		barW := width - 1 // 1 col for the accent edge
 		if barW < 1 {
 			barW = 1
 		}
-		bar := selectedStyle.Width(barW).MaxWidth(barW).Render(" " + plainRow(r))
+		plain := plainRow(r)
+		if noBox {
+			plain = "   " + plain[len(statusCell(r)):]
+		}
+		bar := selectedStyle.Width(barW).MaxWidth(barW).Render(" " + plain)
 		return accentStyle.Render("▎") + bar
 	}
 	var cell string
@@ -453,6 +466,10 @@ func (m Model) renderRow(r Row, selected bool, width int) string {
 		cell = " " + lipgloss.NewStyle().Foreground(dotColor(r.State)).Render("●") + " "
 	case RowProject:
 		cell = dimStyle.Render(statusCell(r))
+	case RowSaved:
+		if cell = statusCell(r); noBox {
+			cell = "   "
+		}
 	default:
 		cell = statusCell(r)
 	}
@@ -589,6 +606,9 @@ func bind(k, desc string) key.Binding {
 // Agent/sidebar are new-session settings and appear only in the new-work input,
 // never while browsing or jumping to an existing session.
 func (m Model) shortHelp() []key.Binding {
+	if m.reapOnly {
+		return m.reapHelp()
+	}
 	if m.view == viewEntrance && m.scope == scopeSaved {
 		return []key.Binding{
 			bind("space", "toggle"),
@@ -604,15 +624,29 @@ func (m Model) shortHelp() []key.Binding {
 	return []key.Binding{bind("↵", "open"), bind("esc", "back"), bind("^x", "reap")}
 }
 
+// reapHelp is reap mode's own keys: ^x reaps a live session or forgets a
+// saved one, and esc closes the picker.
+func (m Model) reapHelp() []key.Binding {
+	verb := "reap"
+	if m.scope == scopeSaved {
+		verb = "forget"
+	}
+	return []key.Binding{bind("^x", verb), bind("esc", "close")}
+}
+
 // commonHelp is the keys shared by every browse view, right-aligned.
 func (m Model) commonHelp() []key.Binding {
 	if m.view == viewEntrance {
-		return []key.Binding{bind("tab", otherScopeLabel(m.scope)), bind("?", "keys")}
+		return []key.Binding{bind("tab", scopeLabel(m.nextScope())), bind("?", "keys")}
 	}
 	return []key.Binding{bind("?", "keys")}
 }
 
 func (m Model) fullHelp() [][]key.Binding {
+	if m.reapOnly {
+		nav := []key.Binding{bind("↑↓", "move"), bind("tab", scopeLabel(m.nextScope()))}
+		return [][]key.Binding{nav, append(m.reapHelp(), bind("^c", "quit"))}
+	}
 	saved := m.view == viewEntrance && m.scope == scopeSaved
 	nav := []key.Binding{bind("↑↓", "move")}
 	if !saved {
@@ -620,7 +654,7 @@ func (m Model) fullHelp() [][]key.Binding {
 	}
 	nav = append(nav, bind("esc", "back"))
 	if m.view == viewEntrance {
-		nav = append(nav, bind("tab", otherScopeLabel(m.scope)))
+		nav = append(nav, bind("tab", scopeLabel(m.nextScope())))
 	}
 	groups := [][]key.Binding{nav}
 	if saved {
@@ -694,9 +728,9 @@ func dotColor(state string) lipgloss.Color {
 	}
 }
 
-// otherScopeLabel names the scope tab will switch TO (an action label).
-func otherScopeLabel(s entranceScope) string {
-	switch nextScope(s) {
+// scopeLabel names a scope; the footer labels tab with the one it switches TO.
+func scopeLabel(s entranceScope) string {
+	switch s {
 	case scopeSessions:
 		return "sessions"
 	case scopeSaved:
