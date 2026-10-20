@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.8.0] - 2026-10-19
+
+### Added
+- `proj reap <session> [--socket S]` forgets a session from proj's saved record and kills its tmux session if it is running, the command-line form of the picker's `^x ^x`. It can reap the session it runs in, so a tmux key can reap the current session.
+
 ## [casebook 0.14.0] - 2026-10-17
 
 ### Added
