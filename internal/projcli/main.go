@@ -62,6 +62,14 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		NewFlags: func() *flag.FlagSet { fs, _ := newSidebarFlags(); return fs },
 		Run:      cmdSidebar,
 	})
+	app.Register(tools.Command{
+		Name:     "reap",
+		Summary:  "forget a session and kill it if it is running",
+		Synopsis: "reap <session> [--socket S]",
+		Help:     "Forgets a session from proj's saved record and kills its tmux session if it is running, as the picker's ^x ^x does. It may reap the session it runs in. Socket resolves from --socket, then the ambient server, then a server search by session name.",
+		NewFlags: func() *flag.FlagSet { fs, _ := newReapFlags(); return fs },
+		Run:      cmdReap,
+	})
 
 	// PRESERVE the special routes BEFORE delegating to Dispatch.
 	// No args → the Bubble Tea picker.
@@ -76,12 +84,12 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	case "__save-layout":
 		_ = proj.SaveLayoutSettled() // silent for the same reason as __snapshot
 		return 0
-	// list/current/new/sidebar now flow through Dispatch (which parses their
+	// list/current/new/sidebar/reap now flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
 	// Built-ins from tools-common: version/help/update (+ aliases).
-	case "list", "current", "new", "sidebar",
+	case "list", "current", "new", "sidebar", "reap",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}
