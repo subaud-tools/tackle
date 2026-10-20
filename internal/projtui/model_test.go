@@ -560,3 +560,44 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+func TestReapModeEnterDoesNothing(t *testing.T) {
+	m := newTestModel([]Row{{Kind: RowSession, Label: "x/a", Name: "x/a", Socket: "proj-x"}}).reapMode()
+	m.saved = []Row{{Kind: RowSaved, Label: "y/b", Name: "y/b", Socket: "proj-y"}}
+	for _, tab := range []string{"live", "saved"} {
+		if tab == "saved" {
+			m = press(m, "tab")
+		}
+		if firstRowKind(m) == RowKind(-1) {
+			t.Fatalf("%s: no rows", tab)
+		}
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if r := next.(Model).Result; r.Kind != "" || cmd != nil {
+			t.Fatalf("%s: enter in reap mode gave result %+v (cmd %v), want nothing", tab, r, cmd != nil)
+		}
+	}
+}
+
+func TestReapModeHelpShowsOnlyReapKeys(t *testing.T) {
+	m := newTestModel([]Row{{Kind: RowSession, Label: "x/a", Name: "x/a", Socket: "proj-x"}}).reapMode()
+	m.saved = []Row{{Kind: RowSaved, Label: "y/b", Name: "y/b", Socket: "proj-y"}}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+	for _, tab := range []struct{ name, verb string }{{"live", "reap"}, {"saved", "forget"}} {
+		if tab.name == "saved" {
+			m = press(m, "tab")
+		}
+		for _, all := range []bool{false, true} {
+			m.help.ShowAll = all
+			v := m.View()
+			if !strings.Contains(v, tab.verb) {
+				t.Fatalf("%s (all=%v): help should offer %q, got:\n%s", tab.name, all, tab.verb, v)
+			}
+			for _, gone := range []string{"open", "new", "restore", "save layout", "toggle", "add root", "edit roots", "folders"} {
+				if strings.Contains(v, gone) {
+					t.Fatalf("%s (all=%v): reap mode must not offer %q, got:\n%s", tab.name, all, gone, v)
+				}
+			}
+		}
+	}
+}

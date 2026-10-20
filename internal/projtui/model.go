@@ -222,6 +222,11 @@ type Model struct {
 	modelOffset    int
 	sessionsLoaded bool
 
+	// reapOnly is the cleanup-only picker of a bare `proj reap`: just the
+	// live and saved tabs, ^x ^x reaps or forgets, and nothing opens,
+	// creates or restores a session, so Result stays empty.
+	reapOnly bool
+
 	Result Result
 }
 
@@ -319,6 +324,33 @@ func New() (Model, error) {
 		m = m.selectModel(cfg.DefaultModel)
 	}
 	return m, nil
+}
+
+// NewReap is New in reap mode (see reapMode), for a bare `proj reap`.
+func NewReap() (Model, error) {
+	m, err := New()
+	if err != nil {
+		return Model{}, err
+	}
+	return m.reapMode(), nil
+}
+
+// reapMode makes m the cleanup-only picker, starting on the live sessions.
+func (m Model) reapMode() Model {
+	m.reapOnly = true
+	m.scope = scopeSessions
+	return m.rebuildEntrance()
+}
+
+// nextScope is the scope tab moves to; reap mode has no folders tab.
+func (m Model) nextScope() entranceScope {
+	if m.reapOnly && m.scope == scopeSessions {
+		return scopeSaved
+	}
+	if m.reapOnly {
+		return scopeSessions
+	}
+	return nextScope(m.scope)
 }
 
 // modelsResolver closes ModelsForAgent over cfg so the picker can look up any
@@ -755,7 +787,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.footerHint = ""
 		return m, nil
 	}
-	if m.view == viewEntrance && m.scope == scopeSaved {
+	if m.view == viewEntrance && m.scope == scopeSaved && !m.reapOnly {
 		if next, cmd, ok := m.updateSaved(msg); ok {
 			return next, cmd
 		}
@@ -767,11 +799,14 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// tab cycles the entrance scope; agent/sidebar are new-session settings
 		// and live in the new-work input, not the browse view.
 		if m.view == viewEntrance {
-			m.scope = nextScope(m.scope)
+			m.scope = m.nextScope()
 			return m.rebuildEntrance(), nil
 		}
 		return m, nil
 	case "ctrl+a":
+		if m.reapOnly {
+			return m, nil
+		}
 		ti := textinput.New()
 		ti.Placeholder = "path whose children are projects (~ ok)"
 		ti.Prompt = "› "
@@ -794,6 +829,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.activate()
 	case "ctrl+e":
+		if m.reapOnly {
+			return m, nil
+		}
 		return m, editRootsCmd()
 	case "esc", "left":
 		if m.view == viewProject {
@@ -817,8 +855,12 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// activate acts on the highlighted row (enter).
+// activate acts on the highlighted row (enter). In reap mode enter does
+// nothing: the picker only cleans up.
 func (m Model) activate() (tea.Model, tea.Cmd) {
+	if m.reapOnly {
+		return m, nil
+	}
 	vis := m.visibleRows()
 	if len(vis) == 0 || m.cursor >= len(vis) {
 		return m, nil

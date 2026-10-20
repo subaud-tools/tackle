@@ -15,14 +15,16 @@ import (
 func newReapFlags() (*flag.FlagSet, *string) {
 	fs := flag.NewFlagSet("reap", flag.ContinueOnError)
 	socket := fs.String("socket", "", "tmux socket name")
-	tools.SetUsage(fs, "reap <session> [--socket S]",
+	tools.SetUsage(fs, "reap [<session>] [--socket S]",
 		"Forgets a session from proj's saved record and kills its tmux session if it is running, "+
 			"as the picker's ^x ^x does. It may reap the session it runs in. Socket resolves from "+
-			"--socket, then the ambient server, then a server search by session name.")
+			"--socket, then the ambient server, then a server search by session name. A bare "+
+			"`proj reap` opens the picker to reap or forget sessions (^x ^x); it never opens one.")
 	return fs, socket
 }
 
-// cmdReap implements `proj reap <session> [--socket S]`.
+// cmdReap implements `proj reap <session> [--socket S]`; Dispatch routes a
+// bare `proj reap` to the reap picker before it gets here.
 func cmdReap(args []string, out, errw io.Writer) error {
 	fs, socketFlag := newReapFlags()
 	var positional []string
