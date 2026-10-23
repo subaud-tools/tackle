@@ -6,6 +6,16 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [imprint 0.2.0] - 2026-10-23
+
+### Added
+- **Claude Code hears imprint without a launch flag.** imprint ships a Claude Code plugin (in tackle's marketplace) whose mod runs the new `imprint watch` for the session, so publish, trust and deprecate progress starts a turn in a session started with plain `claude`.
+- `imprint watch` follows a per-session spool the channel writes and prints each message as one JSON line, for the plugin's mod. A restarted watch resumes where the last one stopped, and a spool left by a crashed session is skipped.
+
+### Changed
+- Under Claude Code, `imprint channel` writes its messages to the spool instead of pushing them; under pi it works as before.
+- `imprint channel` returns on SIGTERM and SIGINT, so its spool is removed when the session ends.
+
 ## [cull 0.4.0] - 2026-10-23
 
 ### Added
