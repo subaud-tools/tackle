@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.4.2] - 2026-10-23
+
+### Fixed
+- In a pi session on the claude-bridge, events arrive once instead of twice: the Claude Code plugin's mod stays quiet there.
+
+## [sift 0.3.2] - 2026-10-23
+
+### Fixed
+- In a pi session on the claude-bridge, events arrive once instead of twice: the Claude Code plugin's mod stays quiet there.
+
+## [imprint 0.2.1] - 2026-10-23
+
+### Fixed
+- In a pi session on the claude-bridge, events arrive once instead of twice: the Claude Code plugin's mod stays quiet there.
+
 ## [cull 0.4.1] - 2026-10-23
 
 ### Fixed
@@ -26,7 +41,6 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 - Under Claude Code, `imprint channel` writes its messages to the spool instead of pushing them; under pi it works as before.
 - `imprint channel` returns on SIGTERM and SIGINT, so its spool is removed when the session ends.
 
-||||||| parent of 6e11c1e (cull, sift: doctor checks the Claude Code plugin is enabled, not the removed ~/.claude.json server)
 ## [cull 0.4.0] - 2026-10-23
 
 ### Added
