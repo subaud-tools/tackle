@@ -13,7 +13,7 @@ member. One Go monorepo; each tool is an independent binary under `cmd/`.
 - **sift** — audits the instruction files coding agents read (global files, repo files, skills), has the agent recommend one revised version per file, and puts each in front of you on a local page; what you approve becomes one pull request per repo. (Preview.)
   Install: `kempt apply -manifest cmd/sift/kempt.toml -packages sift`, then `sift skills install` and `sift init --root DIR`.
 - **imprint** — guides a coding agent through publishing npm packages, trusted publishers and deprecation, opening each approval for you and checking every step on the registry.
-  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`.
+  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install its Claude Code plugin with `claude plugin marketplace add subaud-tools/tackle` and `claude plugin install imprint@tackle`.
 
 casebook moved to its own repo, https://github.com/subaud-tools/casebook (casebook.tools).
 
@@ -245,11 +245,14 @@ is worth keeping. It cuts what Jev is sure of, and leaves the rest for you to
 decide on a local page. It also finds near-duplicate tests and asks whether to
 merge them.
 
-**Install:** `kempt apply -manifest cmd/cull/kempt.toml -packages cull`. This
-installs the binary and registers the `cull` channel for Claude Code and pi.
-Then run `cull init` in each project: the first time it stores your TypeSafe
-key (once per machine); in each project it asks whether that project may send
-test code to Jev, and adds `.cull/` to the project's ignore file.
+**Install:** `kempt apply -manifest cmd/cull/kempt.toml -packages cull`. This installs the binary, enables the `cull` plugin for Claude Code, and registers the `cull` channel for pi. Then run `cull init` in each project: the first time it stores your TypeSafe key (once per machine); in each project it asks whether that project may send test code to Jev, and adds `.cull/` to the project's ignore file.
+
+To install the Claude Code plugin yourself, run:
+
+    claude plugin marketplace add subaud-tools/tackle
+    claude plugin install cull@tackle
+
+A session started after that hears `cull`. In a session that is already open, run `/reload-plugins`.
 
 **Commands**
 
@@ -312,10 +315,7 @@ you choose cut or keep. Duplicate groups ask whether to merge or keep separate.
 Add a note if you like, then press Send. Your answers go to the agent that is
 working in the project, which applies the cuts you chose.
 
-**Hearing the channel.** Claude Code only listens to Send when launched with
-`claude --dangerously-load-development-channels server:cull`. pi gets it
-through `channels.tools`. For any other session, run `cull wait` in it: it
-returns when you press Send.
+**Hearing Send.** In Claude Code, the `cull` plugin delivers Send into the session. pi gets it through `channels.tools`. For any other session, run `cull wait` in it: it returns when you press Send.
 
 **Where things live.** `.cull/` in the project holds the last check. Your key is
 in `~/.config/cull`, the review database in `~/.local/state/cull`, and Jev's
@@ -330,11 +330,14 @@ finds what is too big, duplicated, stale, dead or misplaced. An agent writes
 one revised version of each file with findings, and you decide each file on a
 local page. What you approve becomes one pull request per repo.
 
-**Install:** `kempt apply -manifest cmd/sift/kempt.toml -packages sift`. This
-installs the binary and registers the `sift` channel for Claude Code and pi.
-Then run `sift skills install`, which installs the sift skill for each agent
-harness it finds, and again after each upgrade. Run `sift init --root DIR` once
-to name the directories to audit. `sift doctor` checks the setup.
+**Install:** `kempt apply -manifest cmd/sift/kempt.toml -packages sift`. This installs the binary, enables the `sift` plugin for Claude Code, and registers the `sift` channel for pi. Then run `sift skills install`, which installs the sift skill for each agent harness it finds, and again after each upgrade. Run `sift init --root DIR` once to name the directories to audit. `sift doctor` checks the setup.
+
+To install the Claude Code plugin yourself, run:
+
+    claude plugin marketplace add subaud-tools/tackle
+    claude plugin install sift@tackle
+
+A session started after that hears `sift`. In a session that is already open, run `/reload-plugins`.
 
 **Commands**
 
@@ -372,10 +375,7 @@ the config, and both the audit and apply use it:
 A skill or global file that is a symlink into a git repo (a dotfiles repo, say)
 is read at that repo's base and written in that repo, on its own branch.
 
-**Hearing the channel.** Claude Code only listens to Send when launched with
-`claude --dangerously-load-development-channels server:sift`. pi gets it
-through `channels.tools`. For any other session, run `sift wait` in it: it
-returns when you press Send.
+**Hearing Send.** In Claude Code, the `sift` plugin delivers Send into the session. pi gets it through `channels.tools`. For any other session, run `sift wait` in it: it returns when you press Send.
 
 **Where things live.** The config is `~/.config/sift/config.toml`, and the
 rounds, decisions and the record of what apply created are in
