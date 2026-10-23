@@ -82,7 +82,7 @@ func TestWatchPrintsTheSpoolFromItsStartThenFollowsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sp.Close()
+	defer func() { _ = sp.Close() }()
 	_ = sp.Notify("one", map[string]string{"op": "imprint_login"})
 	_ = sp.Notify("two", nil)
 
@@ -109,7 +109,7 @@ func TestWatchWaitsForASpoolThatDoesNotExistYet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sp.Close()
+	defer func() { _ = sp.Close() }()
 	_ = sp.Notify("late", nil)
 	if got := content(t, wt.next(t)); got != "late" {
 		t.Fatalf("got %q", got)
@@ -130,7 +130,7 @@ func TestWatchNeverPrintsHalfALine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	whole := `{"content":"half","meta":{}}`
 	_, _ = f.WriteString(whole[:10])
 	wt := startWatch(t, dir, "s-1")
@@ -160,7 +160,7 @@ func TestWatchFollowsTheNewSpoolAfterTheChannelRestarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close()
+	defer func() { _ = second.Close() }()
 	_ = second.Notify("after", nil)
 	got := []string{content(t, wt.next(t)), content(t, wt.next(t))}
 	if strings.Join(got, ",") != "last words,after" {
@@ -231,4 +231,58 @@ func TestSpoolFileRefusesAPathInTheSessionID(t *testing.T) {
 			t.Errorf("SpoolFile(%q) took it", s)
 		}
 	}
+}
+
+// Two channels can run in one session (the plugin's and a bare
+// ~/.claude.json server, until the bare one is removed): they share the
+// spool, neither loses the other's lines, and the file goes only when the
+// last one exits. A file no live channel holds is a crashed session's
+// leftover: it is replaced, and pruned once old, but a live one never is.
+func TestChannelsInOneSessionShareTheSpool(t *testing.T) {
+	dir := t.TempDir()
+	path, _ := SpoolFile(dir, "s-1")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"content":"left by a crash","meta":{}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := OpenSpool(dir, "s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenSpool(dir, "s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := startWatch(t, dir, "s-1")
+	_ = a.Notify("from a", nil)
+	_ = b.Notify("from b", nil)
+	got := []string{content(t, wt.next(t)), content(t, wt.next(t))}
+	if strings.Join(got, ",") != "from a,from b" {
+		t.Fatalf("got %v", got)
+	}
+
+	// b is live, so a later channel's prune leaves its file however old.
+	old := time.Now().Add(-SpoolMaxAge - time.Hour)
+	_ = os.Chtimes(path, old, old)
+	other, err := OpenSpool(dir, "s-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = other.Close()
+
+	_ = a.Close()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the spool went while b still runs: %v", err)
+	}
+	_ = b.Notify("b again", nil)
+	if got := content(t, wt.next(t)); got != "b again" {
+		t.Fatalf("got %q", got)
+	}
+	_ = b.Close()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the spool outlived its last channel: %v", err)
+	}
+	wt.none(t, 300*time.Millisecond)
 }

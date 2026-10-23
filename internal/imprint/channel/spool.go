@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/subaud-tools/tools-common/channelmcp"
@@ -22,17 +23,19 @@ import (
 // each message as one JSON line to a spool file for its session, and watch
 // follows that file from its start.
 
+// Each live channel holds a shared flock on its spool, so a file no channel
+// holds is a crashed session's leftover, and two channels of one session (the
+// plugin's and a bare ~/.claude.json server) share one file.
+
 // SpoolMaxAge is how old a spool file left by a session that crashed may get
-// before a starting channel prunes it. A live channel keeps its own file
-// younger than this.
+// before a starting channel prunes it. A file a live channel holds is never
+// pruned.
 const SpoolMaxAge = 3 * 24 * time.Hour
 
 var (
 	sessionName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
-	// watchPoll is how often watch looks for new lines; keepFresh how often a
-	// channel touches its spool so a prune never takes a live session's.
+	// watchPoll is how often watch looks for new lines.
 	watchPoll = 100 * time.Millisecond
-	keepFresh = time.Hour
 )
 
 // SpoolFile is the session's spool under imprint's state directory dir.
@@ -49,15 +52,15 @@ type Spool struct {
 	path  string
 	f     *os.File
 	lines *channelmcp.Lines
-	stop  chan struct{}
 	once  sync.Once
 }
 
 var _ channelmcp.Pusher = (*Spool)(nil)
 
-// OpenSpool prunes spool files older than SpoolMaxAge and starts the
-// session's spool afresh: a file a crashed channel of this session left is
-// replaced, not appended to.
+// OpenSpool prunes leftover spool files older than SpoolMaxAge and opens the
+// session's spool. A file another live channel of this session holds is
+// shared; one no channel holds is a crash's leftover, replaced rather than
+// appended to, so watch never replays it.
 func OpenSpool(dir, session string) (*Spool, error) {
 	path, err := SpoolFile(dir, session)
 	if err != nil {
@@ -67,16 +70,34 @@ func OpenSpool(dir, session string) (*Spool, error) {
 		return nil, err
 	}
 	prune(filepath.Dir(path), time.Now().Add(-SpoolMaxAge))
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	for range 10 {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if alone(f) {
+			if info, err := f.Stat(); err == nil && info.Size() > 0 {
+				_ = os.Remove(path) // a leftover: start a new file
+				_ = f.Close()
+				continue
+			}
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if replaced(f, path) { // the last holder removed it meanwhile
+			_ = f.Close()
+			continue
+		}
+		return &Spool{path: path, f: f, lines: channelmcp.NewLines(f)}, nil
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	s := &Spool{path: path, f: f, lines: channelmcp.NewLines(f), stop: make(chan struct{})}
-	go s.keepFresh()
-	return s, nil
+	return nil, fmt.Errorf("spool %s keeps changing under this channel", path)
+}
+
+// alone takes f's exclusive lock when no live channel holds it.
+func alone(f *os.File) bool {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil
 }
 
 // Path is the spool file's path.
@@ -87,47 +108,42 @@ func (s *Spool) Notify(content string, meta map[string]string) error {
 	return s.lines.Notify(content, meta)
 }
 
-// Close ends the spool and removes its file, unless a newer channel of the
-// same session has already replaced it.
+// Close ends the spool and, when no other channel of the session holds it
+// any more, removes its file.
 func (s *Spool) Close() error {
 	var err error
 	s.once.Do(func() {
-		close(s.stop)
-		mine, _ := s.f.Stat()
-		err = s.f.Close()
-		if now, serr := os.Stat(s.path); serr == nil && mine != nil && os.SameFile(mine, now) {
-			if rerr := os.Remove(s.path); err == nil {
-				err = rerr
-			}
+		if alone(s.f) && !replaced(s.f, s.path) {
+			err = os.Remove(s.path)
+		}
+		if cerr := s.f.Close(); err == nil {
+			err = cerr
 		}
 	})
 	return err
 }
 
-func (s *Spool) keepFresh() {
-	t := time.NewTicker(keepFresh)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-t.C:
-			now := time.Now()
-			_ = os.Chtimes(s.path, now, now)
-		}
-	}
-}
-
-// prune removes spool files last changed before cutoff.
+// prune removes spool files last changed before cutoff that no live channel
+// holds.
 func prune(dir string, cutoff time.Time) {
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+		info, err := e.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
 		}
+		p := filepath.Join(dir, e.Name())
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		if alone(f) && !replaced(f, p) {
+			_ = os.Remove(p)
+		}
+		_ = f.Close()
 	}
 }
 
