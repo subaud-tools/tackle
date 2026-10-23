@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.4.2] - 2026-10-23
+
+### Fixed
+- In a pi session on the claude-bridge, events arrive once instead of twice: the Claude Code plugin's mod stays quiet there.
+
+## [sift 0.3.2] - 2026-10-23
+
+### Fixed
+- In a pi session on the claude-bridge, events arrive once instead of twice: the Claude Code plugin's mod stays quiet there.
+
+## [imprint 0.2.1] - 2026-10-23
+
+### Fixed
+- In a pi session on the claude-bridge, events arrive once instead of twice: the Claude Code plugin's mod stays quiet there.
+
 ## [cull 0.4.1] - 2026-10-23
 
 ### Fixed
