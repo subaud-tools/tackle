@@ -43,7 +43,7 @@ func TestCommandsJSON(t *testing.T) {
 		got = append(got, c.Name)
 	}
 	sort.Strings(got)
-	for _, want := range []string{"channel", "skills"} {
+	for _, want := range []string{"channel", "skills", "watch"} {
 		if i := sort.SearchStrings(got, want); i == len(got) || got[i] != want {
 			t.Errorf("commands %v lack %s", got, want)
 		}

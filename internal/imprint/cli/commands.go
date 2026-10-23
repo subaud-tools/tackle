@@ -15,8 +15,13 @@ func commands(stdin io.Reader) []tools.Command {
 		},
 		{
 			Name: "channel", Group: "agent", Synopsis: "",
-			Summary:  "MCP server for an agent session: npm login, show, publish, trust, deprecate, expect and status, with progress as messages",
+			Summary:  "MCP server for an agent session: npm login, show, publish, trust, deprecate, expect and status, with progress as events",
 			NewFlags: channelFlags, Run: runChannel(stdin),
+		},
+		{
+			Name: "watch", Group: "agent", Synopsis: "",
+			Summary:  "print imprint's messages for this Claude Code session as JSON lines: the plugin's feed",
+			NewFlags: watchFlags, Run: runWatch,
 		},
 	}
 }
