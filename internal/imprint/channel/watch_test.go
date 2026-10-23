@@ -77,3 +77,28 @@ func TestChannelSpoolsOnlyUnderClaudeCode(t *testing.T) {
 		})
 	}
 }
+
+// Claude Code ends a channel with SIGTERM while stdin may still be open; the
+// channel must return then, so its spool is removed rather than left behind.
+func TestChannelSignalledRemovesItsSpool(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "s-1")
+	t.Setenv("AGENT_SESSION_ID", "")
+	t.Setenv("AGENT_SESSION_CHILD", "")
+	base, _, _ := newChannel(t)
+	dir := t.TempDir()
+	spool, _ := SpoolFile(dir, "s-1")
+	c := drive(t, ForSession(base.Ops, "test", dir))
+	c.tool("imprint_status", nil)
+	if _, err := os.Stat(spool); err != nil {
+		t.Fatalf("no spool: %v", err)
+	}
+	c.cancel()
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signalled channel kept running")
+	}
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("the spool outlived the signalled channel: %v", err)
+	}
+}

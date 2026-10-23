@@ -89,7 +89,7 @@ func ForSession(o *ops.Ops, version, dir string) *Channel {
 	return ch
 }
 
-// Run serves MCP on r/w until r ends. Operations still running end with
+// Run serves MCP on r/w until r ends or ctx does. Operations still running end with
 // it: an npm call stops with the session. The session's spool is removed
 // when it ends.
 func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
@@ -105,7 +105,16 @@ func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 	ch.mu.Lock()
 	ch.runCtx = ctx // set before Server.Run starts reading
 	ch.mu.Unlock()
-	return ch.Server.Run(r, w)
+	// Return on a signal too, not only when r ends: Claude Code signals the
+	// channel while its stdin may still be open, and the spool must go.
+	served := make(chan error, 1)
+	go func() { served <- ch.Server.Run(r, w) }()
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 func (ch *Channel) ctx() context.Context {

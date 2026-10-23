@@ -33,6 +33,7 @@ type client struct {
 	notes   chan map[string]any
 	id      int
 	closeIn func() error  // ends the session: Run returns
+	cancel  func()        // signals the channel, as SIGTERM does
 	done    chan struct{} // closed when Run has returned
 }
 
@@ -45,7 +46,7 @@ func drive(t *testing.T, ch *Channel) *client {
 	go func() { _ = ch.Run(ctx, inR, outW); close(done) }()
 	t.Cleanup(func() { cancel(); _ = inW.Close() })
 	c := &client{t: t, w: inW, answers: map[int]chan map[string]any{}, notes: make(chan map[string]any, 100),
-		closeIn: inW.Close, done: done}
+		closeIn: inW.Close, cancel: cancel, done: done}
 	go func() {
 		sc := bufio.NewScanner(outR)
 		sc.Buffer(make([]byte, 1<<20), 1<<24)
