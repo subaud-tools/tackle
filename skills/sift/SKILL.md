@@ -50,7 +50,7 @@ A refusal gives the reason: a missing finding, a wrong base, a link without its 
 
 Once `sift_next` says done, call `sift_review` once. It opens the review page and makes this session the one the user's decisions are sent to. Tell the user how many files wait, and carry on with other work.
 
-On the page, the user accepts, edits or rejects each file, then presses Send. Send reaches this session as a channel event from sift.
+On the page, the user accepts, edits or rejects each file, then presses Send. Send reaches this session as an event from sift: in Claude Code a turn whose first line reads sift event round=… send_id=…, in pi `<channel source="sift" …>`.
 
 If the session has no sift events (the channel is not attached), the user can run `sift wait` in a terminal, which prints the same steps when they press Send.
 

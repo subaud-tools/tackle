@@ -216,6 +216,10 @@ func (ch *Channel) status(ctx context.Context) (string, error) {
 	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status", nil, &out); err != nil {
 		return "", err
 	}
+	if ch.ServeOnly {
+		out["events"] = "This is a Claude Code session: the user's decisions reach it through `sift watch`, which the sift plugin starts, " +
+			"not through this process. If a Send never arrived, check that the sift plugin is installed and enabled (/plugin)."
+	}
 	return pretty(out), nil
 }
 

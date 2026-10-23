@@ -59,6 +59,11 @@ func commands(stdin io.Reader) []tools.Command {
 			NewFlags: channelFlags, Run: runChannel(stdin),
 		},
 		{
+			Name: "watch", Group: "review", Synopsis: "",
+			Summary:  "print the user's Sends as JSON lines: the Claude Code plugin's feed",
+			NewFlags: watchFlags, Run: runWatch,
+		},
+		{
 			Name: "apply", Group: "review", Synopsis: "[--round N] [--dry-run] [--json]",
 			Summary:  "write each approved file whole, a branch per repo; a pull request with gh",
 			NewFlags: applyFlags, Run: runApply,
