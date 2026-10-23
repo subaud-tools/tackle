@@ -41,7 +41,6 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 - Under Claude Code, `imprint channel` writes its messages to the spool instead of pushing them; under pi it works as before.
 - `imprint channel` returns on SIGTERM and SIGINT, so its spool is removed when the session ends.
 
-||||||| parent of 6e11c1e (cull, sift: doctor checks the Claude Code plugin is enabled, not the removed ~/.claude.json server)
 ## [cull 0.4.0] - 2026-10-23
 
 ### Added
