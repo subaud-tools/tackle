@@ -13,7 +13,7 @@ member. One Go monorepo; each tool is an independent binary under `cmd/`.
 - **sift** — audits the instruction files coding agents read (global files, repo files, skills), has the agent recommend one revised version per file, and puts each in front of you on a local page; what you approve becomes one pull request per repo. (Preview.)
   Install: `kempt apply -manifest cmd/sift/kempt.toml -packages sift`, then `sift skills install` and `sift init --root DIR`.
 - **imprint** — guides a coding agent through publishing npm packages, trusted publishers and deprecation, opening each approval for you and checking every step on the registry.
-  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install its Claude Code plugin with `claude plugin marketplace add subaud-tools/tackle` and `claude plugin install imprint@tackle`.
+  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install the binary with `curl -fsSL https://tackle.tools/install.sh | sh -s imprint`, run `imprint skills install`, then install its Claude Code plugin with `claude plugin marketplace add subaud-tools/tackle` and `claude plugin install imprint@tackle`.
 
 casebook moved to its own repo, https://github.com/subaud-tools/casebook (casebook.tools).
 
