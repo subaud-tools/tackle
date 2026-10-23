@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -133,6 +134,9 @@ func TestWatchNeverPrintsHalfALine(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil { // a live channel's
+		t.Fatal(err)
+	}
 	whole := `{"content":"half","meta":{}}`
 	_, _ = f.WriteString(whole[:10])
 	wt := startWatch(t, dir, "s-1")
@@ -381,4 +385,30 @@ func TestTwoStartersOnALeftoverKeepTheLiveSpool(t *testing.T) {
 	if strings.Join(got, ",") != "from a,from b" {
 		t.Fatalf("got %v", got)
 	}
+}
+
+// A spool no live channel holds is a crash's leftover. Watch must not print
+// it; it waits, as if there were no file, until a live channel's spool is
+// there.
+func TestWatchSkipsALeftoverUntilALiveChannelReplacesIt(t *testing.T) {
+	dir := t.TempDir()
+	path, _ := SpoolFile(dir, "s-1")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"content":"left by a crash","meta":{}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wt := startWatch(t, dir, "s-1")
+	wt.none(t, 500*time.Millisecond)
+	sp, err := OpenSpool(dir, "s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sp.Close() }()
+	_ = sp.Notify("fresh", nil)
+	if got := content(t, wt.next(t)); got != "fresh" {
+		t.Fatalf("got %q, want fresh", got)
+	}
+	wt.none(t, 300*time.Millisecond)
 }

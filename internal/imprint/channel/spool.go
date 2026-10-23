@@ -26,7 +26,10 @@ import (
 
 // Each live channel holds a shared flock on its spool, so a file no channel
 // holds is a crashed session's leftover, and two channels of one session (the
-// plugin's and a bare ~/.claude.json server) share one file.
+// plugin's and a bare ~/.claude.json server) share one file. Whoever asks
+// whether a spool is held (a starting or exiting channel, prune, watch) does
+// so by trying its exclusive lock, under one gate lock per spool directory,
+// so no two probes meet and none makes a channel misread the answer.
 
 // SpoolMaxAge is how old a spool file left by a session that crashed may get
 // before a starting channel prunes it. A file a live channel holds is never
@@ -83,24 +86,31 @@ func OpenSpool(dir, session string) (*Spool, error) {
 		if openedHook != nil {
 			openedHook()
 		}
-		if alone(f) {
-			if replaced(f, path) {
-				// Another starter replaced this leftover after we opened it:
-				// the path names its live spool now. Start over from the open.
-				_ = f.Close()
-				continue
+		retry, lerr := false, error(nil)
+		if err := gate(filepath.Dir(path), func() {
+			if alone(f) {
+				if replaced(f, path) {
+					// Another starter replaced this leftover after we opened
+					// it: the path names its live spool now. Start over.
+					retry = true
+					return
+				}
+				if info, err := f.Stat(); err == nil && info.Size() > 0 {
+					_ = removeSpool(path) // a leftover: start a new file
+					retry = true
+					return
+				}
 			}
-			if info, err := f.Stat(); err == nil && info.Size() > 0 {
-				_ = removeSpool(path) // a leftover: start a new file
-				_ = f.Close()
-				continue
-			}
+			lerr = syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
+			retry = lerr == nil && replaced(f, path) // the last holder removed it meanwhile
+		}); err != nil {
+			lerr = err
 		}
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil {
+		if lerr != nil {
 			_ = f.Close()
-			return nil, err
+			return nil, lerr
 		}
-		if replaced(f, path) { // the last holder removed it meanwhile
+		if retry {
 			_ = f.Close()
 			continue
 		}
@@ -109,9 +119,37 @@ func OpenSpool(dir, session string) (*Spool, error) {
 	return nil, fmt.Errorf("spool %s keeps changing under this channel", path)
 }
 
-// alone takes f's exclusive lock when no live channel holds it.
+// alone takes f's exclusive lock when no live channel holds it. Call it
+// only under gate.
 func alone(f *os.File) bool {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil
+}
+
+// gate runs fn holding the spool directory's gate lock.
+func gate(dir string, fn func()) error {
+	g, err := os.OpenFile(filepath.Join(dir, ".gate"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = g.Close() }() // releases the lock
+	if err := syscall.Flock(int(g.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	fn()
+	return nil
+}
+
+// held says whether a live channel holds f, an open spool.
+func held(f *os.File, dir string) bool {
+	live := false
+	if err := gate(dir, func() {
+		if live = !alone(f); !live {
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		}
+	}); err != nil {
+		return false
+	}
+	return live
 }
 
 // Path is the spool file's path.
@@ -127,11 +165,16 @@ func (s *Spool) Notify(content string, meta map[string]string) error {
 func (s *Spool) Close() error {
 	var err error
 	s.once.Do(func() {
-		if alone(s.f) && !replaced(s.f, s.path) {
-			err = removeSpool(s.path)
-		}
-		if cerr := s.f.Close(); err == nil {
-			err = cerr
+		gerr := gate(filepath.Dir(s.path), func() {
+			if alone(s.f) && !replaced(s.f, s.path) {
+				err = removeSpool(s.path)
+			}
+			if cerr := s.f.Close(); err == nil {
+				err = cerr
+			}
+		})
+		if gerr != nil {
+			err = errors.Join(gerr, s.f.Close())
 		}
 	})
 	return err
@@ -160,9 +203,11 @@ func prune(dir string, cutoff time.Time) {
 		if err != nil {
 			continue
 		}
-		if alone(f) && !replaced(f, p) {
-			_ = removeSpool(p)
-		}
+		_ = gate(dir, func() {
+			if alone(f) && !replaced(f, p) {
+				_ = removeSpool(p)
+			}
+		})
 		_ = f.Close()
 	}
 }
@@ -246,7 +291,9 @@ func saveCursor(f *os.File, path string, off int64) error {
 
 // Watch is `imprint watch`: it prints each line of the session's spool on
 // out, from the file's start or from where the session's last watch stopped
-// (its cursor), then follows it until ctx ends. The file need not exist yet.
+// (its cursor), then follows it until ctx ends. It follows only a spool a
+// live channel holds: until there is one, a leftover counts as no file. The
+// file need not exist yet.
 // Only whole lines are printed, each once; when the channel replaces the file
 // (it restarted), watch finishes the old file and starts on the new one.
 func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
@@ -279,6 +326,9 @@ func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
 				if !errors.Is(err, os.ErrNotExist) {
 					_, _ = fmt.Fprintf(log, "imprint watch: %v\n", err)
 				}
+			} else if !held(f, filepath.Dir(path)) {
+				_ = f.Close() // a crash's leftover: wait for a live channel's
+				f = nil
 			} else if off = resume(f, path); off > 0 {
 				if _, err := f.Seek(off, io.SeekStart); err != nil {
 					off = 0
