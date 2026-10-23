@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "imprint": {
+      "command": "imprint",
+      "args": [
+        "channel"
+      ]
+    }
+  }
+}
