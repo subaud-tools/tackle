@@ -7,8 +7,7 @@
 # your dotfiles `kempt init`, which does not contain "sift".
 # After the first apply, and after each upgrade: `sift skills install` (the
 # skill is embedded in the binary, as muda's are, and kempt runs no commands),
-# then `sift init --root DIR` once. Launch Claude Code with
-# `claude --dangerously-load-development-channels server:sift` to hear Send.
+# then `sift init --root DIR` once.
 
 [kempt]
 spec = 1
@@ -27,10 +26,18 @@ notes = [
   tool = "sift"
   bin = "sift"
 
-  # Claude Code: the sift channel (the user's Send arrives as a channel event).
+  # Claude Code: the sift plugin from tackle's marketplace. The next plain
+  # `claude` session installs it at user scope. Its .mcp.json runs `sift
+  # channel` for the tools and its mod runs `sift watch`, which turns each of
+  # the user's Sends into a turn.
+  [[packages.sift.json-merge]]
+  file = "~/.claude/settings.json"
+  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" } } }, enabledPlugins = { "sift@tackle" = true } }
+
+  # The bare server the plugin replaces, or the channel would start twice.
   [[packages.sift.json-merge]]
   file = "~/.claude.json"
-  merge = { mcpServers = { sift = { type = "stdio", command = "sift", args = ["channel"], env = {} } } }
+  remove = ["mcpServers.sift"]
 
   # pi: the same channel through channels.tools.
   [[packages.sift.json-merge]]
