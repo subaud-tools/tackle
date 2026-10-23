@@ -201,10 +201,8 @@ func writeChecks(out io.Writer, root string) {
 	}
 }
 
-// registered reports whether the JSON file has a "cull" entry under section
-// (mcpServers in ~/.claude.json, channelServers in pi's channels.json).
 // claudeSettings is Claude Code's user settings file: settings.json in
-// CLAUDE_CONFIG_DIR when that is set, else in ~/.claude.
+// CLAUDE_CONFIG_DIR when that is an absolute path, else in ~/.claude.
 func claudeSettings(home string) string {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(dir) {
 		return filepath.Join(dir, "settings.json")
@@ -225,6 +223,8 @@ func pluginEnabled(path, plugin string) bool {
 	return json.Unmarshal(b, &s) == nil && s.EnabledPlugins[plugin]
 }
 
+// registered reports whether the JSON file has a "cull" entry under section
+// (channelServers in pi's channels.json).
 func registered(path, section string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -75,8 +76,10 @@ func TestDoctorAllOk(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d\n%s", code, out)
 	}
-	if strings.Contains(out, "is not in") {
-		t.Errorf("a registered channel reported missing:\n%s", out)
+	for _, re := range []string{`~/\.claude/settings\.json\s+ok`, `channels\.json\s+ok`} {
+		if !regexp.MustCompile(re).MatchString(out) {
+			t.Errorf("want %s:\n%s", re, out)
+		}
 	}
 	if strings.Contains(out, "ts-fake-0000") {
 		t.Error("key printed")
