@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -77,7 +78,7 @@ func OpenSpool(dir, session string) (*Spool, error) {
 		}
 		if alone(f) {
 			if info, err := f.Stat(); err == nil && info.Size() > 0 {
-				_ = os.Remove(path) // a leftover: start a new file
+				_ = removeSpool(path) // a leftover: start a new file
 				_ = f.Close()
 				continue
 			}
@@ -114,7 +115,7 @@ func (s *Spool) Close() error {
 	var err error
 	s.once.Do(func() {
 		if alone(s.f) && !replaced(s.f, s.path) {
-			err = os.Remove(s.path)
+			err = removeSpool(s.path)
 		}
 		if cerr := s.f.Close(); err == nil {
 			err = cerr
@@ -124,34 +125,117 @@ func (s *Spool) Close() error {
 }
 
 // prune removes spool files last changed before cutoff that no live channel
-// holds.
+// holds, with their cursors, and old cursors whose spool is gone.
 func prune(dir string, cutoff time.Time) {
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
 		info, err := e.Info()
-		if err != nil || !info.ModTime().Before(cutoff) {
+		if e.IsDir() || err != nil || !info.ModTime().Before(cutoff) {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
+		if spool, ok := strings.CutSuffix(p, ".offset"); ok {
+			if _, err := os.Stat(spool); errors.Is(err, os.ErrNotExist) {
+				_ = os.Remove(p)
+			}
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
 		f, err := os.Open(p)
 		if err != nil {
 			continue
 		}
 		if alone(f) && !replaced(f, p) {
-			_ = os.Remove(p)
+			_ = removeSpool(p)
 		}
 		_ = f.Close()
 	}
 }
 
+// removeSpool removes a spool file and watch's cursor beside it.
+func removeSpool(path string) error {
+	_ = os.Remove(cursorFile(path))
+	return os.Remove(path)
+}
+
+// cursorFile is where watch records how far into the spool at path it has
+// printed: "<dev> <inode> <offset>", so a replaced spool starts from 0.
+func cursorFile(path string) string { return path + ".offset" }
+
+// fileID is the spool file's device and inode, as the cursor records them.
+func fileID(f *os.File) (string, bool) {
+	info, err := f.Stat()
+	if err != nil {
+		return "", false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%d %d", st.Dev, st.Ino), true
+}
+
+// resume is the offset in f a previous watch of the session stopped at: its
+// cursor's, when the cursor names this file and lies within it; else 0.
+func resume(f *os.File, path string) int64 {
+	id, ok := fileID(f)
+	if !ok {
+		return 0
+	}
+	b, err := os.ReadFile(cursorFile(path))
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) != 3 || fields[0]+" "+fields[1] != id {
+		return 0
+	}
+	off, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return 0
+	}
+	if info, err := f.Stat(); err != nil || off < 0 || off > info.Size() {
+		return 0
+	}
+	return off
+}
+
+// saveCursor records, atomically and readable only by the user, that watch
+// has printed f up to off.
+func saveCursor(f *os.File, path string, off int64) error {
+	id, ok := fileID(f)
+	if !ok {
+		return errors.New("no file identity for the cursor")
+	}
+	cursor := cursorFile(path)
+	tmp, err := os.CreateTemp(filepath.Dir(cursor), filepath.Base(cursor)+".tmp*")
+	if err != nil {
+		return err
+	}
+	_, werr := fmt.Fprintf(tmp, "%s %d\n", id, off)
+	cerr := tmp.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o600)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), cursor)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
+}
+
 // Watch is `imprint watch`: it prints each line of the session's spool on
-// out, from the file's start, then follows it until ctx ends. The file need
-// not exist yet. Only whole lines are printed, each once; when the channel
-// replaces the file (it restarted), watch finishes the old file and starts on
-// the new one.
+// out, from the file's start or from where the session's last watch stopped
+// (its cursor), then follows it until ctx ends. The file need not exist yet.
+// Only whole lines are printed, each once; when the channel replaces the file
+// (it restarted), watch finishes the old file and starts on the new one.
 func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
 	path, err := SpoolFile(dir, session)
 	if err != nil {
@@ -160,7 +244,14 @@ func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
 	var (
 		f    *os.File
 		rest []byte // the start of a line whose newline hasn't been written yet
+		off  int64  // where in f the next whole line starts
 	)
+	printed := func(n int) {
+		off += int64(n)
+		if err := saveCursor(f, path, off); err != nil {
+			_, _ = fmt.Fprintf(log, "imprint watch: cursor: %v\n", err)
+		}
+	}
 	defer func() {
 		if f != nil {
 			_ = f.Close()
@@ -175,22 +266,26 @@ func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
 				if !errors.Is(err, os.ErrNotExist) {
 					_, _ = fmt.Fprintf(log, "imprint watch: %v\n", err)
 				}
+			} else if off = resume(f, path); off > 0 {
+				if _, err := f.Seek(off, io.SeekStart); err != nil {
+					off = 0
+				}
 			}
 		}
 		if f != nil {
-			if rest, err = drain(f, rest, out); err != nil {
+			if rest, err = drain(f, rest, out, printed); err != nil {
 				return err
 			}
 			if replaced(f, path) {
 				// Lines written before the swap are in the old file still.
-				if rest, err = drain(f, rest, out); err != nil {
+				if rest, err = drain(f, rest, out, printed); err != nil {
 					return err
 				}
 				if len(rest) > 0 {
 					_, _ = fmt.Fprintf(log, "imprint watch: dropped an unfinished line from the old spool: %q\n", rest)
 				}
 				_ = f.Close()
-				f, rest = nil, nil
+				f, rest, off = nil, nil, 0
 				continue
 			}
 		}
@@ -202,9 +297,9 @@ func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
 	}
 }
 
-// drain reads f to its end and prints each whole line, returning what is left
-// of an unfinished one.
-func drain(f *os.File, rest []byte, out io.Writer) ([]byte, error) {
+// drain reads f to its end and prints each whole line, telling done how many
+// bytes each line took, and returns what is left of an unfinished one.
+func drain(f *os.File, rest []byte, out io.Writer, done func(int)) ([]byte, error) {
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := f.Read(buf)
@@ -219,6 +314,7 @@ func drain(f *os.File, rest []byte, out io.Writer) ([]byte, error) {
 					return rest, werr
 				}
 			}
+			done(i + 1)
 			rest = rest[i+1:]
 		}
 		if err == io.EOF || n == 0 {

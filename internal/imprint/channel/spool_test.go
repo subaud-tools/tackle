@@ -14,20 +14,22 @@ import (
 
 // watcher runs Watch for session in dir and hands back each line it prints.
 type watcher struct {
-	lines chan string
-	stop  func()
-	done  chan error
+	lines  chan string
+	stop   func()
+	done   chan error
+	exited chan struct{} // closed once Watch has returned
 }
 
 func startWatch(t *testing.T, dir, session string) *watcher {
 	t.Helper()
 	r, w := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
-	wt := &watcher{lines: make(chan string, 100), done: make(chan error, 1)}
+	wt := &watcher{lines: make(chan string, 100), done: make(chan error, 1), exited: make(chan struct{})}
 	go func() {
 		err := Watch(ctx, dir, session, w, io.Discard)
 		_ = w.Close()
 		wt.done <- err
+		close(wt.exited)
 	}()
 	go func() {
 		sc := bufio.NewScanner(r)
@@ -36,7 +38,7 @@ func startWatch(t *testing.T, dir, session string) *watcher {
 		}
 	}()
 	wt.stop = cancel
-	t.Cleanup(cancel)
+	t.Cleanup(func() { cancel(); <-wt.exited }) // before TempDir's removal
 	return wt
 }
 
@@ -200,6 +202,14 @@ func TestSpoolIsRemovedOnCloseAndOldSpoolsArePruned(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
+	// A cursor whose spool is gone (watch wrote it after the channel exited).
+	orphan := filepath.Join(filepath.Dir(stale), "gone.jsonl.offset")
+	if err := os.WriteFile(orphan, []byte("1 2 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(orphan, old, old); err != nil {
+		t.Fatal(err)
+	}
 
 	sp, err := OpenSpool(dir, "s-1")
 	if err != nil {
@@ -210,6 +220,9 @@ func TestSpoolIsRemovedOnCloseAndOldSpoolsArePruned(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Errorf("a recent spool was pruned: %v", err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Errorf("an old cursor without its spool was not pruned: %v", err)
 	}
 	mine, _ := SpoolFile(dir, "s-1")
 	if _, err := os.Stat(mine); err != nil {
@@ -285,4 +298,44 @@ func TestChannelsInOneSessionShareTheSpool(t *testing.T) {
 		t.Fatalf("the spool outlived its last channel: %v", err)
 	}
 	wt.none(t, 300*time.Millisecond)
+}
+
+// The mod restarts watch after a crash and on every session start (hot
+// reload, /clear). A new watch for the session resumes where the last one
+// stopped, from a cursor next to the spool, instead of printing every earlier
+// message again. The cursor goes with the spool.
+func TestRestartedWatchResumesAfterWhatWasPrinted(t *testing.T) {
+	dir := t.TempDir()
+	sp, err := OpenSpool(dir, "s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sp.Notify("one", nil)
+	first := startWatch(t, dir, "s-1")
+	if got := content(t, first.next(t)); got != "one" {
+		t.Fatalf("got %q", got)
+	}
+	first.stop()
+	<-first.done
+
+	cursor := sp.Path() + ".offset"
+	if info, err := os.Stat(cursor); err != nil {
+		t.Errorf("no cursor after a printed line: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Errorf("cursor mode %v, want 0600", info.Mode().Perm())
+	}
+
+	_ = sp.Notify("two", nil)
+	second := startWatch(t, dir, "s-1")
+	if got := content(t, second.next(t)); got != "two" {
+		t.Fatalf("the restarted watch printed %q first, want two", got)
+	}
+	second.none(t, 500*time.Millisecond)
+
+	if err := sp.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cursor); !os.IsNotExist(err) {
+		t.Errorf("the cursor outlived its spool: %v", err)
+	}
 }
