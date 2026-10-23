@@ -37,6 +37,10 @@ var (
 	sessionName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 	// watchPoll is how often watch looks for new lines.
 	watchPoll = 100 * time.Millisecond
+	// openedHook, when set (tests only), runs right after OpenSpool opens
+	// the file, before it looks at the lock: where another starter can
+	// interleave.
+	openedHook func()
 )
 
 // SpoolFile is the session's spool under imprint's state directory dir.
@@ -76,7 +80,16 @@ func OpenSpool(dir, session string) (*Spool, error) {
 		if err != nil {
 			return nil, err
 		}
+		if openedHook != nil {
+			openedHook()
+		}
 		if alone(f) {
+			if replaced(f, path) {
+				// Another starter replaced this leftover after we opened it:
+				// the path names its live spool now. Start over from the open.
+				_ = f.Close()
+				continue
+			}
 			if info, err := f.Stat(); err == nil && info.Size() > 0 {
 				_ = removeSpool(path) // a leftover: start a new file
 				_ = f.Close()

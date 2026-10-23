@@ -339,3 +339,46 @@ func TestRestartedWatchResumesAfterWhatWasPrinted(t *testing.T) {
 		t.Errorf("the cursor outlived its spool: %v", err)
 	}
 }
+
+// Two channels start on one crash leftover. B opens the leftover; before B
+// looks at its lock, A replaces the leftover with a new spool and starts
+// writing. B then finds the leftover unlocked, but the path names A's live
+// spool now, which B must not remove.
+func TestTwoStartersOnALeftoverKeepTheLiveSpool(t *testing.T) {
+	dir := t.TempDir()
+	path, _ := SpoolFile(dir, "s-1")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"content":"left by a crash","meta":{}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var a *Spool
+	openedHook = func() {
+		openedHook = nil // A runs straight through
+		var err error
+		if a, err = OpenSpool(dir, "s-1"); err != nil {
+			t.Errorf("A: %v", err)
+		}
+	}
+	t.Cleanup(func() { openedHook = nil })
+	b, err := OpenSpool(dir, "s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = b.Close() }()
+	if a == nil {
+		t.Fatal("A never started")
+	}
+	defer func() { _ = a.Close() }()
+	if replaced(a.f, path) {
+		t.Fatal("B removed A's live spool")
+	}
+	wt := startWatch(t, dir, "s-1")
+	_ = a.Notify("from a", nil)
+	_ = b.Notify("from b", nil)
+	got := []string{content(t, wt.next(t)), content(t, wt.next(t))}
+	if strings.Join(got, ",") != "from a,from b" {
+		t.Fatalf("got %v", got)
+	}
+}
