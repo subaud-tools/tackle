@@ -55,7 +55,8 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 var watchFlags = flags("watch", "imprint watch",
 	"Prints each of imprint's messages for this Claude Code session as one JSON line\n"+
 		"{\"content\": ..., \"meta\": {...}} on stdout: the lines `imprint channel` spools under\n"+
-		"~/.local/state/imprint/spool/, from the first. The imprint plugin's mod runs it and starts\n"+
+		"~/.local/state/imprint/spool/, from where this session's last watch stopped. A spool no live\n"+
+		"channel holds is a crash leftover, and counts as no file. The imprint plugin's mod runs it and starts\n"+
 		"a turn with each line. Logs go to stderr. Runs until signalled.",
 	nil)
 

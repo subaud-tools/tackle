@@ -294,7 +294,8 @@ func saveCursor(f *os.File, path string, off int64) error {
 // (its cursor), then follows it until ctx ends. It follows only a spool a
 // live channel holds: until there is one, a leftover counts as no file. The
 // file need not exist yet.
-// Only whole lines are printed, each once; when the channel replaces the file
+// Only whole lines are printed. A line is printed again when watch is killed
+// between printing it and saving the cursor; when the channel replaces the file
 // (it restarted), watch finishes the old file and starts on the new one.
 func Watch(ctx context.Context, dir, session string, out, log io.Writer) error {
 	path, err := SpoolFile(dir, session)
