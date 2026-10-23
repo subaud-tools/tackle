@@ -1,0 +1,6 @@
+{
+  "description": "Starts a turn with each sift event",
+  "modules": [
+    "./register.js"
+  ]
+}

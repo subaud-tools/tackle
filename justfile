@@ -49,8 +49,16 @@ prepare:
 verify-slow: cull-probe sift-probe
 
 # Tool-specific checks beyond the gate (CI runs this too): the cull and sift
-# pages' TypeScript gates and their committed bundles matching web/.
-verify-extra: cull-web cull-bundle-fresh sift-web sift-bundle-fresh
+# pages' TypeScript gates and their committed bundles matching web/, and the
+# Claude Code plugins.
+verify-extra: cull-web cull-bundle-fresh sift-web sift-bundle-fresh plugin-valid
+
+# Each tool's Claude Code plugin passes Claude Code's own validator. Pinned,
+# and run through npx, so CI's runner needs nothing installed and no login.
+# Not --strict: the manifests carry no version on purpose (Claude Code then
+# versions each plugin by commit), and the validator warns about that.
+plugin-valid:
+    for p in cmd/cull/plugin cmd/sift/plugin; do npx -y @anthropic-ai/claude-code@2.1.309 plugin validate "$p"; done
 
 # cull's page (internal/cull/web) is TypeScript built by esbuild into
 # internal/cull/serve/assets, which is COMMITTED and embedded, so node is

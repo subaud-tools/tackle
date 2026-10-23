@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "cull": {
+      "command": "cull",
+      "args": [
+        "channel"
+      ]
+    }
+  }
+}
