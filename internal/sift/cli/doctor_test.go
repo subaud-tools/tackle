@@ -115,7 +115,7 @@ func TestDoctorPageServerAndChannels(t *testing.T) {
 	code, out, _ := run(t, "", "doctor")
 	for _, re := range []string{
 		`serve\s+note: sift serve is not running`,
-		`claude-code channel\s+note: sift is not in .*\.claude\.json mcpServers`,
+		`claude-code channel\s+note: sift is not in .*settings\.json enabledPlugins`,
 		`codex channel\s+note: sift is not in .*config\.toml \[mcp_servers\]`,
 		`pi channel\s+note: sift is not in .*channels\.json`,
 	} {
@@ -126,7 +126,7 @@ func TestDoctorPageServerAndChannels(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("notes failed doctor: %d", code)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"mcpServers":{"sift":{"command":"sift","args":["channel"]}}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"enabledPlugins":{"sift@tackle":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte("[mcp_servers.sift]\ncommand = \"sift\"\nargs = [\"channel\"]\n"), 0o600); err != nil {

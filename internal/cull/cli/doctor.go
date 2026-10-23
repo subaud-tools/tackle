@@ -153,10 +153,10 @@ func runDoctor(args []string, out, errw io.Writer) error {
 	}
 
 	home, _ := os.UserHomeDir()
-	if registered(filepath.Join(home, ".claude.json"), "mcpServers") {
-		line("~/.claude.json", false, "", "")
+	if pluginEnabled(claudeSettings(home), "cull@tackle") {
+		line("~/.claude/settings.json", false, "", "")
 	} else {
-		line("~/.claude.json", false, "cull is not in mcpServers: install cull with kempt", "")
+		line("~/.claude/settings.json", false, "the cull plugin is not enabled for Claude Code: install cull with kempt", "")
 	}
 	if registered(filepath.Join(home, ".pi", "agent", "channels.json"), "channelServers") {
 		line("channels.json", false, "", "")
@@ -203,6 +203,28 @@ func writeChecks(out io.Writer, root string) {
 
 // registered reports whether the JSON file has a "cull" entry under section
 // (mcpServers in ~/.claude.json, channelServers in pi's channels.json).
+// claudeSettings is Claude Code's user settings file: settings.json in
+// CLAUDE_CONFIG_DIR when that is set, else in ~/.claude.
+func claudeSettings(home string) string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); filepath.IsAbs(dir) {
+		return filepath.Join(dir, "settings.json")
+	}
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// pluginEnabled reports whether the settings file at path enables plugin (a
+// name@marketplace key under enabledPlugins set to true).
+func pluginEnabled(path, plugin string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var s struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	return json.Unmarshal(b, &s) == nil && s.EnabledPlugins[plugin]
+}
+
 func registered(path, section string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -24,7 +24,7 @@ func TestDoctorReportsEachMissingItem(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("code %d\n%s", code, out)
 	}
-	for _, want := range []string{"key", "cull init", "egress", "python3", "test command", "serve", "~/.claude.json", "channels.json"} {
+	for _, want := range []string{"key", "cull init", "egress", "python3", "test command", "serve", "~/.claude/settings.json", "channels.json"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -69,7 +69,7 @@ func TestDoctorAllOk(t *testing.T) {
 	ckWriteFile(t, root, "go.mod", "module x\n")
 	ckWriteFile(t, root, "a_test.go", "package x\nimport \"testing\"\nfunc TestA(t *testing.T) {}\n")
 	home := os.Getenv("HOME")
-	ckWriteFile(t, home, ".claude.json", `{"numStartups":412,"theme":"dark","tipsHistory":[1,2],"mcpServers":{"galley":{"command":"galley"},"cull":{"command":"cull"}}}`)
+	ckWriteFile(t, home, ".claude/settings.json", `{"theme":"dark","enabledPlugins":{"galley@galley":true,"cull@tackle":true}}`)
 	ckWriteFile(t, home, ".pi/agent/channels.json", `{"channelServers":{"galley":{"command":"galley"},"cull":{"command":"cull","args":["channel"]}}}`)
 	code, out, _ := run(t, "", "doctor", root)
 	if code != 0 {
