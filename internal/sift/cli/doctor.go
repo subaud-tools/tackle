@@ -134,19 +134,20 @@ func runDoctor(args []string, out, errw io.Writer) error {
 	return nil
 }
 
-// channelRegistered reports where a shipped harness registers MCP servers
-// and whether sift is there: Claude Code's .claude.json mcpServers, Codex's
-// config.toml [mcp_servers], pi's channels.json. where is "" for a harness
-// sift doesn't know how to check.
+// channelRegistered reports where a shipped harness registers sift and
+// whether sift is there: Claude Code's settings.json enabledPlugins (the sift
+// plugin, whose mod delivers Sends), Codex's config.toml [mcp_servers], pi's
+// channels.json. where is "" for a harness sift doesn't know how to check.
 func channelRegistered(p profile.Profile) (where string, ok bool) {
 	switch p.Name {
 	case "claude-code":
 		dir := os.Getenv("CLAUDE_CONFIG_DIR")
 		if !filepath.IsAbs(dir) {
-			dir, _ = os.UserHomeDir()
+			home, _ := os.UserHomeDir()
+			dir = filepath.Join(home, ".claude")
 		}
-		where = filepath.Join(dir, ".claude.json")
-		return where + " mcpServers", jsonHas(where, "mcpServers")
+		where = filepath.Join(dir, "settings.json")
+		return where + " enabledPlugins", pluginEnabled(where, "sift@tackle")
 	case "codex":
 		where = filepath.Join(p.HomeDir(), "config.toml")
 		var c struct {
@@ -160,6 +161,19 @@ func channelRegistered(p profile.Profile) (where string, ok bool) {
 		return where + " channelServers", jsonHas(where, "channelServers")
 	}
 	return "", false
+}
+
+// pluginEnabled reports whether the settings file at path enables plugin (a
+// name@marketplace key under enabledPlugins set to true).
+func pluginEnabled(path, plugin string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var s struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	return json.Unmarshal(b, &s) == nil && s.EnabledPlugins[plugin]
 }
 
 // jsonHas reports whether the JSON file has a "sift" key, under section when
