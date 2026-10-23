@@ -34,6 +34,11 @@ func commands(stdin io.Reader) []tools.Command {
 			NewFlags: channelFlags, Run: runChannel(stdin),
 		},
 		{
+			Name: "watch", Group: "check", Synopsis: "",
+			Summary:  "print Court's answers as JSON lines: the Claude Code plugin's feed",
+			NewFlags: watchFlags, Run: runWatch,
+		},
+		{
 			Name: "wait", Group: "check", Synopsis: "[path] [--timeout D]",
 			Summary:  "wait until Court sends his answers for this project, then print what to do (for sessions without the cull channel)",
 			NewFlags: waitFlags, Run: runWait,

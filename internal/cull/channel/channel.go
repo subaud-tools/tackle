@@ -1,8 +1,10 @@
 // Package channel is `cull channel`: the MCP server each agent session starts
-// (Claude Code through its mcpServers, pi through channels.tools). It starts
-// cull serve when it isn't running, registers the session's presence, holds a
-// long poll open for Court's answers and injects each Send as a
-// notifications/claude/channel event, and gives the agent cull's tools. The
+// (Claude Code through the cull plugin, pi through channels.tools). It starts
+// cull serve when it isn't running, gives the agent cull's tools and, under
+// pi, registers the session's presence, holds a long poll open for Court's
+// answers and injects each Send as a notifications/claude/channel event.
+// Under Claude Code `cull watch` runs that loop instead and prints each Send
+// as a JSON line for the plugin's mod. The
 // presence and wait loops are copied in shape from casebook's channel (cull
 // does not import it).
 //
@@ -33,7 +35,7 @@ const Instructions = `cull judges automated tests with Jev and removes the ones 
 - After you write or change tests, run cull_check with base set to the merge base of your branch (or no base for the whole suite when Court asks for it).
 - Then run cull_apply with no ids: it removes every cut, both Jev's confident ones and Court's, runs the tests before and after, and puts everything back if they break. Never commit on cull's behalf; report what was removed.
 - If cull_check reports to_review above 0, run cull_review once to open the page for Court, tell him how many items wait, and carry on with other work. Never ask Court about a test anywhere but the page, and never open the page repeatedly.
-- Court's answers arrive as a channel event from cull. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports.
+- Court's answers arrive as an event from cull: <channel source="cull" project="…" send_id="…"> in pi, or a turn whose first line is cull event project=… send_id=… in Claude Code. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports.
 - cull_status tells you what is open, answered and sent for this project.
 - When your session runs in a folder that holds several repositories (a workspace), pass the repository's path to every cull tool. The event from Court names the repository's path; use it.
 - You never answer for Court. If cull reports an error, say what failed; don't work around it by editing tests by hand.
@@ -52,7 +54,7 @@ type Identity struct {
 func FromEnv() Identity {
 	c := harness.FromEnv()
 	id := Identity{Session: c.SessionID, CWD: c.CWD, Harness: "pi"}
-	if c.SessionID != "" && c.SessionID == c.ClaudeID {
+	if c.IsClaude() {
 		id.Harness = "claude"
 	}
 	if id.CWD == "" {
@@ -76,6 +78,14 @@ type Channel struct {
 	Presence time.Duration
 	Poll     time.Duration
 
+	// Push is where the wait loop sends each Send: Server for `cull
+	// channel`, a JSON line on stdout for `cull watch`. One loop, two outputs.
+	Push channelmcp.Pusher
+	// ServeOnly is `cull channel` under Claude Code: the plugin's mod runs
+	// `cull watch`, which takes the sends, so this process serves the tools
+	// and never waits. Two takers would split a session's sends.
+	ServeOnly bool
+
 	root    string // the session's project root; "" when it can't be resolved
 	rootErr error
 	runCtx  context.Context
@@ -97,6 +107,15 @@ func New(id Identity, c *Client, version string) *Channel {
 			return ch.Call(ctx, name, args)
 		},
 	})
+	ch.Push = ch.Server
+	return ch
+}
+
+// ForSession is the channel `cull channel` runs: this session, and serve-only
+// when the session is Claude Code's (see ServeOnly).
+func ForSession(c *Client, version string) *Channel {
+	ch := New(FromEnv(), c, version)
+	ch.ServeOnly = harness.FromEnv().IsClaude()
 	return ch
 }
 
@@ -110,21 +129,37 @@ func (ch *Channel) scope() string {
 	return ch.root
 }
 
-// Run serves MCP on r/w and, when the session and its project are known, the
-// presence and wake loop.
+// Run serves MCP on r/w and, unless the channel is serve-only, the presence
+// and wake loop when the session and its project are known.
 func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch.runCtx = ctx // set before Server.Run starts reading
-	switch {
-	case ch.ID.Session == "":
-		_, _ = fmt.Fprintln(ch.Log, "cull channel: no session id (not under Claude Code or pi); Court's answers will not reach this session")
-	case ch.rootErr != nil:
-		_, _ = fmt.Fprintf(ch.Log, "cull channel: %v\n", ch.rootErr)
-	default:
+	if ch.ServeOnly {
+		_, _ = fmt.Fprintln(ch.Log, "cull channel: Claude Code session: serving tools only; the cull plugin's `cull watch` delivers Court's answers")
+	} else if err := ch.ready(); err != nil {
+		_, _ = fmt.Fprintf(ch.Log, "cull channel: %v\n", err)
+	} else {
 		go ch.loop(ctx)
 	}
 	return ch.Server.Run(r, w)
+}
+
+// Watch is `cull watch`: the presence and wake loop alone, until ctx ends.
+func (ch *Channel) Watch(ctx context.Context) error {
+	if err := ch.ready(); err != nil {
+		return err
+	}
+	ch.loop(ctx)
+	return nil
+}
+
+// ready says why the loop cannot run: no session, or no project.
+func (ch *Channel) ready() error {
+	if ch.ID.Session == "" {
+		return errors.New("no session id (not under Claude Code or pi); Court's answers will not reach this session")
+	}
+	return ch.rootErr
 }
 
 func (ch *Channel) presence(ctx context.Context) error {
@@ -177,7 +212,7 @@ func (ch *Channel) loop(ctx context.Context) {
 		case code == http.StatusOK && got.ID != 0:
 			lastErr = ""
 			meta := map[string]string{"source": "cull", "project": got.Root, "send_id": strconv.FormatInt(got.ID, 10)}
-			if err := ch.Server.Notify(got.Text, meta); err != nil {
+			if err := ch.Push.Notify(got.Text, meta); err != nil {
 				_, _ = fmt.Fprintf(ch.Log, "cull channel: notify: %v\n", err)
 			}
 		default:

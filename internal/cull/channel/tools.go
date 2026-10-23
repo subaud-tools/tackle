@@ -288,6 +288,10 @@ func (ch *Channel) status(ctx context.Context, path string) (string, error) {
 	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status?"+q("root", root), nil, &out); err != nil {
 		return "", err
 	}
+	if ch.ServeOnly {
+		out["events"] = "This is a Claude Code session: Court's answers reach it through `cull watch`, which the cull plugin starts, " +
+			"not through this process. If a Send never arrived, check that the cull plugin is installed and enabled (/plugin)."
+	}
 	return pretty(out), nil
 }
 
