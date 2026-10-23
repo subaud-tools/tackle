@@ -6,6 +6,24 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.4.0] - 2026-10-23
+
+### Added
+- **Claude Code hears cull without a launch flag.** cull ships a Claude Code plugin (in tackle's marketplace) whose mod runs the new `cull watch` for the session, so Court's answers on the review page start a turn in a session started with plain `claude`.
+- `cull watch` prints each answer as one JSON line, for the plugin's mod.
+
+### Changed
+- Under Claude Code, `cull channel` serves cull's tools only and leaves answers to `cull watch`; under pi it works as before.
+
+## [sift 0.3.0] - 2026-10-23
+
+### Added
+- **Claude Code hears sift without a launch flag.** sift ships a Claude Code plugin (in tackle's marketplace) whose mod runs the new `sift watch` for the session, so a Send from the review page starts a turn in a session started with plain `claude`.
+- `sift watch` prints each Send as one JSON line, for the plugin's mod.
+
+### Changed
+- Under Claude Code, `sift channel` serves sift's tools only and leaves Sends to `sift watch`; under pi it works as before.
+
 ## [proj 0.9.0] - 2026-10-19
 
 ### Changed
