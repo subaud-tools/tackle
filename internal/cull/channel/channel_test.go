@@ -257,11 +257,16 @@ type client struct {
 type ident struct{ session, label, cwd string }
 
 func (e *env) connect(id ident) *client {
-	t := e.t
-	t.Helper()
+	e.t.Helper()
 	cl := NewClient(nil)
 	cl.Find = serve.Running
-	ch := New(Identity{Session: id.session, Harness: "claude", Label: id.label, CWD: id.cwd}, cl, "test")
+	return e.connectChannel(New(Identity{Session: id.session, Harness: "claude", Label: id.label, CWD: id.cwd}, cl, "test"))
+}
+
+// connectChannel is connect for a channel the test built itself.
+func (e *env) connectChannel(ch *Channel) *client {
+	t := e.t
+	t.Helper()
 	ch.Log = e.logs
 	ch.Retry, ch.Presence, ch.Poll = 50*time.Millisecond, 200*time.Millisecond, time.Second
 	c := &client{t: t, wait: map[int]chan rpc{}, events: make(chan event, 16), all: &syncBuf{}, opened: make(chan string, 8), ch: ch}
@@ -369,7 +374,7 @@ const wantInstructions = `cull judges automated tests with Jev and removes the o
 - After you write or change tests, run cull_check with base set to the merge base of your branch (or no base for the whole suite when Court asks for it).
 - Then run cull_apply with no ids: it removes every cut, both Jev's confident ones and Court's, runs the tests before and after, and puts everything back if they break. Never commit on cull's behalf; report what was removed.
 - If cull_check reports to_review above 0, run cull_review once to open the page for Court, tell him how many items wait, and carry on with other work. Never ask Court about a test anywhere but the page, and never open the page repeatedly.
-- Court's answers arrive as a channel event from cull. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports.
+- Court's answers arrive as an event from cull: <channel source="cull" project="…" send_id="…"> in pi, or a turn whose first line is cull event project=… send_id=… in Claude Code. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports.
 - cull_status tells you what is open, answered and sent for this project.
 - When your session runs in a folder that holds several repositories (a workspace), pass the repository's path to every cull tool. The event from Court names the repository's path; use it.
 - You never answer for Court. If cull reports an error, say what failed; don't work around it by editing tests by hand.

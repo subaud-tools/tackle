@@ -1,8 +1,10 @@
 // Package channel is `sift channel`: the MCP server each agent session
-// starts (Claude Code through its mcpServers, pi through channels.tools). It
-// starts sift serve when it isn't running, registers the session's presence,
-// holds a long poll open for the user's decisions and injects each Send as a
-// notifications/claude/channel event, and gives the agent sift's tools. The
+// starts (Claude Code through the sift plugin, pi through channels.tools). It
+// starts sift serve when it isn't running, gives the agent sift's tools and,
+// under pi, registers the session's presence, holds a long poll open for the
+// user's decisions and injects each Send as a notifications/claude/channel
+// event. Under Claude Code `sift watch` runs that loop instead and prints
+// each Send as a JSON line for the plugin's mod. The
 // presence and wait loops are copied in shape from cull's channel (sift does
 // not import it).
 //
@@ -34,7 +36,7 @@ const Instructions = `sift audits the instruction files coding agents read (glob
 - Run sift_check when the user asks for an audit. It records a round and says how many files need a recommendation.
 - Recommend every file: sift_next gives one file with its content, findings and the guidance for the rewrite; sift_propose stores the whole revised file. Repeat until sift_next says done. Recommend files that move text between them in one sift_propose call, each linking the other.
 - Then run sift_review once to open the page for the user, tell them how many files wait, and carry on with other work. The page opens only once every file has a recommendation.
-- The user's decisions arrive as a channel event from sift. Follow its steps: sift_apply writes a branch per repo; then run ` + "`sift reconcile`" + ` and review each branch.
+- The user's decisions arrive as an event from sift: <channel source="sift" round="…" send_id="…"> in pi, or a turn whose first line is sift event round=… send_id=… in Claude Code. Follow its steps: sift_apply writes a branch per repo; then run ` + "`sift reconcile`" + ` and review each branch.
 - The pull requests are the user's to merge. Once they are merged or closed, run sift_clean to remove the branches and worktrees apply made.
 - sift_status tells you the round's state and what is open, decided and sent.
 - When sift reports an error, say what failed and leave the files as they are.`
@@ -52,7 +54,7 @@ type Identity struct {
 func FromEnv() Identity {
 	c := harness.FromEnv()
 	id := Identity{Session: c.SessionID, CWD: c.CWD, Harness: "pi"}
-	if c.SessionID != "" && c.SessionID == c.ClaudeID {
+	if c.IsClaude() {
 		id.Harness = "claude"
 	}
 	if id.CWD == "" {
@@ -79,6 +81,14 @@ type Channel struct {
 	Presence time.Duration
 	Poll     time.Duration
 
+	// Push is where the wait loop sends each Send: Server for `sift
+	// channel`, a JSON line on stdout for `sift watch`. One loop, two outputs.
+	Push channelmcp.Pusher
+	// ServeOnly is `sift channel` under Claude Code: the plugin's mod runs
+	// `sift watch`, which takes the sends, so this process serves the tools
+	// and never waits. Two takers would split a session's sends.
+	ServeOnly bool
+
 	runCtx context.Context
 }
 
@@ -97,21 +107,44 @@ func New(id Identity, c *Client, version string) *Channel {
 			return ch.Call(ctx, name, args)
 		},
 	})
+	ch.Push = ch.Server
 	return ch
 }
 
-// Run serves MCP on r/w and, when the session is known, the presence and
-// wake loop.
+// ForSession is the channel `sift channel` runs: this session, and serve-only
+// when the session is Claude Code's (see ServeOnly).
+func ForSession(c *Client, version string) *Channel {
+	ch := New(FromEnv(), c, version)
+	ch.ServeOnly = harness.FromEnv().IsClaude()
+	return ch
+}
+
+// Run serves MCP on r/w and, unless the channel is serve-only, the presence
+// and wake loop when the session is known.
 func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ch.runCtx = ctx // set before Server.Run starts reading
-	if ch.ID.Session == "" {
-		_, _ = fmt.Fprintln(ch.Log, "sift channel: no session id (not under Claude Code or pi); the user's decisions will not reach this session")
-	} else {
+	switch {
+	case ch.ServeOnly:
+		_, _ = fmt.Fprintln(ch.Log, "sift channel: Claude Code session: serving tools only; the sift plugin's `sift watch` delivers the user's decisions")
+	case ch.ID.Session == "":
+		_, _ = fmt.Fprintf(ch.Log, "sift channel: %v\n", errNoSession)
+	default:
 		go ch.loop(ctx)
 	}
 	return ch.Server.Run(r, w)
+}
+
+var errNoSession = errors.New("no session id (not under Claude Code or pi); the user's decisions will not reach this session")
+
+// Watch is `sift watch`: the presence and wake loop alone, until ctx ends.
+func (ch *Channel) Watch(ctx context.Context) error {
+	if ch.ID.Session == "" {
+		return errNoSession
+	}
+	ch.loop(ctx)
+	return nil
 }
 
 func (ch *Channel) presence(ctx context.Context) error {
@@ -162,7 +195,7 @@ func (ch *Channel) loop(ctx context.Context) {
 		case code == http.StatusOK && got.ID != 0:
 			lastErr = ""
 			meta := map[string]string{"source": "sift", "round": strconv.FormatInt(got.Round, 10), "send_id": strconv.FormatInt(got.ID, 10)}
-			if err := ch.Server.Notify(got.Text, meta); err != nil {
+			if err := ch.Push.Notify(got.Text, meta); err != nil {
 				_, _ = fmt.Fprintf(ch.Log, "sift channel: notify: %v\n", err)
 			}
 		default:

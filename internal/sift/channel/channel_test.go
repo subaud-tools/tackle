@@ -134,11 +134,16 @@ type client struct {
 }
 
 func (e *env) connect(session string) *client {
-	t := e.t
-	t.Helper()
+	e.t.Helper()
 	cl := NewClient(nil)
 	cl.Find = serve.Running
-	ch := New(Identity{Session: session, Harness: "claude", Label: "claude · " + session, CWD: e.repo}, cl, "test")
+	return e.connectChannel(New(Identity{Session: session, Harness: "claude", Label: "claude · " + session, CWD: e.repo}, cl, "test"))
+}
+
+// connectChannel is connect for a channel the test built itself.
+func (e *env) connectChannel(ch *Channel) *client {
+	t := e.t
+	t.Helper()
 	ch.Log = e.logs
 	ch.LookPath = func(string) (string, error) { return "", errors.New("no gh in tests") }
 	ch.Retry, ch.Presence, ch.Poll = 50*time.Millisecond, 200*time.Millisecond, time.Second
