@@ -58,7 +58,7 @@ verify-extra: cull-web cull-bundle-fresh sift-web sift-bundle-fresh plugin-valid
 # Not --strict: the manifests carry no version on purpose (Claude Code then
 # versions each plugin by commit), and the validator warns about that.
 plugin-valid:
-    for p in cmd/cull/plugin cmd/sift/plugin; do npx -y @anthropic-ai/claude-code@2.1.309 plugin validate "$p"; done
+    for p in cmd/cull/plugin cmd/imprint/plugin cmd/sift/plugin; do npx -y @anthropic-ai/claude-code@2.1.309 plugin validate "$p"; done
 
 # cull's page (internal/cull/web) is TypeScript built by esbuild into
 # internal/cull/serve/assets, which is COMMITTED and embedded, so node is

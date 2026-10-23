@@ -1,7 +1,9 @@
 // Package channel is `imprint channel`: the MCP server an agent session
 // starts. Each tool does one npm step through package ops, returns at once
 // with what it started, and sends the step's progress to the session as
-// channel messages.
+// events: under pi as notifications/claude/channel, under Claude Code as JSON
+// lines in the session's spool, which `imprint watch` (the imprint plugin's
+// mod) prints and the mod turns into turns.
 //
 // stdout carries MCP frames only; every log line goes to the Log writer
 // (stderr in the command).
@@ -18,12 +20,13 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/imprint/ops"
 	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/harness"
 )
 
 // Instructions are the standing guidance the agent gets with the channel.
 const Instructions = `imprint guides you through npm package work: logging in, publishing a tarball, setting a package's trusted publisher, deprecating a package, and confirming that a CI release landed signed by the right repo.
 - You decide every step; imprint does the one npm step you ask for and tells you what it means. The user logs in and approves each npm operation in the browser: imprint opens each approval link for them and tells you it is waiting.
-- Every tool except imprint_show and imprint_status returns at once with what it started. Its progress arrives as channel messages from imprint: "waiting for your approval: <url>", "approved", "live on npm", or "failed:" with what npm's error usually means and the file holding npm's full output. Relay approval links to the user.
+- Every tool except imprint_show and imprint_status returns at once with what it started. Its progress arrives as events from imprint: <channel source="imprint" op="…" package="…"> in pi, or a turn whose first line is imprint event op=… package=… in Claude Code. Each says "waiting for your approval: <url>", "approved", "live on npm", or "failed:" with what npm's error usually means and the file holding npm's full output. Relay approval links to the user.
 - A step is done only when imprint says the registry shows it. After a publish, don't work out the next version until imprint says it is live.
 - imprint_status lists what is waiting on the user's approval or on the registry.
 - Read the imprint skill for the procedures: moving a trusted publisher, renaming a package, proving a new trusted publisher with one CI release.`
@@ -33,6 +36,14 @@ type Channel struct {
 	Ops    *ops.Ops
 	Server *channelmcp.Server
 	Log    io.Writer
+
+	// Push is where each job's reports go: Server under pi; under Claude
+	// Code the session's spool, which `imprint watch` follows.
+	Push  channelmcp.Pusher
+	spool *Spool
+	// claude is a Claude Code session; spoolErr why its spool didn't open.
+	claude   bool
+	spoolErr error
 
 	mu     sync.Mutex
 	jobs   map[int]*job
@@ -55,18 +66,55 @@ func New(o *ops.Ops, version string) *Channel {
 			return ch.Call(name, args)
 		},
 	})
+	ch.Push = ch.Server
 	return ch
 }
 
-// Run serves MCP on r/w until r ends. Operations still running end with
-// it: an npm call stops with the session.
+// ForSession is the channel `imprint channel` runs. Under Claude Code its
+// messages go to the session's spool under imprint's state directory dir
+// (see Spool); under pi to Server, as always.
+func ForSession(o *ops.Ops, version, dir string) *Channel {
+	ch := New(o, version)
+	c := harness.FromEnv()
+	if !c.IsClaude() {
+		return ch
+	}
+	ch.claude = true
+	sp, err := OpenSpool(dir, c.SessionID)
+	if err != nil {
+		ch.spoolErr = err
+		return ch
+	}
+	ch.spool, ch.Push = sp, sp
+	return ch
+}
+
+// Run serves MCP on r/w until r ends or ctx does. Operations still running end with
+// it: an npm call stops with the session. The session's spool is removed
+// when it ends.
 func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	switch {
+	case ch.spool != nil:
+		defer func() { _ = ch.spool.Close() }()
+		_, _ = fmt.Fprintf(ch.Log, "imprint channel: Claude Code session: messages go to %s for the imprint plugin's `imprint watch`\n", ch.spool.Path())
+	case ch.spoolErr != nil:
+		_, _ = fmt.Fprintf(ch.Log, "imprint channel: Claude Code session, but no spool (%v): messages go out as channel notifications, which Claude Code drops unless the channel flag is on\n", ch.spoolErr)
+	}
 	ch.mu.Lock()
 	ch.runCtx = ctx // set before Server.Run starts reading
 	ch.mu.Unlock()
-	return ch.Server.Run(r, w)
+	// Return on a signal too, not only when r ends: Claude Code signals the
+	// channel while its stdin may still be open, and the spool must go.
+	served := make(chan error, 1)
+	go func() { served <- ch.Server.Run(r, w) }()
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 func (ch *Channel) ctx() context.Context {
@@ -95,7 +143,7 @@ func (ch *Channel) start(tool, pkg, what string, fn func(ctx context.Context, re
 		ch.mu.Lock()
 		j.last = text
 		ch.mu.Unlock()
-		if err := ch.Server.Notify(text, meta); err != nil {
+		if err := ch.Push.Notify(text, meta); err != nil {
 			_, _ = fmt.Fprintf(ch.Log, "imprint channel: notify: %v\n", err)
 		}
 	}
@@ -113,6 +161,15 @@ func (ch *Channel) start(tool, pkg, what string, fn func(ctx context.Context, re
 
 // status lists the operations in flight with their last message.
 func (ch *Channel) status() string {
+	s := ch.jobsStatus()
+	if ch.claude {
+		s += "\n\nThis is a Claude Code session: imprint's messages reach it through `imprint watch`, which the imprint plugin starts, " +
+			"not through this process. If one never arrived, check that the imprint plugin is installed and enabled (/plugin)."
+	}
+	return s
+}
+
+func (ch *Channel) jobsStatus() string {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 	if len(ch.jobs) == 0 {

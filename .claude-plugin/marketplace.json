@@ -12,6 +12,11 @@
       "description": "Judge a project's automated tests with Jev and remove the ones that don't earn their place; Court reviews only what Jev is unsure about, on cull's review page. Bundles cull's tools and the mod that delivers Court's answers into this session."
     },
     {
+      "name": "imprint",
+      "source": "./cmd/imprint/plugin",
+      "description": "Guides npm package work: logging in, publishing a tarball, setting or moving a package's trusted publisher, deprecating a package and confirming a CI release, one npm step at a time. Bundles imprint's tools and the mod that delivers each step's progress into this session."
+    },
+    {
       "name": "sift",
       "source": "./cmd/sift/plugin",
       "description": "Audit the instruction files coding agents read and recommend a revised version of each; the user accepts, edits or rejects each file on sift's review page. Bundles sift's tools and the mod that delivers the user's decisions into this session."

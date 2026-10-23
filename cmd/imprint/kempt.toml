@@ -6,9 +6,7 @@
 # -packages imprint is required: without it kempt applies the selection saved
 # by your dotfiles `kempt init`, which does not contain "imprint".
 # After the first apply, and after each upgrade: `imprint skills install` (the
-# skill is embedded in the binary, and kempt runs no commands). Launch Claude
-# Code with `claude --dangerously-load-development-channels server:imprint` to
-# hear imprint's progress messages.
+# skill is embedded in the binary, and kempt runs no commands).
 
 [kempt]
 spec = 1
@@ -26,10 +24,18 @@ notes = [
   tool = "imprint"
   bin = "imprint"
 
-  # Claude Code: the imprint channel (progress arrives as channel messages).
+  # Claude Code: the imprint plugin from tackle's marketplace. The next plain
+  # `claude` session installs it at user scope. Its .mcp.json runs `imprint
+  # channel` for the tools and its mod runs `imprint watch`, which turns each
+  # progress message into a turn.
+  [[packages.imprint.json-merge]]
+  file = "~/.claude/settings.json"
+  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" } } }, enabledPlugins = { "imprint@tackle" = true } }
+
+  # The bare server the plugin replaces, or the channel would start twice.
   [[packages.imprint.json-merge]]
   file = "~/.claude.json"
-  merge = { mcpServers = { imprint = { type = "stdio", command = "imprint", args = ["channel"], env = {} } } }
+  remove = ["mcpServers.imprint"]
 
   # pi: the same channel through channels.tools.
   [[packages.imprint.json-merge]]
