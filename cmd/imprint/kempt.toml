@@ -30,7 +30,7 @@ notes = [
   # progress message into a turn.
   [[packages.imprint.json-merge]]
   file = "~/.claude/settings.json"
-  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" } } }, enabledPlugins = { "imprint@tackle" = true } }
+  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" }, autoUpdate = true } }, enabledPlugins = { "imprint@tackle" = true } }
 
   # The bare server the plugin replaces, or the channel would start twice.
   [[packages.imprint.json-merge]]

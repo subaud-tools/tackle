@@ -26,7 +26,7 @@ only = { os = "darwin" }
   # Court's answers into a turn.
   [[packages.cull.json-merge]]
   file = "~/.claude/settings.json"
-  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" } } }, enabledPlugins = { "cull@tackle" = true } }
+  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" }, autoUpdate = true } }, enabledPlugins = { "cull@tackle" = true } }
 
   # The bare server the plugin replaces, or the channel would start twice.
   [[packages.cull.json-merge]]

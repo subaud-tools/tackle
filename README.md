@@ -13,7 +13,7 @@ member. One Go monorepo; each tool is an independent binary under `cmd/`.
 - **sift** — audits the instruction files coding agents read (global files, repo files, skills), has the agent recommend one revised version per file, and puts each in front of you on a local page; what you approve becomes one pull request per repo. (Preview.)
   Install: `kempt apply -manifest cmd/sift/kempt.toml -packages sift`, then `sift skills install` and `sift init --root DIR`.
 - **imprint** — guides a coding agent through publishing npm packages, trusted publishers and deprecation, opening each approval for you and checking every step on the registry.
-  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install the binary with `curl -fsSL https://tackle.tools/install.sh | sh -s imprint`, run `imprint skills install`, then install its Claude Code plugin with `claude plugin marketplace add subaud-tools/tackle` and `claude plugin install imprint@tackle`.
+  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install the binary with `curl -fsSL https://tackle.tools/install.sh | sh -s imprint`, run `imprint skills install`, then install its Claude Code plugin with `claude plugin marketplace add subaud-tools/tackle` and `claude plugin install imprint@tackle`. Turn on auto-update for the `tackle` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `tackle` and choose **Enable auto-update**.
 
 casebook moved to its own repo, https://github.com/subaud-tools/casebook (casebook.tools).
 
@@ -254,6 +254,8 @@ To install the Claude Code plugin yourself, run:
 
 A session started after that hears `cull`. In a session that is already open, run `/reload-plugins`.
 
+Turn on auto-update for the `tackle` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `tackle` and choose **Enable auto-update**.
+
 **Commands**
 
 - `cull check` judges the tests (the whole suite, or only your diff) and writes `.cull/last.json`.
@@ -338,6 +340,8 @@ To install the Claude Code plugin yourself, run:
     claude plugin install sift@tackle
 
 A session started after that hears `sift`. In a session that is already open, run `/reload-plugins`.
+
+Turn on auto-update for the `tackle` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `tackle` and choose **Enable auto-update**.
 
 **Commands**
 
