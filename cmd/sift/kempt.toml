@@ -32,7 +32,7 @@ notes = [
   # the user's Sends into a turn.
   [[packages.sift.json-merge]]
   file = "~/.claude/settings.json"
-  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" } } }, enabledPlugins = { "sift@tackle" = true } }
+  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" }, autoUpdate = true } }, enabledPlugins = { "sift@tackle" = true } }
 
   # The bare server the plugin replaces, or the channel would start twice.
   [[packages.sift.json-merge]]
