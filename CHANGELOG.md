@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.4.3] - 2026-10-23
+
+### Changed
+- The Claude Code plugin's mod is now a thin shim: `cull watch` decides what each event says and whether a session hears it, so later fixes arrive with the binary.
+
+## [sift 0.3.3] - 2026-10-23
+
+### Changed
+- The Claude Code plugin's mod is now a thin shim: `sift watch` decides what each event says and whether a session hears it, so later fixes arrive with the binary.
+
+## [imprint 0.2.2] - 2026-10-23
+
+### Changed
+- The Claude Code plugin's mod is now a thin shim: `imprint watch` decides what each event says and whether a session hears it, so later fixes arrive with the binary.
+
 ## [cull 0.4.2] - 2026-10-23
 
 ### Fixed
