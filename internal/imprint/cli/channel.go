@@ -14,6 +14,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/imprint/registry"
 	"github.com/subaud-tools/tackle/internal/version"
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/channelmcp"
 	"github.com/subaud-tools/tools-common/harness"
 	"github.com/subaud-tools/tools-common/localweb"
 )
@@ -54,10 +55,11 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 
 var watchFlags = flags("watch", "imprint watch",
 	"Prints each of imprint's messages for this Claude Code session as one JSON line\n"+
-		"{\"content\": ..., \"meta\": {...}} on stdout: the lines `imprint channel` spools under\n"+
+		"{\"text\": ..., \"content\": ..., \"meta\": {...}} on stdout: the lines `imprint channel` spools under\n"+
 		"~/.local/state/imprint/spool/, from where this session's last watch stopped. A spool no live\n"+
 		"channel holds is a crash leftover, and counts as no file. The imprint plugin's mod runs it and starts\n"+
-		"a turn with each line. Logs go to stderr. Runs until signalled.",
+		"a turn with each line's text. Logs go to stderr. Runs until signalled. In a session pi's\n"+
+		"claude-bridge runs, it prints {\"stop\": ...} and exits 0.",
 	nil)
 
 // runWatch is `imprint watch`: it follows the session's spool and prints each
@@ -71,11 +73,24 @@ func runWatch(args []string, out, errw io.Writer) error {
 	if len(pos) > 0 {
 		return tools.UsageError{Msg: "watch takes no arguments"}
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return watch(ctx, tools.StateDir("imprint"), out, errw)
+}
+
+// watch is runWatch after its flags, until ctx ends, following the spools
+// under dir, so a test can run it.
+func watch(ctx context.Context, dir string, out, errw io.Writer) error {
+	// In a bridge child this prints the stop line and the mod never restarts
+	// watch: the hosting pi session's channel delivers imprint's messages.
+	// The writer it returns goes unused: watch re-prints the spool's lines,
+	// which the channel already wrote with text.
+	if _, run, err := channelmcp.StartWatch(out, "imprint"); !run || err != nil {
+		return err
+	}
 	session := harness.FromEnv().SessionID
 	if session == "" {
 		return errors.New("no session id (not under Claude Code or pi); nothing to watch")
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return channel.Watch(ctx, tools.StateDir("imprint"), session, out, errw)
+	return channel.Watch(ctx, dir, session, out, errw)
 }

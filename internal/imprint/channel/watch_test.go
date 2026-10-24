@@ -54,7 +54,7 @@ func TestChannelSpoolsOnlyUnderClaudeCode(t *testing.T) {
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			if got != `{"content":"logged in as demo-user","meta":{"op":"imprint_login"}}`+"\n" {
+			if got != `{"text":"imprint event op=imprint_login\nlogged in as demo-user","content":"logged in as demo-user","meta":{"op":"imprint_login"}}`+"\n" {
 				t.Fatalf("spool = %q", got)
 			}
 			select {

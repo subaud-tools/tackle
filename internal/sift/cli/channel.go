@@ -44,9 +44,10 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 
 var watchFlags = flags("watch", "sift watch",
 	"Registers the session with sift serve and prints each of the user's Sends for it as one\n"+
-		"JSON line {\"content\": ..., \"meta\": {...}} on stdout. The sift plugin's mod runs it for\n"+
-		"a Claude Code session and starts a turn with each line. Logs go to stderr. Runs until\n"+
-		"signalled.",
+		"JSON line {\"text\": ..., \"content\": ..., \"meta\": {...}} on stdout. The sift plugin's mod\n"+
+		"runs it for a Claude Code session and starts a turn with each line's text. Logs go to\n"+
+		"stderr. Runs until signalled. In a session pi's claude-bridge runs, it prints\n"+
+		"{\"stop\": ...} and exits 0.",
 	nil)
 
 // runWatch is `sift watch`: the channel's presence and wait loop, printing
@@ -63,8 +64,20 @@ func runWatch(args []string, out, errw io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	client := channel.NewClient(func() (serve.Advert, error) { return serve.Start(executable(), 0) })
+	return watch(ctx, out, errw, client)
+}
+
+// watch is runWatch after its flags, until ctx ends, with the client to
+// serve passed in so a test can run it.
+func watch(ctx context.Context, out, errw io.Writer, client *channel.Client) error {
+	// In a bridge child this prints the stop line and the mod never restarts
+	// watch: the hosting pi session's channel delivers the user's decisions.
+	lines, run, err := channelmcp.StartWatch(out, "sift")
+	if !run || err != nil {
+		return err
+	}
 	ch := channel.New(channel.FromEnv(), client, version.Number())
 	ch.Log = errw
-	ch.Push = channelmcp.NewLines(out)
+	ch.Push = lines
 	return ch.Watch(ctx)
 }

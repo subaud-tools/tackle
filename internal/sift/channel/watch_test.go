@@ -80,7 +80,7 @@ func TestWatchPrintsASendAsOneLine(t *testing.T) {
 	watch := New(id, wcl, "test")
 	watch.Log = e.logs
 	watch.Retry, watch.Presence, watch.Poll = 50*time.Millisecond, 200*time.Millisecond, time.Second
-	watch.Push = channelmcp.NewLines(w)
+	watch.Push = channelmcp.NewLinesFor(w, "sift")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = watch.Watch(ctx); close(done) }()

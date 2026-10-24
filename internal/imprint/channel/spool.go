@@ -55,7 +55,8 @@ func SpoolFile(dir, session string) (string, error) {
 }
 
 // Spool is a channel's spool file: each Notify appends one whole JSON line,
-// {"content": ..., "meta": {...}}, in one write to a file opened for append.
+// {"text": ..., "content": ..., "meta": {...}}, in one write to a file opened
+// for append.
 type Spool struct {
 	path  string
 	f     *os.File
@@ -114,7 +115,7 @@ func OpenSpool(dir, session string) (*Spool, error) {
 			_ = f.Close()
 			continue
 		}
-		return &Spool{path: path, f: f, lines: channelmcp.NewLines(f)}, nil
+		return &Spool{path: path, f: f, lines: channelmcp.NewLinesFor(f, "imprint")}, nil
 	}
 	return nil, fmt.Errorf("spool %s keeps changing under this channel", path)
 }
