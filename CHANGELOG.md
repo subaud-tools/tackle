@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.4.4] - 2026-10-24
+
+### Fixed
+- Two cull pages on different ports can stay signed in in the same browser: the sign-in cookie is named per port (tools-common v0.22.0).
+
+## [sift 0.3.4] - 2026-10-24
+
+### Fixed
+- Two sift pages on different ports can stay signed in in the same browser: the sign-in cookie is named per port (tools-common v0.22.0).
+
+## [imprint 0.2.3] - 2026-10-24
+
+### Fixed
+- Two imprint pages on different ports can stay signed in in the same browser: the sign-in cookie is named per port (tools-common v0.22.0).
+
 ## [cull 0.4.3] - 2026-10-23
 
 ### Changed
