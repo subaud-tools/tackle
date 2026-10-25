@@ -8,8 +8,27 @@ import (
 	"testing"
 )
 
-// scanLine builds one list-panes -a line in scanFormat()'s column order.
-func scanLine(f ...string) string { return strings.Join(f, "\x1f") }
+// scanLine builds one list-panes -a line in scanFormat()'s column order, for
+// a pane in its session's current window.
+func scanLine(f ...string) string { return scanLineWin("1", f...) }
+
+// scanLineWin is scanLine with window_active, the last column, given.
+func scanLineWin(active string, f ...string) string {
+	return strings.Join(append(f, active), "\x1f")
+}
+
+// The main pane comes from the session's current window, as list-panes -t
+// <session> gave it: a long job's window must not supply the agent or folder.
+func TestParseScanCurrentWindowOnly(t *testing.T) {
+	out := strings.Join([]string{
+		scanLineWin("0", "a/w", "1", "0", "99", "%9", "go", "/job", "0", "900", "conv", "pi", "lab"),
+		scanLineWin("1", "a/w", "1", "0", "40", "%1", "node", "/agent", "0", "100", "conv", "pi", "lab"),
+	}, "\n")
+	got := parseScan(out)
+	if len(got) != 1 || got[0].Pane != "%1" || got[0].Dir != "/agent" || got[0].Command != "node" {
+		t.Fatalf("parseScan = %+v, want the current window's pane %%1", got)
+	}
+}
 
 func TestParseScanGroupsPanesBySession(t *testing.T) {
 	out := strings.Join([]string{

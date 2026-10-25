@@ -18,8 +18,10 @@ type ScannedSession struct {
 
 // scanFormat is the list-panes -a format ScanServer reads, one pane per line.
 // Fields are separated by \x1f so an empty one (an unset option, a blank
-// command) never shifts the columns; see mainPaneCmd. A function, because the
-// option names come from the environment.
+// command) never shifts the columns; see mainPaneCmd. window_active, last,
+// keeps the main pane in the session's current window, as list-panes -t
+// <session> did. A function, because the option names come from the
+// environment.
 func scanFormat() string {
 	return strings.Join([]string{
 		"#{session_name}",
@@ -34,10 +36,11 @@ func scanFormat() string {
 		"#{@harness_session}",
 		"#{" + AgentOption() + "}",
 		"#{" + LabelOption() + "}",
+		"#{window_active}",
 	}, "\x1f")
 }
 
-const scanFields = 12
+const scanFields = 13
 
 // ScanServer reads socket's sessions with one `list-panes -a` call.
 // A server that is not running returns the tmux error.
@@ -50,7 +53,8 @@ func ScanServer(socket string) ([]ScannedSession, error) {
 }
 
 // parseScan turns list-panes -a output in scanFormat() into sessions, in
-// first-seen order, choosing each session's main pane with pickMainPane's rule.
+// first-seen order, choosing each session's main pane in its current window
+// with pickMainPane's rule.
 func parseScan(out string) []ScannedSession {
 	type best struct{ left, height int }
 	var sessions []ScannedSession
@@ -58,7 +62,7 @@ func parseScan(out string) []ScannedSession {
 	var bests []best
 	for _, ln := range splitLines(out) {
 		f := strings.Split(ln, "\x1f")
-		if len(f) < scanFields || f[0] == "" {
+		if len(f) < scanFields || f[0] == "" || f[12] != "1" {
 			continue
 		}
 		l, h := atoi(f[2]), atoi(f[3])
