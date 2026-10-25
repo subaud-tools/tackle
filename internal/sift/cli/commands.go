@@ -4,6 +4,7 @@ import (
 	"io"
 
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/channelmcp"
 )
 
 func commands(stdin io.Reader) []tools.Command {
@@ -63,6 +64,7 @@ func commands(stdin io.Reader) []tools.Command {
 			Summary:  "print the user's Sends as JSON lines: the Claude Code plugin's feed",
 			NewFlags: watchFlags, Run: runWatch,
 		},
+		channelmcp.ReportCommand(deliverReport),
 		{
 			Name: "apply", Group: "review", Synopsis: "[--round N] [--dry-run] [--json]",
 			Summary:  "write each approved file whole, a branch per repo; a pull request with gh",
@@ -80,3 +82,9 @@ func commands(stdin io.Reader) []tools.Command {
 		},
 	}
 }
+
+// deliverReport is `sift report`'s delivery, which the Claude Code plugin's
+// mod runs. It does nothing: tackle's tools set no report token
+// (channelmcp.MetaReport), so there is nothing to deliver. It is mounted so
+// the regenerated mod never calls a command the binary lacks.
+func deliverReport(string, channelmcp.ReportEvent, string) error { return nil }

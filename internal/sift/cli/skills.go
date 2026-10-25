@@ -6,6 +6,7 @@ import (
 
 	"github.com/subaud-tools/tackle/skills"
 	tools "github.com/subaud-tools/tools-common"
+	commonskills "github.com/subaud-tools/tools-common/skills"
 )
 
 var skillsFlags = flags("skills", "sift skills install [--agent NAME]…",
@@ -27,5 +28,9 @@ func runSkills(args []string, out, errw io.Writer) error {
 	if len(pos) != 1 || pos[0] != "install" {
 		return tools.UsageError{Msg: "expected: sift skills install [--agent NAME]…"}
 	}
-	return skills.Install("sift", *fs.Lookup("agent").Value.(*roots), out, errw)
+	body, err := skills.FS.ReadFile("sift/SKILL.md")
+	if err != nil {
+		return tools.Exitf(2, "%v", err)
+	}
+	return commonskills.Install("sift", body, *fs.Lookup("agent").Value.(*roots), out, errw)
 }

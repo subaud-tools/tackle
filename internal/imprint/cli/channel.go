@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -13,10 +14,12 @@ import (
 	"github.com/subaud-tools/tackle/internal/imprint/ops"
 	"github.com/subaud-tools/tackle/internal/imprint/registry"
 	"github.com/subaud-tools/tackle/internal/version"
+	"github.com/subaud-tools/tackle/skills"
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/channelmcp"
 	"github.com/subaud-tools/tools-common/harness"
 	"github.com/subaud-tools/tools-common/localweb"
+	commonskills "github.com/subaud-tools/tools-common/skills"
 )
 
 var channelFlags = flags("channel", "imprint channel",
@@ -40,6 +43,7 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 		if len(pos) > 0 {
 			return tools.UsageError{Msg: "channel takes no arguments"}
 		}
+		refreshSkill(errw)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		o := &ops.Ops{
@@ -50,6 +54,24 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 		ch := channel.ForSession(o, version.Number(), tools.StateDir("imprint"))
 		ch.Log = errw
 		return ch.Run(ctx, stdin, out)
+	}
+}
+
+// refreshSkill rewrites each installed copy of the imprint skill that differs
+// from the one this binary was built with, so the skill an agent reads
+// matches the binary it calls. It logs each path it rewrote; an error is
+// logged and the channel starts anyway.
+func refreshSkill(errw io.Writer) {
+	body, err := skills.FS.ReadFile("imprint/SKILL.md")
+	if err == nil {
+		var paths []string
+		paths, err = commonskills.Refresh("imprint", body)
+		for _, p := range paths {
+			_, _ = fmt.Fprintf(errw, "imprint channel: refreshed the imprint skill at %s\n", p)
+		}
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(errw, "imprint channel: refreshing the imprint skill: %v\n", err)
 	}
 }
 

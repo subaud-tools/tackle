@@ -7,6 +7,7 @@ import (
 
 	"github.com/subaud-tools/tackle/skills"
 	tools "github.com/subaud-tools/tools-common"
+	commonskills "github.com/subaud-tools/tools-common/skills"
 )
 
 type agents []string
@@ -33,5 +34,9 @@ func runSkills(args []string, out, errw io.Writer) error {
 	if len(pos) != 1 || pos[0] != "install" {
 		return tools.UsageError{Msg: "expected: imprint skills install [--agent NAME]…"}
 	}
-	return skills.Install("imprint", *fs.Lookup("agent").Value.(*agents), out, errw)
+	body, err := skills.FS.ReadFile("imprint/SKILL.md")
+	if err != nil {
+		return tools.Exitf(2, "%v", err)
+	}
+	return commonskills.Install("imprint", body, *fs.Lookup("agent").Value.(*agents), out, errw)
 }
