@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -10,8 +11,10 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/channel"
 	"github.com/subaud-tools/tackle/internal/sift/serve"
 	"github.com/subaud-tools/tackle/internal/version"
+	"github.com/subaud-tools/tackle/skills"
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/channelmcp"
+	commonskills "github.com/subaud-tools/tools-common/skills"
 )
 
 var channelFlags = flags("channel", "sift channel",
@@ -32,6 +35,7 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 		if len(pos) > 0 {
 			return tools.UsageError{Msg: "channel takes no arguments"}
 		}
+		refreshSkill(errw)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		client := channel.NewClient(func() (serve.Advert, error) { return serve.Start(executable(), 0) })
@@ -39,6 +43,24 @@ func runChannel(stdin io.Reader) func(args []string, out, errw io.Writer) error 
 		ch.Log = errw
 		ch.LookPath = lookPath
 		return ch.Run(ctx, stdin, out)
+	}
+}
+
+// refreshSkill rewrites each installed copy of the sift skill that differs
+// from the one this binary was built with, so the skill an agent reads
+// matches the binary it calls. It logs each path it rewrote; an error is
+// logged and the channel starts anyway.
+func refreshSkill(errw io.Writer) {
+	body, err := skills.FS.ReadFile("sift/SKILL.md")
+	if err == nil {
+		var paths []string
+		paths, err = commonskills.Refresh("sift", body)
+		for _, p := range paths {
+			_, _ = fmt.Fprintf(errw, "sift channel: refreshed the sift skill at %s\n", p)
+		}
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(errw, "sift channel: refreshing the sift skill: %v\n", err)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 // sift skills install hands its --agent flags to the shared installer
-// (skills.Install, tested in the skills package) for the sift skill.
+// (tools-common's skills.Install, tested there) for the sift skill.
 func TestSkillsInstall(t *testing.T) {
 	home := siftEnv(t)
 	want, err := skills.FS.ReadFile("sift/SKILL.md")
