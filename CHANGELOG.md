@@ -6,6 +6,23 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [sift 0.3.5] - 2026-10-24
+
+### Changed
+- When its channel starts, sift rewrites its installed agent skill wherever that copy is sift's own and differs from the one the binary carries, so the skill always matches the binary; no `sift skills install` after an upgrade. The installer is tools-common's `skills` package (v0.24.0).
+- The Claude Code plugin is regenerated on tools-common v0.24.0, and `sift report` is mounted with it.
+
+## [imprint 0.2.4] - 2026-10-24
+
+### Changed
+- When its channel starts, imprint rewrites its installed agent skill wherever that copy is imprint's own and differs from the one the binary carries; no `imprint skills install` after an upgrade. The installer is tools-common's `skills` package (v0.24.0).
+- The Claude Code plugin is regenerated on tools-common v0.24.0, and `imprint report` is mounted with it.
+
+## [cull 0.4.5] - 2026-10-24
+
+### Changed
+- The Claude Code plugin is regenerated on tools-common v0.24.0, and `cull report` is mounted with it.
+
 ## [cull 0.4.4] - 2026-10-24
 
 ### Fixed
