@@ -84,17 +84,24 @@ func AgentIn(socket, session string) (kind, state string) {
 	paneID, cmd := mainPaneCmd(socket, session)
 	kind = classifyAgent(cmd)
 	if kind == "" || kind == "shell" {
-		return kind, classifyState(kind, false, -1)
+		return kind, agentState(kind, false, 0, time.Now())
 	}
 	bell := Query(socket, paneID, "#{window_bell_flag}") == "1"
+	activity := int64(atoi(Query(socket, paneID, "#{window_activity}")))
+	return kind, agentState(kind, bell, activity, time.Now())
+}
+
+// agentState is AgentIn's state rule on fields already read: activity is the
+// window_activity epoch, 0 when absent.
+func agentState(kind string, bell bool, activity int64, now time.Time) string {
 	age := int64(-1)
 	// window_activity is the last-activity epoch (tmux 3.7b has no
 	// pane_activity format var — it renders empty, which is what regressed
 	// detection). Window-level is coarse but present and reliable.
-	if a := int64(atoi(Query(socket, paneID, "#{window_activity}"))); a > 0 {
-		age = time.Now().Unix() - a
+	if activity > 0 {
+		age = now.Unix() - activity
 	}
-	return kind, classifyState(kind, bell, age)
+	return classifyState(kind, bell, age)
 }
 
 // mainPane returns the leftmost (tie: tallest) pane's id and current command.
@@ -123,10 +130,16 @@ func pickMainPane(out string) (id, cmd string) {
 			continue
 		}
 		l, h := atoi(f[0]), atoi(f[1])
-		if l < bestLeft || (l == bestLeft && h > bestH) {
+		if betterPane(l, h, bestLeft, bestH) {
 			bestLeft, bestH = l, h
 			id, cmd = f[2], f[3]
 		}
 	}
 	return id, cmd
+}
+
+// betterPane reports whether a pane at (left, height) beats the best so far as
+// a session's main pane: leftmost, tie: tallest.
+func betterPane(left, height, bestLeft, bestHeight int) bool {
+	return left < bestLeft || (left == bestLeft && height > bestHeight)
 }

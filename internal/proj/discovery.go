@@ -1,5 +1,7 @@
 package proj
 
+import "time"
+
 // Session is a live tmux session discovered across the per-project servers.
 type Session struct {
 	Name, Socket, Dir, Agent, State string
@@ -7,34 +9,32 @@ type Session struct {
 }
 
 // LiveSessions returns every live session across all Servers(), enriched with
-// its working directory, agent kind/state, and muster attention counts.
+// its working directory, agent kind/state, and muster attention counts. Each
+// server is read with one ScanServer call.
 func LiveSessions() []Session {
 	counts := MusterCounts()
 	device := MusterDevice()
+	now := time.Now()
 	var out []Session
 	for _, sock := range Servers() {
-		names, err := Run(sock, "list-sessions", "-F", "#{session_name}")
+		scanned, err := ScanServer(sock)
 		if err != nil {
 			continue
 		}
-		for _, name := range splitLines(names) {
-			if name == "" {
-				continue
-			}
-			dir := Query(sock, name, "#{pane_current_path}")
-			agent, state := AgentIn(sock, name)
+		for _, s := range scanned {
+			agent := classifyAgent(s.Command)
+			state := agentState(agent, s.Bell, s.Activity, now)
 			// A recorded @proj_agent wins over pane process detection: the pane's
 			// foreground process may be a launcher (e.g. hail running the shim),
-			// not the agent itself. State still comes from AgentIn.
-			if rec := Query(sock, name, "#{"+AgentOption()+"}"); rec != "" {
-				agent = rec
+			// not the agent itself. State still comes from the pane.
+			if s.Agent != "" {
+				agent = s.Agent
 			}
-			label := Query(sock, name, "#{"+LabelOption()+"}")
-			a := AttentionFor(counts, device, AliasFor(sock, label))
+			a := AttentionFor(counts, device, AliasFor(sock, s.Label))
 			out = append(out, Session{
-				Name:           name,
+				Name:           s.Name,
 				Socket:         sock,
-				Dir:            dir,
+				Dir:            s.Dir,
 				Agent:          agent,
 				State:          state,
 				Unread:         a.Unread,

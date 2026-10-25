@@ -118,33 +118,28 @@ func Snapshot(socket string) error {
 // from where the conversation's transcript lives, else from what the main
 // pane is running, else from what proj recorded launching.
 func LiveEntries(socket string, t Transcripts) []LiveEntry {
-	names, err := Run(socket, "list-sessions", "-F", "#{session_name}")
+	scanned, err := ScanServer(socket)
 	if err != nil {
 		return nil
 	}
 	project := ProjectFromSocket(socket)
 	var out []LiveEntry
-	for _, name := range splitLines(names) {
-		if name == "" {
-			continue
-		}
-		pane, cmd := mainPaneCmd(socket, name)
-		conv := Query(socket, name, "#{@harness_session}")
-		agent, ok := t.Locate(conv)
+	for _, s := range scanned {
+		agent, ok := t.Locate(s.Conversation)
 		if !ok {
-			switch k := classifyAgent(cmd); k {
+			switch k := classifyAgent(s.Command); k {
 			case "pi", "claude", "cursor":
 				agent = k
 			default:
-				agent = Query(socket, name, "#{"+AgentOption()+"}")
+				agent = s.Agent
 			}
 		}
-		out = append(out, LiveEntry{Name: name, Entry: Entry{
+		out = append(out, LiveEntry{Name: s.Name, Entry: Entry{
 			Socket:       socket,
 			Project:      project,
-			Dir:          Query(socket, pane, "#{pane_current_path}"),
+			Dir:          s.Dir,
 			Agent:        agent,
-			Conversation: conv,
+			Conversation: s.Conversation,
 		}})
 	}
 	return out

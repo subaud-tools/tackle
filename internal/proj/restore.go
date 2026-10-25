@@ -1,9 +1,6 @@
 package proj
 
-import (
-	"sort"
-	"strings"
-)
+import "sort"
 
 // SavedSession is one record entry as the restore view sees it: where it sat
 // in the saved layout and what state it is in now.
@@ -29,18 +26,14 @@ type LiveState struct {
 func CurrentLiveState() LiveState {
 	st := LiveState{Running: map[string]bool{}, Attached: map[string]bool{}}
 	for _, sock := range Servers() {
-		out, err := Run(sock, "list-sessions", "-F", "#{session_name}\x1f#{session_attached}")
+		scanned, err := ScanServer(sock)
 		if err != nil {
 			continue
 		}
-		for _, ln := range splitLines(out) {
-			name, attached, _ := strings.Cut(ln, "\x1f")
-			if name == "" {
-				continue
-			}
-			st.Running[name] = true
-			if atoi(attached) > 0 {
-				st.Attached[name] = true
+		for _, s := range scanned {
+			st.Running[s.Name] = true
+			if s.Attached {
+				st.Attached[s.Name] = true
 			}
 		}
 	}
