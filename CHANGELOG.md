@@ -6,6 +6,15 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.10.0] - 2026-10-25
+
+### Changed
+- proj reads each tmux server with one `list-panes -a` call instead of several queries per session, so the picker's running sessions, `proj list` and each snapshot take a fraction of a second instead of seconds.
+- Conversation lookups read the pi and Claude transcript folders once per run instead of once per session.
+
+### Fixed
+- tmux servers proj starts get a file limit of 8,192 instead of the login default of 256. At 256 a busy server ran out of file handles and could not start its hook jobs, which showed as `proj __snapshot … returned 1` in the pane. Servers already running keep their old limit until they restart.
+
 ## [sift 0.3.5] - 2026-10-24
 
 ### Changed

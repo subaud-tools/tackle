@@ -59,14 +59,55 @@ func TestLocateRejectsUnsafeID(t *testing.T) {
 func TestDefaultTranscriptsEnv(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "/p")
 	t.Setenv("CLAUDE_CONFIG_DIR", "/c")
-	if got := DefaultTranscripts(); got != (Transcripts{PiRoot: "/p", ClaudeRoot: "/c"}) {
+	roots := func(t Transcripts) Transcripts { return Transcripts{PiRoot: t.PiRoot, ClaudeRoot: t.ClaudeRoot} }
+	if got := roots(DefaultTranscripts()); got != (Transcripts{PiRoot: "/p", ClaudeRoot: "/c"}) {
 		t.Fatalf("with env: %+v", got)
 	}
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", "/h")
 	want := Transcripts{PiRoot: "/h/.pi/agent/sessions", ClaudeRoot: "/h/.claude"}
-	if got := DefaultTranscripts(); got != want {
+	if got := roots(DefaultTranscripts()); got != want {
 		t.Fatalf("defaults: %+v want %+v", got, want)
+	}
+}
+
+func TestTranscriptIndexMatchesSearch(t *testing.T) {
+	root := t.TempDir()
+	tr := Transcripts{PiRoot: filepath.Join(root, "pi"), ClaudeRoot: filepath.Join(root, "claude")}
+	touch(t, filepath.Join(tr.PiRoot, "a1", "20261025_x1.jsonl"))
+	touch(t, filepath.Join(tr.ClaudeRoot, "projects", "k", "x2.jsonl"))
+	touch(t, filepath.Join(tr.PiRoot, "a1", "20261025_x3.jsonl"))
+	touch(t, filepath.Join(tr.ClaudeRoot, "projects", "k", "x3.jsonl"))
+	cases := []struct {
+		id, agent string
+		ok        bool
+	}{
+		{"x1", "pi", true},
+		{"x2", "claude", true},
+		{"x3", "pi", true},
+		{"missing", "", false},
+		{"../etc", "", false},
+	}
+	for _, c := range cases {
+		agent, ok := tr.Locate(c.id)
+		if agent != c.agent || ok != c.ok {
+			t.Errorf("Locate(%q) = (%q, %v) want (%q, %v)", c.id, agent, ok, c.agent, c.ok)
+		}
+	}
+}
+
+func TestTranscriptIndexReadsOnce(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", filepath.Join(root, "pi"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
+	tr := DefaultTranscripts()
+	touch(t, filepath.Join(tr.PiRoot, "a1", "20261025_x1.jsonl"))
+	if _, ok := tr.Locate("x1"); !ok {
+		t.Fatal("Locate(x1) not found")
+	}
+	touch(t, filepath.Join(tr.PiRoot, "a1", "20261025_late.jsonl"))
+	if agent, ok := tr.Locate("late"); ok {
+		t.Fatalf("Locate(late) = (%q, true) after the index was built; want the cached read", agent)
 	}
 }

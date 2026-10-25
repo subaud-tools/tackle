@@ -32,9 +32,12 @@ func Run(socket string, args ...string) (string, error) {
 	if socket != "" {
 		full = append([]string{"-L", socket}, args...)
 	}
-	out, err := exec.Command("tmux", full...).Output()
+	out, err := execCommand("tmux", full...).Output()
 	return strings.TrimSuffix(string(out), "\n"), err
 }
+
+// execCommand is Run's exec seam, so tests can count tmux calls.
+var execCommand = exec.Command
 
 // Query runs `display-message -p -t <target> <format>` on socket and returns
 // the value, or "" on any failure (dead socket, missing session, no tmux).

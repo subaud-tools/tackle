@@ -29,7 +29,7 @@ func TestRunNewCommandExit3OnReuse(t *testing.T) {
 	sock := proj.SocketFor(projName)
 	defer func() { _, _ = proj.Run(sock, "kill-server") }()
 
-	out1, code1 := captureStdout(t, []string{"new", projName + "/w", "--agent", "none", "--json", "--command", "sleep", "30"})
+	out1, code1 := captureStdout(t, []string{"new", projName + "/w", "--agent", "none", "--no-sidebar", "--json", "--command", "sleep", "30"})
 	if code1 != 0 {
 		t.Fatalf("first new: exit %d, want 0; out=%s", code1, out1)
 	}
