@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/subaud-tools/tools-common/channelmcp"
 	"github.com/subaud-tools/tools-common/msgstate"
@@ -43,7 +44,7 @@ func sender(t *testing.T, s *Store) (int64, func() Send) {
 func claimed(t *testing.T, s *Store, project int64, send func() Send, session string) Send {
 	t.Helper()
 	send()
-	sd, ok, err := s.ClaimSend(ctx, project, session, []string{"a", "b"})
+	sd, ok, err := s.ClaimSend(ctx, project, session, []string{"a", "b"}, time.Now())
 	if err != nil || !ok {
 		t.Fatalf("claim %+v %v %v", sd, ok, err)
 	}
@@ -115,7 +116,7 @@ func TestClaimLeavesTheSendSentWithAToken(t *testing.T) {
 	s, _ := open(t)
 	project, send := sender(t, s)
 	send()
-	sd, ok, err := s.ClaimSend(ctx, project, "a", []string{"a"})
+	sd, ok, err := s.ClaimSend(ctx, project, "a", []string{"a"}, time.Now())
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
 	}
@@ -128,17 +129,34 @@ func TestClaimLeavesTheSendSentWithAToken(t *testing.T) {
 }
 
 // A session that claimed a send and died before it landed does not strand
-// it: once the claimer is gone, another session takes it, with a new token.
+// it: once the claimer is gone and the claim is older than PresenceTTL,
+// another session takes it, with a new token.
 func TestASentSendWhoseClaimerIsGoneIsClaimedAgain(t *testing.T) {
 	s, _ := open(t)
 	project, send := sender(t, s)
 	first := claimed(t, s, project, send, "a")
-	if _, ok, _ := s.ClaimSend(ctx, project, "b", []string{"a", "b"}); ok {
+	if _, ok, _ := s.ClaimSend(ctx, project, "b", []string{"a", "b"}, time.Now()); ok {
 		t.Fatal("b took a send its present claimer holds")
 	}
-	sd, ok, err := s.ClaimSend(ctx, project, "b", []string{"b"})
+	sd, ok, err := s.ClaimSend(ctx, project, "b", []string{"b"}, time.Now().Add(PresenceTTL+time.Second))
 	if err != nil || !ok || sd.ID != first.ID || sd.ClaimedBy != "b" || sd.Claim == first.Claim {
 		t.Fatalf("reclaim %+v %v %v", sd, ok, err)
+	}
+}
+
+// A session whose presence snapshot is older than another's fresh claim
+// does not take the send from it: b registers and claims, then a claims
+// with a snapshot taken before b was there. a gets nothing, so cull_apply
+// does not run twice.
+func TestAStaleSnapshotDoesNotReclaimAFreshClaim(t *testing.T) {
+	s, _ := open(t)
+	project, send := sender(t, s)
+	send()
+	if _, ok, err := s.ClaimSend(ctx, project, "b", []string{"a", "b"}, time.Now()); err != nil || !ok {
+		t.Fatalf("b's claim %v %v", ok, err)
+	}
+	if got, ok, _ := s.ClaimSend(ctx, project, "a", []string{"a"}, time.Now()); ok {
+		t.Fatalf("a reclaimed b's fresh claim: %+v", got)
 	}
 }
 
@@ -149,7 +167,7 @@ func TestAWithAgentSendIsNeverClaimedAgain(t *testing.T) {
 	project, send := sender(t, s)
 	sd := claimed(t, s, project, send, "a")
 	report(t, s, "a", channelmcp.ReportLanded, sd.Claim)
-	if got, ok, _ := s.ClaimSend(ctx, project, "b", []string{"b"}); ok {
+	if got, ok, _ := s.ClaimSend(ctx, project, "b", []string{"b"}, time.Now().Add(PresenceTTL+time.Second)); ok {
 		t.Fatalf("claimed a send with the agent: %+v", got)
 	}
 }

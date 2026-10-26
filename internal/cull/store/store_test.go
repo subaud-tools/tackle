@@ -418,26 +418,26 @@ func TestClaimSendRules(t *testing.T) {
 	// The store does not filter on the send's owner: serve decides who calls.
 	// A send made for A is claimable by B (the owner has since moved).
 	present := []string{"A", "B", "C"}
-	got, ok, err := s.ClaimSend(ctx, p.ID, "B", present)
+	got, ok, err := s.ClaimSend(ctx, p.ID, "B", present, time.Now())
 	if err != nil || !ok || got.ID != sd.ID || got.ClaimedBy != "B" || got.ClaimedAt.IsZero() {
 		t.Fatalf("%+v %v %v", got, ok, err)
 	}
-	if _, ok, _ := s.ClaimSend(ctx, p.ID, "A", present); ok {
+	if _, ok, _ := s.ClaimSend(ctx, p.ID, "A", present, time.Now()); ok {
 		t.Fatal("claimed twice")
 	}
 	sd2 := send(1, "A")
-	got, ok, _ = s.ClaimSend(ctx, p.ID, "A", present)
+	got, ok, _ = s.ClaimSend(ctx, p.ID, "A", present, time.Now())
 	if !ok || got.ID != sd2.ID || got.ClaimedBy != "A" {
 		t.Fatalf("%+v %v", got, ok)
 	}
 	// Another project's sends are never taken.
 	q, _ := s.Project(ctx, "/y")
-	if _, ok, _ := s.ClaimSend(ctx, q.ID, "B", present); ok {
+	if _, ok, _ := s.ClaimSend(ctx, q.ID, "B", present, time.Now()); ok {
 		t.Fatal("claimed in another project")
 	}
 	// Oldest first.
 	a := send(2, "")
-	if _, ok, _ := s.ClaimSend(ctx, p.ID, "C", present); !ok {
+	if _, ok, _ := s.ClaimSend(ctx, p.ID, "C", present, time.Now()); !ok {
 		t.Fatalf("ownerless send %d not claimed", a.ID)
 	}
 }
@@ -460,7 +460,7 @@ func TestClaimSendOneWinner(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, ok, err := s.ClaimSend(ctx, p.ID, fmt.Sprintf("s%d", i), present); err != nil {
+			if _, ok, err := s.ClaimSend(ctx, p.ID, fmt.Sprintf("s%d", i), present, time.Now()); err != nil {
 				t.Error(err)
 			} else if ok {
 				wins.Add(1)
@@ -498,7 +498,7 @@ func TestOwnerAndSendsSurviveReopen(t *testing.T) {
 	if q.OwnerSession != "sess" || q.OwnerLabel != "pi: x" {
 		t.Fatalf("%+v", q)
 	}
-	if _, ok, _ := s.ClaimSend(ctx, p.ID, "sess", []string{"sess"}); !ok {
+	if _, ok, _ := s.ClaimSend(ctx, p.ID, "sess", []string{"sess"}, time.Now()); !ok {
 		t.Fatal("send lost across reopen")
 	}
 }
@@ -553,7 +553,7 @@ func TestUpgradeFromV1(t *testing.T) {
 	if err != nil || sd.Counts.Cut != 1 {
 		t.Fatalf("%+v %v", sd, err)
 	}
-	got, ok, err := s.ClaimSend(ctx, p.ID, "sess", []string{"sess"})
+	got, ok, err := s.ClaimSend(ctx, p.ID, "sess", []string{"sess"}, time.Now())
 	if err != nil || !ok || got.ID != sd.ID {
 		t.Fatalf("%+v %v %v", got, ok, err)
 	}

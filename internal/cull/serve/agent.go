@@ -23,8 +23,9 @@ import (
 	"github.com/subaud-tools/tools-common/msgstate"
 )
 
-// presenceTTL is how long a session counts as present after its last check-in.
-const presenceTTL = 90 * time.Second
+// presenceTTL is how long a session counts as present after its last
+// check-in; the store owns the value, since ClaimSend uses it too.
+const presenceTTL = store.PresenceTTL
 
 // maxWait caps one long poll.
 const maxWait = 60
@@ -247,7 +248,7 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 			if owner, present := s.ownerPresent(p); present && owner != id {
 				continue // the present owner takes this project's Sends
 			}
-			sd, ok, err := s.st.ClaimSend(r.Context(), p.ID, id, s.presentSessions())
+			sd, ok, err := s.st.ClaimSend(r.Context(), p.ID, id, s.presentSessions(), s.clock())
 			if err != nil {
 				if r.Context().Err() != nil {
 					return

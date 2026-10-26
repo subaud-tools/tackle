@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/subaud-tools/tackle/internal/sift/row"
 )
@@ -166,17 +167,17 @@ func TestSendCountsAndClaims(t *testing.T) {
 		t.Fatalf("unclaimed %d", len(und))
 	}
 	// sess-1 owns the first send and is present: sess-2 can't take it.
-	if got, ok, err := s.ClaimSend(ctx, "sess-2", []string{"sess-1", "sess-2"}); err != nil || !ok || got.ID == sd.ID {
+	if got, ok, err := s.ClaimSend(ctx, "sess-2", []string{"sess-1", "sess-2"}, time.Now()); err != nil || !ok || got.ID == sd.ID {
 		t.Fatalf("claim of a present owner's send %+v %v %v", got, ok, err)
 	}
-	got, ok, err := s.ClaimSend(ctx, "sess-2", []string{"sess-2"})
+	got, ok, err := s.ClaimSend(ctx, "sess-2", []string{"sess-2"}, time.Now())
 	if err != nil || !ok || got.ID != sd.ID || got.ClaimedBy != "sess-2" {
 		t.Fatalf("claim %+v %v %v", got, ok, err)
 	}
 	if und, _ := s.Unclaimed(ctx); len(und) != 0 {
 		t.Fatalf("unclaimed after two claims %d", len(und))
 	}
-	if _, ok, _ := s.ClaimSend(ctx, "sess-2", []string{"sess-2"}); ok {
+	if _, ok, _ := s.ClaimSend(ctx, "sess-2", []string{"sess-2"}, time.Now()); ok {
 		t.Fatal("claimed a claimed send")
 	}
 	// Sent decisions say so.

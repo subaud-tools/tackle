@@ -412,17 +412,24 @@ func scanSend(r scanner) (Send, error) {
 	return sd, nil
 }
 
+// PresenceTTL is how long a session counts as present after its last
+// check-in. serve uses it to decide presence, and ClaimSend to decide that a
+// claim by a session not in present is old enough to take back.
+const PresenceTTL = 90 * time.Second
+
 // ClaimSend hands session the oldest send it may take: one whose recorded
 // owner is session, has no owner, or whose owner is not in present (the
 // sessions serve sees connected). A send is claimable while no session has
-// claimed it, or while it is still sent and its claimer is not in present:
-// a session that died before the send landed does not strand it. A send
-// that reached the agent is never handed out again. The claim records the
-// session, the time and a new report token, and leaves the send sent: the
+// claimed it, or while it is still sent, its claimer is not in present and
+// it was claimed more than PresenceTTL before now: a session that died
+// before the send landed does not strand it, and a caller whose present was
+// read before another session claimed does not take the send from it. A
+// send that reached the agent is never handed out again. The claim records
+// the session, now and a new report token, and leaves the send sent: the
 // harness's landed report moves it. Picking and claiming it is one
 // statement, so two claimers never both get it; the round's revision moves
 // with it, for the page. ok is false when there is none.
-func (s *Store) ClaimSend(ctx context.Context, session string, present []string) (Send, bool, error) {
+func (s *Store) ClaimSend(ctx context.Context, session string, present []string, now time.Time) (Send, bool, error) {
 	var sd Send
 	found := true
 	// notIn is "col is not one of present"; with nobody present, every
@@ -433,15 +440,18 @@ func (s *Store) ClaimSend(ctx context.Context, session string, present []string)
 		}
 		return col + " NOT IN (?" + strings.Repeat(",?", len(present)-1) + ")"
 	}
-	claimable := `(delivered_to IS NULL OR (state = 'sent' AND ` + notIn("delivered_to") + `))`
-	args := []any{session, time.Now().UnixMilli(), reportToken()}
+	claimable := `(delivered_to IS NULL OR (state = 'sent' AND ` + notIn("delivered_to") + ` AND delivered_at <= ?))`
+	stale := now.Add(-PresenceTTL).UnixMilli()
+	args := []any{session, now.UnixMilli(), reportToken()}
 	addPresent := func() {
 		for _, p := range present {
 			args = append(args, p)
 		}
 	}
 	addPresent()
+	args = append(args, stale)
 	addPresent()
+	args = append(args, stale)
 	args = append(args, session)
 	addPresent()
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {

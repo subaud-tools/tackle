@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/subaud-tools/tackle/internal/sift/discover"
 	"github.com/subaud-tools/tackle/internal/sift/rec"
@@ -145,7 +146,7 @@ func seedSends(ctx context.Context, dbPath string, roundID int64) error {
 		if step == nil {
 			continue
 		}
-		sd, ok, err := st.ClaimSend(ctx, who, []string{who})
+		sd, ok, err := st.ClaimSend(ctx, who, []string{who}, time.Now())
 		if err != nil || !ok {
 			return fmt.Errorf("claim: %v %w", ok, err)
 		}

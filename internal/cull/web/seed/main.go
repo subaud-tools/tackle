@@ -151,7 +151,7 @@ func SeedSends(ctx context.Context, path string, data []byte, projectID, runID i
 		if step == nil {
 			continue
 		}
-		sd, ok, err := st.ClaimSend(ctx, projectID, who, []string{who})
+		sd, ok, err := st.ClaimSend(ctx, projectID, who, []string{who}, time.Now())
 		if err != nil || !ok {
 			return fmt.Errorf("claim: %v %w", ok, err)
 		}

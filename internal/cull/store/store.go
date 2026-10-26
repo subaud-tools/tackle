@@ -593,18 +593,25 @@ func scanSend(r scanner) (Send, error) {
 	return sd, nil
 }
 
+// PresenceTTL is how long a session counts as present after its last
+// check-in. serve uses it to decide presence, and ClaimSend to decide that a
+// claim by a session not in present is old enough to take back.
+const PresenceTTL = 90 * time.Second
+
 // ClaimSend hands session the oldest send of the project it may take,
-// recording the session, the time and a new report token in the same
-// statement, so concurrent claimers never both get one. A send is claimable
-// while no session has claimed it, or while it is still sent and its
-// claimer is not in present (the sessions serve sees connected): a session
-// that died before the send landed does not strand it. A send that reached
+// recording the session, now and a new report token in the same statement,
+// so concurrent claimers never both get one. A send is claimable while no
+// session has claimed it, or while it is still sent, its claimer is not in
+// present (the sessions serve sees connected) and it was claimed more than
+// PresenceTTL before now: a session that died before the send landed does
+// not strand it, and a caller whose present was read before another session
+// claimed does not take the send from it. A send that reached
 // the agent is never handed out again, so cull_apply never runs twice on
 // the same answers. The claim leaves the send sent: the harness's landed
 // report moves it. It does not look at the send's owner: serve decides who
 // may call (the project's current owner when present, else any present
 // session of the project). ok is false when there is none.
-func (s *Store) ClaimSend(ctx context.Context, projectID int64, session string, present []string) (Send, bool, error) {
+func (s *Store) ClaimSend(ctx context.Context, projectID int64, session string, present []string, now time.Time) (Send, bool, error) {
 	var sd Send
 	found := true
 	// gone is "the claimer is not one of present"; with nobody present,
@@ -613,13 +620,14 @@ func (s *Store) ClaimSend(ctx context.Context, projectID int64, session string, 
 	if len(present) > 0 {
 		gone = "delivered_to NOT IN (?" + strings.Repeat(",?", len(present)-1) + ")"
 	}
-	claimable := `project_id = ? AND (delivered_to IS NULL OR (state = 'sent' AND ` + gone + `))`
-	args := []any{session, time.Now().UnixMilli(), reportToken()}
+	claimable := `project_id = ? AND (delivered_to IS NULL OR (state = 'sent' AND ` + gone + ` AND delivered_at <= ?))`
+	args := []any{session, now.UnixMilli(), reportToken()}
 	for range 2 {
 		args = append(args, projectID)
 		for _, p := range present {
 			args = append(args, p)
 		}
+		args = append(args, now.Add(-PresenceTTL).UnixMilli())
 	}
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
 		var err error
