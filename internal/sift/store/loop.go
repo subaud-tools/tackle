@@ -420,8 +420,8 @@ func scanSend(r scanner) (Send, error) {
 // that reached the agent is never handed out again. The claim records the
 // session, the time and a new report token, and leaves the send sent: the
 // harness's landed report moves it. Picking and claiming it is one
-// statement, so two claimers never both get it. ok is false when there is
-// none.
+// statement, so two claimers never both get it; the round's revision moves
+// with it, for the page. ok is false when there is none.
 func (s *Store) ClaimSend(ctx context.Context, session string, present []string) (Send, bool, error) {
 	var sd Send
 	found := true
@@ -453,7 +453,10 @@ func (s *Store) ClaimSend(ctx context.Context, session string, present []string)
 			found = false
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return bump(ctx, tx, sd.Round) // the page shows who has it
 	})
 	if err != nil {
 		return Send{}, false, err

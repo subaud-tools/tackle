@@ -95,10 +95,12 @@ func TestMigrateGivesEachSendItsState(t *testing.T) {
 }
 
 // A claim records who took the send, with a fresh report token, and leaves
-// it sent: only the harness's landed report says it reached the agent.
+// it sent: only the harness's landed report says it reached the agent. The
+// round's revision moves, so the page stops saying no session has it.
 func TestClaimLeavesTheSendSentWithAToken(t *testing.T) {
 	s, _ := open(t)
 	sendOne(t, s, "")
+	_, rev0, _ := s.Latest(ctx)
 	sd, ok, err := s.ClaimSend(ctx, "a", []string{"a"})
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
@@ -111,6 +113,9 @@ func TestClaimLeavesTheSendSentWithAToken(t *testing.T) {
 	}
 	if got := sendByID(t, s, sd.ID); got.Claim != sd.Claim || got.State != msgstate.Sent {
 		t.Errorf("stored %+v", got)
+	}
+	if _, rev, _ := s.Latest(ctx); rev <= rev0 {
+		t.Errorf("rev %d not past %d", rev, rev0)
 	}
 }
 
