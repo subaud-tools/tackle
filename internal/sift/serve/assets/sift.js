@@ -5,7 +5,8 @@ import {
   h as h3,
   initTheme,
   list,
-  live
+  live,
+  messagePill
 } from "/_kit/kit.js";
 
 // api.ts
@@ -266,6 +267,29 @@ function rowMeta(r) {
   if (r.decision.action === "edit") return `edited · ${verdictOf(r)}`;
   if (r.decision.action === "accept") return `accepted · ${r.verdict ?? ""}`;
   return "rejected";
+}
+var HELD_LINE = "the agent is mid-turn; it reads this when the turn ends";
+var NO_SESSION_LINE = "no session has it";
+function sendLine(s) {
+  switch (s.state) {
+    case "working":
+    case "answered":
+    case "declined":
+    case "failed":
+      return s.reply;
+    case "sent":
+      if (s.held) return HELD_LINE;
+      return s.claimed ? "" : NO_SESSION_LINE;
+    default:
+      return "";
+  }
+}
+function sentAgo(at, now) {
+  const min = Math.floor((now - Date.parse(at)) / 6e4);
+  if (!(min >= 1)) return "just now";
+  if (min < 60) return `${min} min ago`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h ago`;
+  return `${Math.floor(min / (24 * 60))} d ago`;
 }
 
 // files.ts
@@ -1564,7 +1588,9 @@ function parseRoute(hash) {
   }
 }
 function signature(r) {
-  return `${r.round?.id ?? 0}|${r.progress?.state}|${r.sends}|${r.applies.map((a) => a.repo + a.state).join(",")}|` + r.files.map((f) => {
+  return `${r.round?.id ?? 0}|${r.progress?.state}|${r.sends}|${r.applies.map((a) => a.repo + a.state).join(",")}|` + (r.recent_sends ?? []).map(
+    (x) => `${x.id}:${x.state}:${x.held ? 1 : 0}:${x.claimed ? 1 : 0}:${x.reply}`
+  ).join(";") + "|" + r.files.map((f) => {
     const d = f.decision;
     return `${f.key}:${f.fingerprint}:${d ? `${d.action}/${d.content?.length ?? 0}/${d.note ?? ""}/${d.sent ? 1 : 0}` : ""}`;
   }).join(";") + "|" + r.rows.map((x) => {
@@ -2018,6 +2044,39 @@ function boot() {
     lastView = vkey;
   }
   function overview() {
+    const doc = overviewDoc();
+    const sends = review?.recent_sends ?? [];
+    if (sends.length) doc.append(...sendsSection(sends));
+    return doc;
+  }
+  function sendsSection(sends) {
+    const now = Date.now();
+    return [
+      h3("div", { class: "kit-label" }, "sends"),
+      h3(
+        "ul",
+        { class: "sift-sends" },
+        sends.map(
+          (s) => h3(
+            "li",
+            { class: "sift-send", dataset: { send: String(s.id) } },
+            h3(
+              "span",
+              { class: "sift-send-what" },
+              [
+                s.counts.accept ? `${s.counts.accept} accepted` : "",
+                s.counts.edit ? `${s.counts.edit} edited` : "",
+                s.counts.reject ? `${s.counts.reject} rejected` : ""
+              ].filter(Boolean).join(" · ") || "nothing"
+            ),
+            h3("span", { class: "kit-muted" }, sentAgo(s.at, now)),
+            messagePill(s.state, sendLine(s))
+          )
+        )
+      )
+    ];
+  }
+  function overviewDoc() {
     if (perItem(review)) {
       const p2 = progress(review?.rows ?? []);
       if (!review?.rows.length)

@@ -122,6 +122,20 @@ interface ApplyRecord {
   last_detail?: string;
 }
 
+/** One of the round's newest sends (internal/sift/serve recentSendJSON):
+ * what it carried, where it stands, whether the harness holds it while the
+ * agent is mid-turn, whether a session claimed it, and the agent's working
+ * line or reply. */
+interface RecentSend {
+  id: number;
+  at: string;
+  counts: { accept: number; edit: number; reject: number };
+  state: import('/_kit/kit.js').MessageState;
+  held: boolean;
+  claimed: boolean;
+  reply: string;
+}
+
 interface Review {
   cursor: string;
   round: ReviewRound | null;
@@ -130,5 +144,7 @@ interface Review {
   files: FileView[];
   applies: ApplyRecord[];
   sends: number;
+  /** The round's newest sends, newest first. */
+  recent_sends: RecentSend[];
   home: string;
 }

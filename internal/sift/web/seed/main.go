@@ -6,13 +6,15 @@
 // through the store's own Propose, so the fixture meets every rule an
 // agent's does. It is not part of the shipped binary.
 //
-//	go run ./internal/sift/web/seed [-scale N] [-recommending] <SIFT_HOME> <round.json> <base dir>
+//	go run ./internal/sift/web/seed [-scale N] [-recommending] [-sends] <SIFT_HOME> <round.json> <base dir>
 //
 // -scale N pads the round to N rows with stale-status findings spread over
 // generated files, as a large real round would be, each file recommended.
 // -recommending leaves one file without a recommendation (in a backlog
 // round, the last item without a verdict), so the round is still being
-// recommended.
+// recommended. -sends then records one send in each state the page shows
+// (a round decided per item: each send is one row decided again), through
+// the store's own claims, reports and replies.
 package main
 
 import (
@@ -30,6 +32,8 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/rec"
 	"github.com/subaud-tools/tackle/internal/sift/row"
 	"github.com/subaud-tools/tackle/internal/sift/store"
+	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 type fixtureRow struct {
@@ -64,6 +68,7 @@ type fixture struct {
 type Options struct {
 	Scale        int  // pad the round to this many rows
 	Recommending bool // leave one file without a recommendation (an item without a verdict)
+	Sends        bool // record a send in each state (a round decided per item)
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
@@ -78,8 +83,80 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 }
 
 // Seed writes the fixture under base and records its round in the store at
-// dbPath; it returns the round's id.
+// dbPath, with a send in each state when o.Sends; it returns the round's id.
 func Seed(ctx context.Context, dbPath string, data []byte, base string, o Options) (int64, error) {
+	id, err := seedRound(ctx, dbPath, data, base, o)
+	if err != nil || !o.Sends {
+		return id, err
+	}
+	return id, seedSends(ctx, dbPath, id)
+}
+
+// seedSends records, oldest first, a send with no reply, one held while the
+// agent is mid-turn, one with the agent, one working, answered, declined
+// and failed, and last one no session has claimed. Each is the round's
+// first row decided again, sent, claimed by the session "seed" and moved
+// as the harness and the agent would move it.
+func seedSends(ctx context.Context, dbPath string, roundID int64) error {
+	st, err := store.Open(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
+	r, rows, err := st.Round(ctx, roundID)
+	if err != nil {
+		return err
+	}
+	if !store.PerItem(r.Kind) || len(rows) == 0 {
+		return fmt.Errorf("-sends needs a round decided per item, with a row")
+	}
+	const who = "seed"
+	// reply lands the send and has the agent reply state.
+	reply := func(state msgstate.State, text string) func(store.Send) error {
+		return func(sd store.Send) error {
+			if err := st.ReportSends(ctx, who, channelmcp.ReportLanded, sd.Claim); err != nil {
+				return err
+			}
+			return st.ReplySends(ctx, who, []int64{sd.ID}, state, text)
+		}
+	}
+	steps := []func(store.Send) error{
+		func(sd store.Send) error {
+			if err := st.ReportSends(ctx, who, channelmcp.ReportLanded, sd.Claim); err != nil {
+				return err
+			}
+			return st.ReportSends(ctx, who, channelmcp.ReportTurnEnded, "")
+		},
+		func(sd store.Send) error { return st.ReportSends(ctx, who, channelmcp.ReportHeld, sd.Claim) },
+		func(sd store.Send) error { return st.ReportSends(ctx, who, channelmcp.ReportLanded, sd.Claim) },
+		reply(msgstate.Working, "applying the accepted files"),
+		reply(msgstate.Answered, "one pull request opened"),
+		reply(msgstate.Declined, "the user asked to wait for the next round"),
+		reply(msgstate.Failed, "the base moved since the audit"),
+		nil, // sent, and no session has it
+	}
+	for _, step := range steps {
+		if err := st.Decide(ctx, roundID, rows[0].ID, row.Decision{Action: "accept"}); err != nil {
+			return err
+		}
+		if _, err := st.Send(ctx, roundID, "", nil); err != nil {
+			return err
+		}
+		if step == nil {
+			continue
+		}
+		sd, ok, err := st.ClaimSend(ctx, who, []string{who})
+		if err != nil || !ok {
+			return fmt.Errorf("claim: %v %w", ok, err)
+		}
+		if err := step(sd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedRound(ctx context.Context, dbPath string, data []byte, base string, o Options) (int64, error) {
 	var fx fixture
 	if err := json.Unmarshal(data, &fx); err != nil {
 		return 0, fmt.Errorf("fixture: %w", err)
@@ -244,9 +321,10 @@ func pad(fx *fixture, n int) {
 func main() {
 	scale := flag.Int("scale", 0, "pad the round to this many rows")
 	recommending := flag.Bool("recommending", false, "leave one file without a recommendation, or one item without a verdict")
+	sends := flag.Bool("sends", false, "record a send in each state (a round decided per item)")
 	flag.Parse()
 	if flag.NArg() != 3 {
-		fmt.Fprintln(os.Stderr, "usage: seed [-scale N] [-recommending] <SIFT_HOME> <round.json> <base dir>")
+		fmt.Fprintln(os.Stderr, "usage: seed [-scale N] [-recommending] [-sends] <SIFT_HOME> <round.json> <base dir>")
 		os.Exit(2)
 	}
 	home, fixturePath, base := flag.Arg(0), flag.Arg(1), flag.Arg(2)
@@ -259,7 +337,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	id, err := Seed(context.Background(), store.Path(), data, base, Options{Scale: *scale, Recommending: *recommending})
+	id, err := Seed(context.Background(), store.Path(), data, base, Options{Scale: *scale, Recommending: *recommending, Sends: *sends})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

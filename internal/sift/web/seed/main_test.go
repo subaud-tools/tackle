@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/subaud-tools/tackle/internal/sift/discover"
@@ -88,5 +89,45 @@ func TestSeedCanLeaveTheRoundRecommending(t *testing.T) {
 	defer func() { _ = st.Close() }()
 	if p, _ := st.State(ctx, id); p.State != store.Recommending || p.Recommended != p.Files-1 {
 		t.Fatalf("%+v", p)
+	}
+}
+
+// -sends records one send in each state, through the store's own moves:
+// newest first, an unclaimed one, then failed, declined, answered, working,
+// with the agent, held, and the oldest with no reply.
+func TestSeedRecordsASendInEachState(t *testing.T) {
+	ctx := context.Background()
+	data, err := os.ReadFile(filepath.Join("..", "testdata", "backlog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(t.TempDir(), "sift.db")
+	id, err := Seed(ctx, db, data, t.TempDir(), Options{Sends: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	sends, err := st.RecentSends(ctx, id, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, s := range sends {
+		g := string(s.State)
+		if s.Held {
+			g += "/held"
+		}
+		if s.ClaimedBy == "" {
+			g += "/unclaimed"
+		}
+		got = append(got, g)
+	}
+	want := "sent/unclaimed failed declined answered working with_agent sent/held no_reply"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("sends %q, want %q", strings.Join(got, " "), want)
 	}
 }
