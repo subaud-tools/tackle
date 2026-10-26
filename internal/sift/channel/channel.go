@@ -36,9 +36,9 @@ const Instructions = `sift audits the instruction files coding agents read (glob
 - Run sift_check when the user asks for an audit. It records a round and says how many files need a recommendation.
 - Recommend every file: sift_next gives one file with its content, findings and the guidance for the rewrite; sift_propose stores the whole revised file. Repeat until sift_next says done. Recommend files that move text between them in one sift_propose call, each linking the other.
 - Then run sift_review once to open the page for the user, tell them how many files wait, and carry on with other work. The page opens only once every file has a recommendation.
-- The user's decisions arrive as an event from sift: <channel source="sift" round="…" send_id="…"> in pi, or a turn whose first line is sift event round=… send_id=… in Claude Code. Follow its steps: sift_apply writes a branch per repo; then run ` + "`sift reconcile`" + ` and review each branch.
+- The user's decisions arrive as an event from sift: <channel source="sift" round="…" send_id="…"> in pi, or a turn whose first line is sift event round=… send_id=… in Claude Code. On a send that takes more than a moment, first call sift_reply with its send_id, state working and one line on what you are doing. Follow its steps: sift_apply writes a branch per repo; then run ` + "`sift reconcile`" + ` and review each branch. When done, sift_reply with answered and a short report, or declined or failed with why.
 - The pull requests are the user's to merge. Once they are merged or closed, run sift_clean to remove the branches and worktrees apply made.
-- sift_status tells you the round's state and what is open, decided and sent.
+- sift_status tells you the round's state, what is open, decided and sent, and which sends are not settled yet.
 - When sift reports an error, say what failed and leave the files as they are.`
 
 // Identity is the session this channel serves.
@@ -89,14 +89,21 @@ type Channel struct {
 	// and never waits. Two takers would split a session's sends.
 	ServeOnly bool
 
-	runCtx context.Context
+	runCtx  context.Context
+	reports chan report // pi's reports, posted to serve in order by one goroutine
+}
+
+// report is one report from the harness, waiting to be posted to serve.
+type report struct {
+	event channelmcp.ReportEvent
+	token string
 }
 
 // New builds a channel for id.
 func New(id Identity, c *Client, version string) *Channel {
 	ch := &Channel{ID: id, Client: c, Log: io.Discard, Open: localweb.OpenBrowser,
 		LoadConfig: func() (config.Config, error) { return config.Load(config.Path()) }, LookPath: exec.LookPath,
-		Retry: 5 * time.Second, Presence: 30 * time.Second, Poll: 55 * time.Second}
+		Retry: 5 * time.Second, Presence: 30 * time.Second, Poll: 55 * time.Second, reports: make(chan report, 64)}
 	ch.Server = channelmcp.New(channelmcp.Handler{
 		Name: "sift", Version: version, Instructions: Instructions, Tools: Tools(),
 		Call: func(name string, args json.RawMessage) (string, error) {
@@ -105,6 +112,15 @@ func New(id Identity, c *Client, version string) *Channel {
 				ctx = context.Background()
 			}
 			return ch.Call(ctx, name, args)
+		},
+		// Run's read loop hands each report over and goes on: posting it
+		// to serve waits on the network, and tool calls must not.
+		OnReport: func(event channelmcp.ReportEvent, token string) {
+			select {
+			case ch.reports <- report{event, token}:
+			default:
+				_, _ = fmt.Fprintf(ch.Log, "sift channel: dropped report %s %s: too many waiting\n", event, token)
+			}
 		},
 	})
 	ch.Push = ch.Server
@@ -132,11 +148,27 @@ func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 		_, _ = fmt.Fprintf(ch.Log, "sift channel: %v\n", errNoSession)
 	default:
 		go ch.loop(ctx)
+		go ch.postReports(ctx)
 	}
 	return ch.Server.Run(r, w)
 }
 
 var errNoSession = errors.New("no session id (not under Claude Code or pi); the user's decisions will not reach this session")
+
+// postReports posts each report the harness sent to serve, in the order
+// sent, until ctx ends. A failed post is logged, not retried.
+func (ch *Channel) postReports(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case r := <-ch.reports:
+			if err := ch.Client.Report(ctx, ch.ID.Session, r.event, r.token); err != nil && ctx.Err() == nil {
+				_, _ = fmt.Fprintf(ch.Log, "sift channel: report %s: %v\n", r.event, err)
+			}
+		}
+	}
+}
 
 // Watch is `sift watch`: the presence and wake loop alone, until ctx ends.
 func (ch *Channel) Watch(ctx context.Context) error {
@@ -175,9 +207,10 @@ func (ch *Channel) loop(ctx context.Context) {
 			lastPresence, lastErr = time.Now(), ""
 		}
 		var got struct {
-			ID    int64  `json:"id"`
-			Round int64  `json:"round"`
-			Text  string `json:"text"`
+			ID     int64  `json:"id"`
+			Round  int64  `json:"round"`
+			Text   string `json:"text"`
+			Report string `json:"report"`
 		}
 		code, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/wait?"+q(
 			"session", ch.ID.Session, "timeout", strconv.Itoa(max(int(ch.Poll.Seconds()), 1))), nil, &got)
@@ -194,7 +227,8 @@ func (ch *Channel) loop(ctx context.Context) {
 			sleep(ctx, ch.Retry)
 		case code == http.StatusOK && got.ID != 0:
 			lastErr = ""
-			meta := map[string]string{"source": "sift", "round": strconv.FormatInt(got.Round, 10), "send_id": strconv.FormatInt(got.ID, 10)}
+			meta := map[string]string{"source": "sift", "round": strconv.FormatInt(got.Round, 10), "send_id": strconv.FormatInt(got.ID, 10),
+				channelmcp.MetaReport: got.Report}
 			if err := ch.Push.Notify(got.Text, meta); err != nil {
 				_, _ = fmt.Fprintf(ch.Log, "sift channel: notify: %v\n", err)
 			}

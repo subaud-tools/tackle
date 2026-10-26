@@ -246,6 +246,7 @@ func TestToolSchemasArePinned(t *testing.T) {
 		"sift_review":  `{"type":"object","properties":{}}`,
 		"sift_apply":   `{"type":"object","properties":{"round":{"type":"integer","description":"the round to apply (default: the latest)"},"dry_run":{"type":"boolean","description":"work out what would change and touch nothing"}}}`,
 		"sift_status":  `{"type":"object","properties":{}}`,
+		"sift_reply":   wantReply,
 		"sift_clean":   `{"type":"object","properties":{"dry_run":{"type":"boolean","description":"show the plan and remove nothing"}}}`,
 	}
 	var names []string
@@ -258,10 +259,16 @@ func TestToolSchemasArePinned(t *testing.T) {
 			t.Errorf("%s: invalid", tl.Name)
 		}
 	}
-	if strings.Join(names, ",") != "sift_check,sift_next,sift_propose,sift_review,sift_apply,sift_status,sift_clean" {
+	if strings.Join(names, ",") != "sift_check,sift_next,sift_propose,sift_review,sift_apply,sift_status,sift_reply,sift_clean" {
 		t.Fatalf("tools %v", names)
 	}
 }
+
+const wantReply = `{"type":"object","properties":{` +
+	`"ids":{"type":"array","items":{"type":"integer"},"description":"the sends this is for: each event's send_id"},` +
+	`"state":{"type":"string","enum":["working","answered","declined","failed"]},` +
+	`"text":{"type":"string","description":"working: one line on what you are doing; answered: a short report; declined or failed: why"}},` +
+	`"required":["ids","state","text"]}`
 
 const wantPropose = `{"type":"object","properties":{"round":{"type":"integer","description":"the round (default: the latest)"},` +
 	`"recommendations":{"type":"array","description":"one per file; linked files in the same call","items":{"type":"object","properties":{` +
@@ -291,7 +298,7 @@ func TestInitializeListsTheTools(t *testing.T) {
 		Tools []struct{ Name string } `json:"tools"`
 	}
 	_ = json.Unmarshal(m.Result, &r)
-	if len(r.Tools) != 7 {
+	if len(r.Tools) != 8 {
 		t.Fatalf("%s", m.Result)
 	}
 }
