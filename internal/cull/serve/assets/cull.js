@@ -244,6 +244,29 @@ function sentText(n, to) {
   const what = `${n} ${n === 1 ? "answer" : "answers"}`;
   return to ? `Sent ${what} to ${to}.` : `Sent ${what}. The next agent that opens cull in this project gets them.`;
 }
+var HELD_LINE = "the agent is mid-turn; it reads this when the turn ends";
+var NO_SESSION_LINE = "no session has it";
+function sendLine(s) {
+  switch (s.state) {
+    case "working":
+    case "answered":
+    case "declined":
+    case "failed":
+      return s.reply;
+    case "sent":
+      if (s.held) return HELD_LINE;
+      return s.claimed ? "" : NO_SESSION_LINE;
+    default:
+      return "";
+  }
+}
+function sentAgo(at, now) {
+  const min = Math.floor((now - Date.parse(at)) / 6e4);
+  if (!(min >= 1)) return "just now";
+  if (min < 60) return `${min} min ago`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h ago`;
+  return `${Math.floor(min / (24 * 60))} d ago`;
+}
 
 // item.ts
 var FLAGS = [
@@ -504,7 +527,7 @@ function retryDelay(attempt) {
 }
 
 // overview.ts
-import { buttons as buttons3, card as card3, facts as facts3, h as h3 } from "/_kit/kit.js";
+import { buttons as buttons3, card as card3, facts as facts3, h as h3, messagePill } from "/_kit/kit.js";
 var TEST_BUCKETS = [
   {
     id: "cut",
@@ -569,6 +592,34 @@ function table(head, rows) {
   );
 }
 function overview(ctx, a) {
+  const doc = overviewDoc(ctx, a);
+  if (a.sends.length) doc.append(...sendsSection(a.sends));
+  return doc;
+}
+function sendsSection(sends) {
+  const now = Date.now();
+  return [
+    h3("div", { class: "kit-label" }, "sends"),
+    h3(
+      "ul",
+      { class: "sends" },
+      sends.map(
+        (s) => h3(
+          "li",
+          { class: "send", dataset: { send: String(s.id) } },
+          h3(
+            "span",
+            { class: "send-what" },
+            ["cut", "keep", "merge", "separate"].filter((v) => s.counts[v]).map((v) => `${s.counts[v]} ${v}`).join(" · ") || "nothing"
+          ),
+          h3("span", { class: "why" }, sentAgo(s.at, now)),
+          messagePill(s.state, sendLine(s))
+        )
+      )
+    )
+  ];
+}
+function overviewDoc(ctx, a) {
   const note = a.notice ? [h3("p", { class: "notice" }, a.notice)] : [];
   if (!a.words) return answeredView(ctx, a, note);
   const bk = a.words;
@@ -764,7 +815,9 @@ var itemSort = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 var basename = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
 var plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 function signature(r) {
-  return `${r.run?.id ?? 0}|` + r.items.map(
+  return `${r.run?.id ?? 0}|` + (r.recent_sends ?? []).map(
+    (x) => `${x.id}:${x.state}:${x.held ? 1 : 0}:${x.claimed ? 1 : 0}:${x.reply}`
+  ).join(";") + "|" + r.items.map(
     (i) => `${i.id}@${i.hash}:${i.answer ? `${i.answer.value}/${i.answer.note}/${i.answer.via}/${i.answer.sent_at ? 1 : 0}` : ""}`
   ).join(";");
 }
@@ -1078,7 +1131,8 @@ function boot() {
           answers: answerMap(),
           answeredOf: (id) => answerOf(id)?.value,
           allOpen: openCount("tests") + openCount("groups"),
-          notice
+          notice,
+          sends: review?.recent_sends ?? []
         })
       );
     }

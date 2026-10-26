@@ -23,6 +23,23 @@
 }
 
 /* the by-concern / by-size / rows tables */
+/* the overview's sends: one line each, the pill with the agent's line */
+ul.sends {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+li.send {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--kit-line);
+}
+li.send .send-what {
+  min-width: 14em;
+}
+
 table.ov {
   width: 100%;
   border-collapse: separate;

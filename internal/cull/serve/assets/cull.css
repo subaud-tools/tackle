@@ -19,6 +19,21 @@
   background: var(--kit-card);
   border-radius: 0 6px 6px 0;
 }
+ul.sends {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+li.send {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--kit-line);
+}
+li.send .send-what {
+  min-width: 14em;
+}
 table.ov {
   width: 100%;
   border-collapse: separate;

@@ -75,6 +75,13 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 function signature(r: Review): string {
   return (
     `${r.run?.id ?? 0}|` +
+    (r.recent_sends ?? [])
+      .map(
+        (x) =>
+          `${x.id}:${x.state}:${x.held ? 1 : 0}:${x.claimed ? 1 : 0}:${x.reply}`,
+      )
+      .join(';') +
+    '|' +
     r.items
       .map(
         (i) =>
@@ -445,6 +452,7 @@ export function boot(): void {
           answeredOf: (id) => answerOf(id)?.value,
           allOpen: openCount('tests') + openCount('groups'),
           notice,
+          sends: review?.recent_sends ?? [],
         }),
       );
     }
