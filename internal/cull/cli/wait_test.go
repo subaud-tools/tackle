@@ -14,6 +14,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/cull/serve"
 	"github.com/subaud-tools/tackle/internal/cull/store"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 // waitRig runs serve in-process and returns its store.
@@ -124,6 +125,28 @@ func TestWaitPrintsTheSendAndExits0(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("wait never returned")
+	}
+}
+
+// cull wait reports the send it printed landed: it is with the agent.
+func TestWaitReportsTheSendLanded(t *testing.T) {
+	st := waitRig(t)
+	root := waitProject(t)
+	res := startWait(root)
+	time.Sleep(300 * time.Millisecond)
+	answerAndPressSend(t, st, root)
+	select {
+	case r := <-res:
+		if r.code != 0 {
+			t.Fatalf("code %d err %q", r.code, r.errw)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("wait never returned")
+	}
+	p, _ := st.Project(context.Background(), root)
+	sends, err := st.RecentSends(context.Background(), p.ID, 1)
+	if err != nil || len(sends) != 1 || sends[0].State != msgstate.WithAgent {
+		t.Fatalf("%+v %v", sends, err)
 	}
 }
 

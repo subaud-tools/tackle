@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"context"
 	"io"
 
+	"github.com/subaud-tools/tackle/internal/cull/channel"
+	"github.com/subaud-tools/tackle/internal/cull/serve"
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/channelmcp"
 )
@@ -64,7 +67,10 @@ func commands(stdin io.Reader) []tools.Command {
 }
 
 // deliverReport is `cull report`'s delivery, which the Claude Code plugin's
-// mod runs. It does nothing: tackle's tools set no report token
-// (channelmcp.MetaReport), so there is nothing to deliver. It is mounted so
-// the regenerated mod never calls a command the binary lacks.
-func deliverReport(string, channelmcp.ReportEvent, string) error { return nil }
+// mod runs: it posts the report to cull serve through the client `cull
+// watch` uses, starting serve if needed. A failed post is the command's
+// error, which the mod logs; it is not retried.
+func deliverReport(session string, event channelmcp.ReportEvent, token string) error {
+	client := channel.NewClient(func() (serve.Advert, error) { return serve.Start(executable(), 0) })
+	return client.Report(context.Background(), session, event, token)
+}

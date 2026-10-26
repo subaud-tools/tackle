@@ -35,8 +35,8 @@ const Instructions = `cull judges automated tests with Jev and removes the ones 
 - After you write or change tests, run cull_check with base set to the merge base of your branch (or no base for the whole suite when Court asks for it).
 - Then run cull_apply with no ids: it removes every cut, both Jev's confident ones and Court's, runs the tests before and after, and puts everything back if they break. Never commit on cull's behalf; report what was removed.
 - If cull_check reports to_review above 0, run cull_review once to open the page for Court, tell him how many items wait, and carry on with other work. Never ask Court about a test anywhere but the page, and never open the page repeatedly.
-- Court's answers arrive as an event from cull: <channel source="cull" project="…" send_id="…"> in pi, or a turn whose first line is cull event project=… send_id=… in Claude Code. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports.
-- cull_status tells you what is open, answered and sent for this project.
+- Court's answers arrive as an event from cull: <channel source="cull" project="…" send_id="…"> in pi, or a turn whose first line is cull event project=… send_id=… in Claude Code. On a send that takes more than a moment, first call cull_reply with its send_id, state working and one line on what you are doing. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports. When done, cull_reply with answered and a short report, or declined or failed with why.
+- cull_status tells you what is open, answered and sent for this project, and which sends are not settled yet.
 - When your session runs in a folder that holds several repositories (a workspace), pass the repository's path to every cull tool. The event from Court names the repository's path; use it.
 - You never answer for Court. If cull reports an error, say what failed; don't work around it by editing tests by hand.
 - When Court asks why tests are slow, or checks take long, run cull_time and fix what it and cull_check's speed findings point at; then run cull_time again and report before and after.`
@@ -89,13 +89,20 @@ type Channel struct {
 	root    string // the session's project root; "" when it can't be resolved
 	rootErr error
 	runCtx  context.Context
+	reports chan report // pi's reports, posted to serve in order by one goroutine
+}
+
+// report is one report from the harness, waiting to be posted to serve.
+type report struct {
+	event channelmcp.ReportEvent
+	token string
 }
 
 // New builds a channel for id. The project root is discover.Root of the
 // session's working directory.
 func New(id Identity, c *Client, version string) *Channel {
 	ch := &Channel{ID: id, Client: c, Log: io.Discard, Open: localweb.OpenBrowser,
-		Retry: 5 * time.Second, Presence: 30 * time.Second, Poll: 55 * time.Second}
+		Retry: 5 * time.Second, Presence: 30 * time.Second, Poll: 55 * time.Second, reports: make(chan report, 64)}
 	ch.root, ch.rootErr = discover.Root(id.CWD)
 	ch.Server = channelmcp.New(channelmcp.Handler{
 		Name: "cull", Version: version, Instructions: Instructions, Tools: Tools(),
@@ -105,6 +112,15 @@ func New(id Identity, c *Client, version string) *Channel {
 				ctx = context.Background()
 			}
 			return ch.Call(ctx, name, args)
+		},
+		// Run's read loop hands each report over and goes on: posting it
+		// to serve waits on the network, and tool calls must not.
+		OnReport: func(event channelmcp.ReportEvent, token string) {
+			select {
+			case ch.reports <- report{event, token}:
+			default:
+				_, _ = fmt.Fprintf(ch.Log, "cull channel: dropped report %s %s: too many waiting\n", event, token)
+			}
 		},
 	})
 	ch.Push = ch.Server
@@ -141,8 +157,24 @@ func (ch *Channel) Run(ctx context.Context, r io.Reader, w io.Writer) error {
 		_, _ = fmt.Fprintf(ch.Log, "cull channel: %v\n", err)
 	} else {
 		go ch.loop(ctx)
+		go ch.postReports(ctx)
 	}
 	return ch.Server.Run(r, w)
+}
+
+// postReports posts each report the harness sent to serve, in the order
+// sent, until ctx ends. A failed post is logged, not retried.
+func (ch *Channel) postReports(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case r := <-ch.reports:
+			if err := ch.Client.Report(ctx, ch.ID.Session, r.event, r.token); err != nil && ctx.Err() == nil {
+				_, _ = fmt.Fprintf(ch.Log, "cull channel: report %s: %v\n", r.event, err)
+			}
+		}
+	}
 }
 
 // Watch is `cull watch`: the presence and wake loop alone, until ctx ends.
@@ -192,9 +224,10 @@ func (ch *Channel) loop(ctx context.Context) {
 			lastPresence, lastErr = time.Now(), ""
 		}
 		var got struct {
-			ID   int64  `json:"id"`
-			Root string `json:"root"`
-			Text string `json:"text"`
+			ID     int64  `json:"id"`
+			Root   string `json:"root"`
+			Text   string `json:"text"`
+			Report string `json:"report"`
 		}
 		code, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/wait?"+q(
 			"session", ch.ID.Session, "root", ch.scope(), "timeout", strconv.Itoa(max(int(ch.Poll.Seconds()), 1))), nil, &got)
@@ -211,7 +244,8 @@ func (ch *Channel) loop(ctx context.Context) {
 			sleep(ctx, ch.Retry)
 		case code == http.StatusOK && got.ID != 0:
 			lastErr = ""
-			meta := map[string]string{"source": "cull", "project": got.Root, "send_id": strconv.FormatInt(got.ID, 10)}
+			meta := map[string]string{"source": "cull", "project": got.Root, "send_id": strconv.FormatInt(got.ID, 10),
+				channelmcp.MetaReport: got.Report}
 			if err := ch.Push.Notify(got.Text, meta); err != nil {
 				_, _ = fmt.Fprintf(ch.Log, "cull channel: notify: %v\n", err)
 			}

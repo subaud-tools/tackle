@@ -9,20 +9,26 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/msgstate"
 	"github.com/subaud-tools/tools-common/sqlitedb"
 )
 
 // SchemaVersion is the schema version this binary targets.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // keepRuns is how many runs per project are kept.
 const keepRuns = 5
@@ -79,7 +85,7 @@ CREATE TABLE answers (
 `
 
 // schemaV2 adds the project's review owner (the agent session that last opened
-// its review) and the sends: one row per press of Send, kept until delivered.
+// its review) and the sends: one row per press of Send.
 const schemaV2 = `
 ALTER TABLE projects ADD COLUMN owner_session TEXT NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN owner_label   TEXT NOT NULL DEFAULT '';
@@ -96,10 +102,24 @@ CREATE TABLE sends (
 CREATE INDEX sends_project ON sends(project_id, id);
 `
 
+// schemaV3: each send's place in the message lifecycle (msgstate): its
+// state, the report token of its claim, whether the harness holds it while
+// the agent is mid-turn, and the agent's line or reply. delivered_to and
+// delivered_at now record who claimed it and when; a send delivered before
+// is with the agent.
+const schemaV3 = `
+ALTER TABLE sends ADD COLUMN state TEXT NOT NULL DEFAULT 'sent';
+ALTER TABLE sends ADD COLUMN claim TEXT NOT NULL DEFAULT '';
+ALTER TABLE sends ADD COLUMN held INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sends ADD COLUMN reply TEXT NOT NULL DEFAULT '';
+UPDATE sends SET state = 'with_agent' WHERE delivered_to IS NOT NULL;
+`
+
 // Migrations is the append-only list of schema steps.
 var Migrations = []sqlitedb.Step{
 	sqlitedb.SQL(schemaV1),
 	sqlitedb.SQL(schemaV2),
+	sqlitedb.SQL(schemaV3),
 }
 
 // ErrStale is returned when an answer names an item (or hash) that is not in
@@ -460,8 +480,17 @@ type Send struct {
 	Counts        Counts
 	Notes         []Note
 	Owner         string // the review owner's session at send time ("" if none)
-	DeliveredTo   string // "" until delivered
-	DeliveredAt   time.Time
+	// ClaimedBy is the session whose wait took the send ("" until one did),
+	// at ClaimedAt, with Claim, the report token the harness names it by.
+	ClaimedBy string
+	ClaimedAt time.Time
+	Claim     string
+	// State is where the send stands (msgstate); Held, that the harness
+	// holds it while the agent is mid-turn; Reply, the agent's working line
+	// or its reply.
+	State msgstate.State
+	Held  bool
+	Reply string
 }
 
 // Send marks the project's unsent answers sent and records one send row for
@@ -539,7 +568,7 @@ func (s *Store) Send(ctx context.Context, projectID int64, owner string) (Send, 
 	return sd, nil
 }
 
-const sendCols = `id, project_id, created_at, counts, notes, owner, delivered_to, delivered_at`
+const sendCols = `id, project_id, created_at, counts, notes, owner, delivered_to, delivered_at, claim, state, held, reply`
 
 type scanner interface{ Scan(...any) error }
 
@@ -551,10 +580,10 @@ func scanSend(r scanner) (Send, error) {
 		to           sql.NullString
 		dat          sql.NullInt64
 	)
-	if err := r.Scan(&sd.ID, &sd.ProjectID, &at, &counts, &note, &sd.Owner, &to, &dat); err != nil {
+	if err := r.Scan(&sd.ID, &sd.ProjectID, &at, &counts, &note, &sd.Owner, &to, &dat, &sd.Claim, &sd.State, &sd.Held, &sd.Reply); err != nil {
 		return Send{}, err
 	}
-	sd.CreatedAt, sd.DeliveredTo, sd.DeliveredAt = fromMS(at), to.String, fromMS(dat.Int64)
+	sd.CreatedAt, sd.ClaimedBy, sd.ClaimedAt = fromMS(at), to.String, fromMS(dat.Int64)
 	if err := json.Unmarshal([]byte(counts), &sd.Counts); err != nil {
 		return Send{}, err
 	}
@@ -564,20 +593,39 @@ func scanSend(r scanner) (Send, error) {
 	return sd, nil
 }
 
-// ClaimSend delivers to session the oldest undelivered send of the project
-// that it may take, marking it delivered in the same statement, so concurrent
-// claimers never both get one. It does not look at the send's owner: serve
-// decides who may call (the project's current owner when present, else any
-// present session of the project). ok is false when nothing is undelivered.
-func (s *Store) ClaimSend(ctx context.Context, projectID int64, session string) (Send, bool, error) {
+// ClaimSend hands session the oldest send of the project it may take,
+// recording the session, the time and a new report token in the same
+// statement, so concurrent claimers never both get one. A send is claimable
+// while no session has claimed it, or while it is still sent and its
+// claimer is not in present (the sessions serve sees connected): a session
+// that died before the send landed does not strand it. A send that reached
+// the agent is never handed out again, so cull_apply never runs twice on
+// the same answers. The claim leaves the send sent: the harness's landed
+// report moves it. It does not look at the send's owner: serve decides who
+// may call (the project's current owner when present, else any present
+// session of the project). ok is false when there is none.
+func (s *Store) ClaimSend(ctx context.Context, projectID int64, session string, present []string) (Send, bool, error) {
 	var sd Send
 	found := true
+	// gone is "the claimer is not one of present"; with nobody present,
+	// every claimer is gone.
+	gone := "1"
+	if len(present) > 0 {
+		gone = "delivered_to NOT IN (?" + strings.Repeat(",?", len(present)-1) + ")"
+	}
+	claimable := `project_id = ? AND (delivered_to IS NULL OR (state = 'sent' AND ` + gone + `))`
+	args := []any{session, time.Now().UnixMilli(), reportToken()}
+	for range 2 {
+		args = append(args, projectID)
+		for _, p := range present {
+			args = append(args, p)
+		}
+	}
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
 		var err error
-		sd, err = scanSend(tx.QueryRowContext(ctx, `UPDATE sends SET delivered_to = ?, delivered_at = ?
-			WHERE id = (SELECT id FROM sends WHERE project_id = ? AND delivered_to IS NULL
-			            ORDER BY id LIMIT 1)
-			AND delivered_to IS NULL RETURNING `+sendCols, session, time.Now().UnixMilli(), projectID))
+		sd, err = scanSend(tx.QueryRowContext(ctx, `UPDATE sends SET delivered_to = ?, delivered_at = ?, claim = ?
+			WHERE `+claimable+` AND id = (SELECT id FROM sends WHERE `+claimable+` ORDER BY id LIMIT 1)
+			RETURNING `+sendCols, args...))
 		if errors.Is(err, sql.ErrNoRows) {
 			found = false
 			return nil
@@ -590,9 +638,36 @@ func (s *Store) ClaimSend(ctx context.Context, projectID int64, session string) 
 	return sd, found, nil
 }
 
-// Undelivered lists the project's sends not yet delivered, oldest first.
-func (s *Store) Undelivered(ctx context.Context, projectID int64) ([]Send, error) {
-	rs, err := s.db.QueryContext(ctx, `SELECT `+sendCols+` FROM sends WHERE project_id = ? AND delivered_to IS NULL ORDER BY id`, projectID)
+// reportToken is a claim's report token: 16 random hex characters, which
+// the Claude Code mod passes as an argument, so alphanumeric.
+func reportToken() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b) // crypto/rand.Read never fails
+	return hex.EncodeToString(b)
+}
+
+// Unclaimed lists the project's sends no session has claimed, oldest first.
+func (s *Store) Unclaimed(ctx context.Context, projectID int64) ([]Send, error) {
+	return listSends(ctx, s.db, `WHERE project_id = ? AND delivered_to IS NULL ORDER BY id`, projectID)
+}
+
+// Unsettled lists the project's sends not answered, declined or failed,
+// oldest first.
+func (s *Store) Unsettled(ctx context.Context, projectID int64) ([]Send, error) {
+	return listSends(ctx, s.db, `WHERE project_id = ? AND state NOT IN ('answered', 'declined', 'failed') ORDER BY id`, projectID)
+}
+
+// RecentSends lists the project's newest n sends, newest first.
+func (s *Store) RecentSends(ctx context.Context, projectID int64, n int) ([]Send, error) {
+	return listSends(ctx, s.db, `WHERE project_id = ? ORDER BY id DESC LIMIT ?`, projectID, n)
+}
+
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func listSends(ctx context.Context, db querier, where string, args ...any) ([]Send, error) {
+	rs, err := db.QueryContext(ctx, `SELECT `+sendCols+` FROM sends `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +681,131 @@ func (s *Store) Undelivered(ctx context.Context, projectID int64) ([]Send, error
 		out = append(out, sd)
 	}
 	return out, rs.Err()
+}
+
+// ReportSends applies a harness's report for session: held marks the
+// token's send held while it is still sent; landed moves it to with the
+// agent and clears held; turn_ended moves each send session claimed that is
+// with the agent or working to no reply. Each move is one msgstate.Allowed
+// draws, and a move it refuses is skipped, so a late landed report leaves a
+// working send working. It returns the projects whose sends changed, for
+// serve to tell their pages.
+func (s *Store) ReportSends(ctx context.Context, session string, event channelmcp.ReportEvent, token string) ([]int64, error) {
+	switch event {
+	case channelmcp.ReportHeld, channelmcp.ReportLanded, channelmcp.ReportTurnEnded:
+	default:
+		return nil, fmt.Errorf("event %q: want held, landed or turn_ended", event)
+	}
+	var changed []int64
+	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
+		changed = nil
+		// The first statement is a write (the main connection begins deferred).
+		if _, err := tx.ExecContext(ctx, `UPDATE sends SET held = held WHERE delivered_to = ?`, session); err != nil {
+			return err
+		}
+		where, args := `WHERE delivered_to = ? AND claim = ?`, []any{session, token}
+		if event == channelmcp.ReportTurnEnded {
+			where, args = `WHERE delivered_to = ?`, []any{session}
+		}
+		sends, err := listSends(ctx, tx, where, args...)
+		if err != nil {
+			return err
+		}
+		for _, sd := range sends {
+			state, held := sd.State, sd.Held
+			switch event {
+			case channelmcp.ReportHeld:
+				held = held || sd.State == msgstate.Sent
+			case channelmcp.ReportLanded:
+				if msgstate.Allowed(sd.State, msgstate.WithAgent) {
+					state = msgstate.WithAgent
+				}
+				held = false
+			case channelmcp.ReportTurnEnded:
+				if msgstate.Allowed(sd.State, msgstate.NoReply) {
+					state = msgstate.NoReply
+				}
+			}
+			if state == sd.State && held == sd.Held {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE sends SET state = ?, held = ? WHERE id = ?`, state, held, sd.ID); err != nil {
+				return err
+			}
+			if !slices.Contains(changed, sd.ProjectID) {
+				changed = append(changed, sd.ProjectID)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
+// Refused is a reply the lifecycle refuses, with the reason.
+type Refused struct{ Reason string }
+
+func (r Refused) Error() string { return r.Reason }
+
+// ReplySends is the agent's acknowledgement of sends ids, all or nothing:
+// working with its line, or answered, declined or failed with its reply.
+// Every id must be a send session claimed that msgstate.Acknowledge lets
+// move to state; one already in the settled state asked for is left as it
+// is, and one already working takes the new line. Anything else refuses
+// the whole call (Refused) and changes nothing. It returns the projects
+// whose sends changed.
+func (s *Store) ReplySends(ctx context.Context, session string, ids []int64, state msgstate.State, text string) ([]int64, error) {
+	if state != msgstate.Working && !msgstate.Final(state) {
+		return nil, Refused{fmt.Sprintf("state %q: want working, answered, declined or failed", state)}
+	}
+	if len(ids) == 0 {
+		return nil, Refused{"ids: name the sends this reply is for"}
+	}
+	text = strings.TrimSpace(text)
+	var changed []int64
+	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
+		changed = nil
+		// The first statement is a write (the main connection begins deferred).
+		if _, err := tx.ExecContext(ctx, `UPDATE sends SET held = held WHERE delivered_to = ?`, session); err != nil {
+			return err
+		}
+		var move []Send
+		for _, id := range ids {
+			sd, err := scanSend(tx.QueryRowContext(ctx, `SELECT `+sendCols+` FROM sends WHERE id = ?`, id))
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				return Refused{fmt.Sprintf("no send %d", id)}
+			case err != nil:
+				return err
+			case sd.ClaimedBy == "":
+				return Refused{fmt.Sprintf("send %d: no session has it yet", id)}
+			case sd.ClaimedBy != session:
+				return Refused{fmt.Sprintf("send %d: another session has it", id)}
+			case sd.State == state && msgstate.Final(state):
+				continue
+			case sd.State == state:
+				// working again: only the line changes
+			case !msgstate.Acknowledge(sd.State, state):
+				return Refused{fmt.Sprintf("send %d: is %s and cannot be marked %s", id, sd.State.Label(), state.Label())}
+			}
+			move = append(move, sd)
+		}
+		for _, sd := range move {
+			if _, err := tx.ExecContext(ctx, `UPDATE sends SET state = ?, held = 0, reply = ? WHERE id = ?`, state, text, sd.ID); err != nil {
+				return err
+			}
+			if !slices.Contains(changed, sd.ProjectID) {
+				changed = append(changed, sd.ProjectID)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return changed, nil
 }
 
 // LatestRunIDs returns the newest run id of every project that has a run.
