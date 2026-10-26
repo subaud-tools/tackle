@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/sift/store"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 func (f *fixture) presence(session, label string) {
@@ -117,8 +118,8 @@ func TestTwoWaitersOneSend(t *testing.T) {
 	if other := <-done; other.w.Body.Len() != 0 {
 		t.Fatalf("s%d got a send too: %s", other.i, other.w.Body)
 	}
-	if left, err := f.st.Undelivered(context.Background()); err != nil || len(left) != 0 {
-		t.Fatalf("undelivered %v %v", left, err)
+	if left, err := f.st.Unclaimed(context.Background()); err != nil || len(left) != 0 {
+		t.Fatalf("unclaimed %v %v", left, err)
 	}
 }
 
@@ -173,5 +174,80 @@ func TestEachSendGoesToItsOwnOwner(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if w.Code != 200 || got.Round != first {
 		t.Fatalf("a got round %d (%d), want %d", got.Round, w.Code, first)
+	}
+}
+
+// The harness's reports and the agent's replies move a send through the
+// HTTP endpoints, and the review shows each move: a claim leaves it sent
+// with a token, held marks it, landed puts it with the agent, a working
+// reply gives its line, another session's reply is refused with the reason,
+// and an answer settles it, which the turn's end leaves as it is.
+func TestReportsAndRepliesMoveASend(t *testing.T) {
+	f := newFixture(t)
+	f.srv.waitUnit = 20 * time.Millisecond
+	f.presence("a", "pi · a")
+	f.presence("b", "pi · b")
+	f.do("POST", "/api/agent/review", `{"session":"a"}`)
+	f.sendNow()
+	w := f.wait("a")
+	var got struct {
+		ID     int64  `json:"id"`
+		Report string `json:"report"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 || len(got.Report) != 16 {
+		t.Fatalf("wait %d %s", w.Code, w.Body)
+	}
+	last := func() recentSendJSON {
+		t.Helper()
+		rs := f.review().RecentSends
+		if len(rs) != 1 || rs[0].ID != got.ID {
+			t.Fatalf("recent sends %+v", rs)
+		}
+		return rs[0]
+	}
+	if s := last(); s.State != msgstate.Sent || !s.Claimed || s.Held {
+		t.Fatalf("claimed %+v", s)
+	}
+	post := func(path, body string, code int) {
+		t.Helper()
+		if w := f.do("POST", path, body); w.Code != code {
+			t.Fatalf("%s %s: %d %s", path, body, w.Code, w.Body)
+		}
+	}
+	post("/api/agent/report", fmt.Sprintf(`{"session":"a","event":"held","token":%q}`, got.Report), 204)
+	if s := last(); s.State != msgstate.Sent || !s.Held {
+		t.Fatalf("held %+v", s)
+	}
+	post("/api/agent/report", fmt.Sprintf(`{"session":"a","event":"landed","token":%q}`, got.Report), 204)
+	if s := last(); s.State != msgstate.WithAgent || s.Held {
+		t.Fatalf("landed %+v", s)
+	}
+	post("/api/agent/reply", fmt.Sprintf(`{"session":"a","ids":[%d],"state":"working","text":"applying"}`, got.ID), 204)
+	if s := last(); s.State != msgstate.Working || s.Reply != "applying" {
+		t.Fatalf("working %+v", s)
+	}
+	if w := f.do("POST", "/api/agent/reply", fmt.Sprintf(`{"session":"b","ids":[%d],"state":"answered","text":"x"}`, got.ID)); w.Code != 409 || !strings.Contains(w.Body.String(), "another session") {
+		t.Fatalf("b's reply %d %s", w.Code, w.Body)
+	}
+	post("/api/agent/reply", fmt.Sprintf(`{"session":"a","ids":[%d],"state":"answered","text":"applied: one PR"}`, got.ID), 204)
+	post("/api/agent/report", `{"session":"a","event":"turn_ended"}`, 204)
+	if s := last(); s.State != msgstate.Answered || s.Reply != "applied: one PR" {
+		t.Fatalf("answered %+v", s)
+	}
+}
+
+// Status lists the sends not yet settled.
+func TestStatusListsTheUnsettledSends(t *testing.T) {
+	f := newFixture(t)
+	f.sendNow()
+	w := f.do("GET", "/api/agent/status", "")
+	var got struct {
+		Unsettled []struct {
+			ID    int64          `json:"id"`
+			State msgstate.State `json:"state"`
+		} `json:"unsettled"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Unsettled) != 1 || got.Unsettled[0].State != msgstate.Sent {
+		t.Fatalf("%s", w.Body)
 	}
 }

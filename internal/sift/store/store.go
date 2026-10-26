@@ -111,6 +111,19 @@ UPDATE decisions SET decision_id = lower(hex(randomblob(8)));
 UPDATE file_decisions SET decision_id = lower(hex(randomblob(8)));
 `
 
+// schemaV7: each send's place in the message lifecycle (msgstate): its
+// state, the report token of its claim, whether the harness holds it while
+// the agent is mid-turn, and the agent's line or reply. delivered_to and
+// delivered_at now record who claimed it and when; a send delivered before
+// is with the agent.
+const schemaV7 = `
+ALTER TABLE sends ADD COLUMN state TEXT NOT NULL DEFAULT 'sent';
+ALTER TABLE sends ADD COLUMN claim TEXT NOT NULL DEFAULT '';
+ALTER TABLE sends ADD COLUMN held INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sends ADD COLUMN reply TEXT NOT NULL DEFAULT '';
+UPDATE sends SET state = 'with_agent' WHERE delivered_to IS NOT NULL;
+`
+
 // Migrations is the append-only list of schema steps.
 var Migrations = []sqlitedb.Step{
 	sqlitedb.SQL(schemaV1),
@@ -119,6 +132,7 @@ var Migrations = []sqlitedb.Step{
 	sqlitedb.SQL(schemaV4),
 	sqlitedb.SQL(schemaV5),
 	sqlitedb.SQL(schemaV6),
+	sqlitedb.SQL(schemaV7),
 }
 
 // Seen is what the page showed of one file or row when the person decided:
