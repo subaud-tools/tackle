@@ -51,6 +51,7 @@ async function until(fn, ms = 4000) {
 }
 
 let serve = null;
+let sendServe = null;
 let browser = null;
 async function cleanup() {
   try {
@@ -58,10 +59,12 @@ async function cleanup() {
   } catch {
     // already gone
   }
-  try {
-    await serve?.stop();
-  } catch {
-    // already gone
+  for (const s of [serve, sendServe]) {
+    try {
+      await s?.stop();
+    } catch {
+      // already gone
+    }
   }
   cleanupBuild();
 }
@@ -797,6 +800,77 @@ async function main() {
     ]),
   );
   await typing.close();
+
+  // ---- sends: one pill per Send, with the kit's label and the line under
+  // it, newest first; a reply redraws it live.
+  console.log('sends');
+  sendServe = await startServe({ sends: true });
+  const su = new URL(sendServe.url);
+  su.hash = `#/p/${sendServe.projectId}`;
+  const sp = await ctx.newPage();
+  sp.on('pageerror', (e) => errors.push(String(e)));
+  await sp.goto(su.toString());
+  await sp.waitForSelector('.send', { timeout: 8000 });
+  const pills = async () =>
+    sp.locator('.send').evaluateAll((els) =>
+      els.map((el) => ({
+        id: Number(el.dataset.send),
+        label: el.querySelector('.kit-pill')?.textContent ?? '',
+        state: el.querySelector('.kit-pill')?.dataset.state ?? '',
+        line: el.querySelector('.kit-msg-line')?.textContent ?? '',
+      })),
+    );
+  const pillsSeen = await pills();
+  const want = [
+    ['sent', 'sent', 'no session has it'],
+    ['failed', 'failed', 'the suite failed after the cut; rolled back'],
+    ['declined', 'declined', 'Court asked to wait for the next run'],
+    ['answered', 'answered', '3 tests cut, the suite passes'],
+    ['working', 'working', 'cutting the answered tests'],
+    ['with_agent', 'with the agent', ''],
+    ['sent', 'sent', 'the agent is mid-turn; it reads this when the turn ends'],
+    ['no_reply', 'no reply', ''],
+  ];
+  check(
+    'the overview lists each send, newest first, with its state',
+    pillsSeen.length === want.length &&
+      want.every(([state], i) => pillsSeen[i].state === state),
+    JSON.stringify(pillsSeen),
+  );
+  for (const [i, [state, label, line]] of want.entries())
+    check(
+      `a ${state}${line ? ` (${line})` : ''} send's pill reads "${label}"`,
+      pillsSeen[i]?.label === label && pillsSeen[i]?.line === line,
+      JSON.stringify(pillsSeen[i]),
+    );
+  await shoot(sp, 'sends');
+  const withAgent = pillsSeen[5];
+  const moved = await fetch(sendServe.base + '/api/agent/reply', {
+    method: 'POST',
+    headers: {
+      'X-Local-Token': sendServe.token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      session: 'seed',
+      ids: [withAgent.id],
+      state: 'working',
+      text: 'reading the notes',
+    }),
+  });
+  check(
+    'the agent marks a send working',
+    moved.status === 204,
+    String(moved.status),
+  );
+  check(
+    'and its pill redraws live with the line',
+    await until(async () => {
+      const p = (await pills()).find((x) => x.id === withAgent.id);
+      return p?.label === 'working' && p?.line === 'reading the notes';
+    }),
+  );
+  await sp.close();
 
   // ---- the first load fails, then the page retries
   console.log('first load retry');

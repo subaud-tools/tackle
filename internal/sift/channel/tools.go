@@ -32,6 +32,12 @@ const proposeSchema = `{"type":"object","properties":{` + roundProp + `,` +
 	`"summary":{"type":"string","description":"two or three sentences on what changed and why"}},` +
 	`"required":["file","base","content","findings","summary"]}}},"required":["recommendations"]}`
 
+const replySchema = `{"type":"object","properties":{` +
+	`"ids":{"type":"array","items":{"type":"integer"},"description":"the sends this is for: each event's send_id"},` +
+	`"state":{"type":"string","enum":["working","answered","declined","failed"]},` +
+	`"text":{"type":"string","description":"working: one line on what you are doing; answered: a short report; declined or failed: why"}},` +
+	`"required":["ids","state","text"]}`
+
 // Tools is sift's tool list. None of them decides a file or presses Send:
 // those are the user's, on the page.
 func Tools() []channelmcp.Tool {
@@ -46,8 +52,10 @@ func Tools() []channelmcp.Tool {
 			InputSchema: schema(`{"type":"object","properties":{}}`)},
 		{Name: "sift_apply", Description: "Apply the round: each file the user accepted or edited and sent is written whole, one branch per repo cut from its fetched base in a worktree. A file whose base changed since the audit is held with the files linked to it; a repo whose primary clone has uncommitted or unpushed work is held, with the reason. With gh and a GitHub remote the branch is pushed and a pull request opened. Returns what happened per repo, the files written and held (with why), what is left for you (files outside a repo, a backlog round's rows), and how many decisions are not sent yet.",
 			InputSchema: schema(`{"type":"object","properties":{"round":{"type":"integer","description":"the round to apply (default: the latest)"},"dry_run":{"type":"boolean","description":"work out what would change and touch nothing"}}}`)},
-		{Name: "sift_status", Description: "The latest round: its state (recommending, ready, sent, applied), files recommended, open, decided and sent, who the review goes to, and any sends not yet delivered.",
+		{Name: "sift_status", Description: "The latest round: its state (recommending, ready, sent, applied), files recommended, open, decided and sent, who the review goes to, and the sends not yet settled, each with its state.",
 			InputSchema: schema(`{"type":"object","properties":{}}`)},
+		{Name: "sift_reply", Description: "Settle the user's Sends by id (each event's send_id), all or nothing: working with one line on what you are doing, then answered with a short report, or declined or failed with why. The page shows each Send's state with your line. Only the session a Send was delivered to may answer it.",
+			InputSchema: schema(replySchema)},
 		{Name: "sift_clean", Description: "Remove what sift apply recorded creating, and nothing else: each round branch, local and on origin, once its pull request is merged or closed (without gh, once its commit is in the base), and any worktree apply left behind. Returns the plan, each step remove or keep with why, and with dry_run removes nothing. Run it after the user has merged or closed the round's pull requests.",
 			InputSchema: schema(`{"type":"object","properties":{"dry_run":{"type":"boolean","description":"show the plan and remove nothing"}}}`)},
 	}
@@ -77,6 +85,9 @@ func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) 
 		Round           int64     `json:"round"`
 		DryRun          bool      `json:"dry_run"`
 		Recommendations []rec.Rec `json:"recommendations"`
+		IDs             []int64   `json:"ids"`
+		State           string    `json:"state"`
+		Text            string    `json:"text"`
 	}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &a); err != nil {
@@ -96,6 +107,8 @@ func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) 
 		return ch.apply(ctx, a.Round, a.DryRun)
 	case "sift_status":
 		return ch.status(ctx)
+	case "sift_reply":
+		return ch.reply(ctx, a.IDs, a.State, a.Text)
 	case "sift_clean":
 		return ch.clean(ctx, a.DryRun)
 	}
@@ -221,6 +234,21 @@ func (ch *Channel) status(ctx context.Context) (string, error) {
 			"not through this process. If a Send never arrived, check that the sift plugin is installed and enabled (/plugin)."
 	}
 	return pretty(out), nil
+}
+
+func (ch *Channel) reply(ctx context.Context, ids []int64, state, text string) (string, error) {
+	if ch.ID.Session == "" {
+		return "", errors.New("this sift channel has no session id (not running under Claude Code or pi), so it has no sends to answer")
+	}
+	if _, err := ch.Client.Do(ctx, http.MethodPost, "/api/agent/reply", map[string]any{
+		"session": ch.ID.Session, "ids": ids, "state": state, "text": text}, nil); err != nil {
+		var se *StatusError
+		if errors.As(err, &se) && se.Code == http.StatusConflict {
+			return "", errors.New(se.Msg)
+		}
+		return "", err
+	}
+	return pretty(map[string]any{"ids": ids, "state": state}), nil
 }
 
 func (ch *Channel) review(ctx context.Context) (string, error) {

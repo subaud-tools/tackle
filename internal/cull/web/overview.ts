@@ -1,10 +1,11 @@
 // overview.ts — the reading column when no item is open: what the list means,
 // the accept-the-lean card, and the by-concern / by-size tables.
 
-import { buttons, card, facts, h } from '/_kit/kit.js';
+import { buttons, card, facts, h, messagePill } from '/_kit/kit.js';
 import type { Ctx } from './app.ts';
 import { byConcern, bySize, bulkTargets } from './bulk.ts';
 import { PINS_SETTING } from './model.ts';
+import { sendLine, sentAgo } from './text.ts';
 
 export interface BucketWords {
   id: string;
@@ -84,6 +85,8 @@ export interface OverviewArgs {
   answeredOf(id: string): string | undefined;
   allOpen: number;
   notice: string;
+  /** the project's newest sends, newest first */
+  sends: RecentSend[];
 }
 
 function table(head: string[], rows: HTMLElement[]): HTMLElement {
@@ -95,7 +98,44 @@ function table(head: string[], rows: HTMLElement[]): HTMLElement {
   );
 }
 
+/** The reading column with no item open, the project's newest sends under
+ * it. */
 export function overview(ctx: Ctx, a: OverviewArgs): HTMLElement {
+  const doc = overviewDoc(ctx, a);
+  if (a.sends.length) doc.append(...sendsSection(a.sends));
+  return doc;
+}
+
+/** Each of the newest sends, newest first: what it carried, how long ago,
+ * and where it stands (the kit's pill, with the agent's line under it). */
+function sendsSection(sends: RecentSend[]): HTMLElement[] {
+  const now = Date.now();
+  return [
+    h('div', { class: 'kit-label' }, 'sends'),
+    h(
+      'ul',
+      { class: 'sends' },
+      sends.map((s) =>
+        h(
+          'li',
+          { class: 'send', dataset: { send: String(s.id) } },
+          h(
+            'span',
+            { class: 'send-what' },
+            (['cut', 'keep', 'merge', 'separate'] as const)
+              .filter((v) => s.counts[v])
+              .map((v) => `${s.counts[v]} ${v}`)
+              .join(' · ') || 'nothing',
+          ),
+          h('span', { class: 'why' }, sentAgo(s.at, now)),
+          messagePill(s.state, sendLine(s)),
+        ),
+      ),
+    ),
+  ];
+}
+
+function overviewDoc(ctx: Ctx, a: OverviewArgs): HTMLElement {
   const note = a.notice ? [h('p', { class: 'notice' }, a.notice)] : [];
   if (!a.words) return answeredView(ctx, a, note);
   const bk = a.words;

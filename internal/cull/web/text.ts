@@ -33,3 +33,36 @@ export function sentText(n: number, to?: string): string {
     ? `Sent ${what} to ${to}.`
     : `Sent ${what}. The next agent that opens cull in this project gets them.`;
 }
+
+/** The line under a held send's pill. */
+export const HELD_LINE =
+  'the agent is mid-turn; it reads this when the turn ends';
+/** The line under a sent send's pill when no session has claimed it. */
+export const NO_SESSION_LINE = 'no session has it';
+
+/** The line under a send's pill: the agent's line or reply once it is
+ * working or settled, the mid-turn line while the harness holds it, or that
+ * no session has it; '' for every other state. */
+export function sendLine(s: RecentSend): string {
+  switch (s.state) {
+    case 'working':
+    case 'answered':
+    case 'declined':
+    case 'failed':
+      return s.reply;
+    case 'sent':
+      if (s.held) return HELD_LINE;
+      return s.claimed ? '' : NO_SESSION_LINE;
+    default:
+      return '';
+  }
+}
+
+/** How long ago a send was sent, from its RFC 3339 time. */
+export function sentAgo(at: string, now: number): string {
+  const min = Math.floor((now - Date.parse(at)) / 60000);
+  if (!(min >= 1)) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h ago`;
+  return `${Math.floor(min / (24 * 60))} d ago`;
+}

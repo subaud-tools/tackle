@@ -19,6 +19,7 @@ import (
 	st "github.com/subaud-tools/tackle/internal/sift/sifttest"
 	"github.com/subaud-tools/tackle/internal/sift/store"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 // ---- serve ------------------------------------------------------------------
@@ -169,6 +170,26 @@ func TestWaitPrintsTheSendAndExits0(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("wait never returned")
+	}
+}
+
+// sift wait reports the send it printed landed: it is with the agent.
+func TestWaitReportsTheSendLanded(t *testing.T) {
+	s := waitRig(t)
+	res := startWait()
+	time.Sleep(300 * time.Millisecond)
+	decideAndPressSend(t, s)
+	select {
+	case r := <-res:
+		if r.code != 0 {
+			t.Fatalf("code %d err %q", r.code, r.errw)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("wait never returned")
+	}
+	sends, err := s.RecentSends(context.Background(), 1, 1)
+	if err != nil || len(sends) != 1 || sends[0].State != msgstate.WithAgent {
+		t.Fatalf("%+v %v", sends, err)
 	}
 }
 

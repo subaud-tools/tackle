@@ -6,6 +6,38 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [sift 0.4.0] - 2026-10-26
+
+### Added
+- The overview lists the newest sends, each with the family's state pill: sent, with the agent, working (with the agent's line under it), answered, declined, failed or no reply. A send made while the agent is mid-turn says so until its turn ends.
+- `sift_reply`: the agent marks a send working, answered, declined or failed, with its reply. Only the session that took the send can settle it.
+- The built-in `sift login` and `logout` (tools-common v0.26.0).
+
+### Changed
+- sift no longer counts a send as delivered when its channel takes it. pi (channels.tools 0.3.0) and the Claude Code plugin (`sift report`) say when the send reaches the agent and when the agent's turn ends; the plugin is regenerated on tools-common v0.27.0.
+- A send whose session died before the send reached the agent is handed to another session once its claim is older than the presence window; a send that reached an agent is never handed out again.
+- The store moves to schema 7: each send gains its state, report token, held flag and reply. Sends already taken by a session become "with the agent".
+
+## [cull 0.5.0] - 2026-10-26
+
+### Added
+- The overview lists the newest sends, each with the family's state pill: sent, with the agent, working (with the agent's line under it), answered, declined, failed or no reply. A send made while the agent is mid-turn says so until its turn ends.
+- `cull_reply`: the agent marks a send working, answered, declined or failed, with its reply. Only the session that took the send can settle it.
+- The built-in `cull login` and `logout` (tools-common v0.26.0).
+
+### Changed
+- cull no longer counts a send as delivered when its channel takes it. pi (channels.tools 0.3.0) and the Claude Code plugin (`cull report`) say when the send reaches the agent and when the agent's turn ends; the plugin is regenerated on tools-common v0.27.0.
+- A send whose session died before the send reached the agent is handed to another session once its claim is older than the presence window; a send that reached an agent is never handed out again, so its answers are never applied twice.
+- The store moves to schema 3: each send gains its state, report token, held flag and reply. Sends already taken by a session become "with the agent".
+
+## [imprint 0.3.0] - 2026-10-26
+
+### Added
+- The built-in `imprint login` and `logout` (tools-common v0.26.0).
+
+### Changed
+- The Claude Code plugin is regenerated on tools-common v0.27.0.
+
 ## [proj 0.10.0] - 2026-10-25
 
 ### Changed

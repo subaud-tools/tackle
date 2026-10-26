@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/cull/store"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 // Handler is the /api/ mux (mounted by localweb, which checks the token).
@@ -25,6 +26,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/agent/review", s.agentReview)
 	mux.HandleFunc("GET /api/agent/wait", s.agentWait)
 	mux.HandleFunc("GET /api/agent/status", s.agentStatus)
+	mux.HandleFunc("POST /api/agent/report", s.agentReport)
+	mux.HandleFunc("POST /api/agent/reply", s.agentReply)
 	mux.HandleFunc("GET /api/events", s.stream)
 	mux.HandleFunc("GET /api/poll", s.poll)
 	mux.HandleFunc("POST /api/stop", s.postStop)
@@ -117,6 +120,34 @@ func actProb(it store.Item) float64 {
 	return v.Verdict.Probabilities["cut"]
 }
 
+// recentSendJSON is one of the project's newest sends on the page: what it
+// carried, where it stands (msgstate), whether the harness holds it while
+// the agent is mid-turn, whether a session claimed it, and the agent's
+// working line or reply.
+type recentSendJSON struct {
+	ID      int64          `json:"id"`
+	At      string         `json:"at"`
+	Counts  store.Counts   `json:"counts"`
+	State   msgstate.State `json:"state"`
+	Held    bool           `json:"held"`
+	Claimed bool           `json:"claimed"`
+	Reply   string         `json:"reply"`
+}
+
+// recentSends is the project's newest sends, newest first, for the page.
+func (s *Server) recentSends(r *http.Request, projectID int64) ([]recentSendJSON, error) {
+	sends, err := s.st.RecentSends(r.Context(), projectID, 10)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]recentSendJSON, 0, len(sends))
+	for _, sd := range sends {
+		out = append(out, recentSendJSON{ID: sd.ID, At: rfc(sd.CreatedAt), Counts: sd.Counts, State: sd.State,
+			Held: sd.Held, Claimed: sd.ClaimedBy != "", Reply: sd.Reply})
+	}
+	return out, nil
+}
+
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	// Read the cursor before any review data: an event racing the reads is
 	// redelivered to the client, never skipped.
@@ -126,9 +157,15 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proj := map[string]any{"id": p.ID, "root": p.Root}
+	recent, err := s.recentSends(r, p.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	run, items, err := s.st.LatestRun(r.Context(), p.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{"project": proj, "run": nil, "items": []itemJSON{}, "blind": false, "cursor": cursor})
+		writeJSON(w, http.StatusOK, map[string]any{"project": proj, "run": nil, "items": []itemJSON{}, "blind": false, "cursor": cursor,
+			"recent_sends": recent})
 		return
 	}
 	if err != nil {
@@ -170,10 +207,11 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		"project": proj,
 		"run": map[string]any{"id": run.ID, "at": rfc(run.At), "mode": run.Mode, "base": run.Base,
 			"summary": run.Summary, "total": run.Total},
-		"items":    out,
-		"blind":    false,
-		"cursor":   cursor,
-		"answered": map[string]int{"total": len(answers), "sent": sent},
+		"items":        out,
+		"blind":        false,
+		"cursor":       cursor,
+		"answered":     map[string]int{"total": len(answers), "sent": sent},
+		"recent_sends": recent,
 	})
 }
 

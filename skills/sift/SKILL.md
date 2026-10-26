@@ -56,7 +56,7 @@ If the session has no sift events (the channel is not attached), the user can ru
 
 ## 4. Act on Send
 
-The event gives the counts of files accepted, edited and rejected, the user's notes, and the next steps. Follow them:
+The event names its `send_id` and gives the counts of files accepted, edited and rejected, the user's notes, and the next steps. A Send that takes more than a moment gets `sift_reply` first, with its `send_id`, `state: working` and one line on what you are doing: the page shows that line under the Send. Then follow the steps:
 
 - **Notes** explain the user's decisions. A rejected file stays as it is.
 - **Recommend again** lists files where you proposed no change and the user disagrees. Read each note, then propose a rewrite of that file with `sift_propose`, using the base hash you were given for it. The page shows the new version, and the user decides it and sends again.
@@ -72,7 +72,7 @@ You can call `sift_apply` with `dry_run` first to see the plan without touching 
 
 ## 5. Report
 
-Tell the user:
+When you are done, settle the Send with `sift_reply`: `answered` with a short report, or `declined` or `failed` with why. Then tell the user:
 
 - each pull request, with its link;
 - each held file, with the reason, and what to do about it;
@@ -93,4 +93,4 @@ A branch whose pull request is still open is kept. Call `sift_clean` with `dry_r
 
 ## When something fails
 
-If a tool returns an error, tell the user what failed, in its own words, and leave the files as they are. `sift_status` shows the round's state, what is open, decided and sent, and whether a Send is still waiting to be delivered.
+If a tool returns an error, tell the user what failed, in its own words, and leave the files as they are. `sift_status` shows the round's state, what is open, decided and sent, and which sends are not settled yet.

@@ -12,6 +12,7 @@ import {
   progress,
   rowTitle,
   editTarget,
+  sendLine,
   unsent,
   validVerdict,
 } from './model.ts';
@@ -330,4 +331,33 @@ test('editTarget names the row an edit chooses to merge into', () => {
   assert.equal(editTarget({ action: 'edit', text: 'x' }), '');
   assert.equal(editTarget({ action: 'edit', verdict: 'delete' }), '');
   assert.equal(editTarget({ action: 'accept' }), '');
+});
+
+test('sendLine: the line under each state of a send', () => {
+  const send = (o: Partial<RecentSend>): RecentSend => ({
+    id: 1,
+    at: '2026-10-26T09:00:00Z',
+    counts: { accept: 1, edit: 0, reject: 0 },
+    state: 'sent',
+    held: false,
+    claimed: true,
+    reply: '',
+    ...o,
+  });
+  const cases: [Partial<RecentSend>, string][] = [
+    [{ state: 'sent', claimed: false }, 'no session has it'],
+    [
+      { state: 'sent', held: true },
+      'the agent is mid-turn; it reads this when the turn ends',
+    ],
+    [{ state: 'sent' }, ''],
+    [{ state: 'with_agent' }, ''],
+    [{ state: 'working', reply: 'applying the files' }, 'applying the files'],
+    [{ state: 'answered', reply: 'one PR opened' }, 'one PR opened'],
+    [{ state: 'declined', reply: 'not this round' }, 'not this round'],
+    [{ state: 'failed', reply: 'the base moved' }, 'the base moved'],
+    [{ state: 'no_reply', reply: 'stale line' }, ''],
+  ];
+  for (const [o, want] of cases)
+    assert.equal(sendLine(send(o)), want, JSON.stringify(o));
 });

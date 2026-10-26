@@ -104,6 +104,20 @@ interface ReviewRun {
   summary: Record<string, number>;
 }
 
+/** One of the project's newest sends (internal/cull/serve recentSendJSON):
+ * what it carried, where it stands, whether the harness holds it while the
+ * agent is mid-turn, whether a session claimed it, and the agent's working
+ * line or reply. */
+interface RecentSend {
+  id: number;
+  at: string;
+  counts: { cut: number; keep: number; merge: number; separate: number };
+  state: import('/_kit/kit.js').MessageState;
+  held: boolean;
+  claimed: boolean;
+  reply: string;
+}
+
 interface Review {
   cursor: string;
   project: { id: number; root: string };
@@ -111,4 +125,6 @@ interface Review {
   items: Item[];
   answered: { total: number; sent: number };
   blind: boolean;
+  /** The project's newest sends, newest first. */
+  recent_sends: RecentSend[];
 }

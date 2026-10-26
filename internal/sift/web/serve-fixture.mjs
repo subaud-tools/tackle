@@ -70,14 +70,16 @@ function waitForAdvert(path, timeoutMs = 15000) {
 export const BACKLOG = join(here, 'testdata', 'backlog.json');
 
 /** Start a seeded serve. opts.scale pads the round to that many rows;
- * opts.recommending leaves one file without a recommendation; opts.fixture
- * seeds another fixture. */
+ * opts.recommending leaves one file without a recommendation; opts.sends
+ * records a send in each state (a backlog fixture); opts.fixture seeds
+ * another fixture. */
 export async function startServe(opts = {}) {
   const { bin, seed } = build();
   const home = mkdtempSync(join(realpathSync(tmpdir()), 'sift-probe-home-'));
   const base = mkdtempSync(join(realpathSync(tmpdir()), 'sift-probe-base-'));
   const args = opts.scale ? ['-scale', String(opts.scale)] : [];
   if (opts.recommending) args.push('-recommending');
+  if (opts.sends) args.push('-sends');
   const env = { ...process.env, SIFT_HOME: home };
   const first = JSON.parse(
     execFileSync(seed, [...args, home, opts.fixture ?? FIXTURE, base], {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/cull/store"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 // clock is a settable time source for presence.
@@ -274,7 +275,7 @@ func TestStatus(t *testing.T) {
 	}
 	a.sendNow(p)
 	w = a.do("GET", "/api/agent/status?root="+url.QueryEscape(root), "")
-	if !strings.Contains(w.Body.String(), `"sent":1`) || !strings.Contains(w.Body.String(), `"undelivered":[`) || strings.Contains(w.Body.String(), `"undelivered":[]`) {
+	if !strings.Contains(w.Body.String(), `"sent":1`) || !strings.Contains(w.Body.String(), `"unsettled":[{`) || !strings.Contains(w.Body.String(), `"state":"sent"`) {
 		t.Fatalf("%s", w.Body)
 	}
 }
@@ -378,5 +379,102 @@ func TestWorkspaceSessionOwnsARepositorysReview(t *testing.T) {
 	}
 	if w := a.wait("ws", ws, 3); w.Code != 200 {
 		t.Fatalf("owner in the workspace got %d %s", w.Code, w.Body)
+	}
+}
+
+// recent is the project's newest sends as the review shows them.
+func (a *agentFx) recent(p store.Project) []recentSendJSON {
+	a.t.Helper()
+	w := a.do("GET", fmt.Sprintf("/api/review?project=%d", p.ID), "")
+	var r struct {
+		RecentSends []recentSendJSON `json:"recent_sends"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil || w.Code != 200 {
+		a.t.Fatalf("review %d %s", w.Code, w.Body)
+	}
+	return r.RecentSends
+}
+
+// The harness's reports and the agent's replies move a send through the
+// HTTP endpoints, each move tells the page (an answers event), and the
+// review shows each: a claim leaves it sent with a token, held marks it,
+// landed puts it with the agent, a working reply gives its line, another
+// session's reply is refused with the reason, and an answer settles it,
+// which the turn's end leaves as it is.
+func TestReportsAndRepliesMoveASend(t *testing.T) {
+	a := newAgentFx(t)
+	root := t.TempDir()
+	a.presence("s1", "pi: one", root)
+	a.presence("s2", "pi: two", root)
+	a.review2("s1", root)
+	p := a.answered(root, "")
+	a.sendNow(p)
+	w := a.wait("s1", root, 3)
+	var got struct {
+		ID     int64  `json:"id"`
+		Report string `json:"report"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 || len(got.Report) != 16 {
+		t.Fatalf("wait %d %s", w.Code, w.Body)
+	}
+	last := func() recentSendJSON {
+		t.Helper()
+		rs := a.recent(p)
+		if len(rs) != 1 || rs[0].ID != got.ID {
+			t.Fatalf("recent sends %+v", rs)
+		}
+		return rs[0]
+	}
+	if s := last(); s.State != msgstate.Sent || !s.Claimed || s.Held {
+		t.Fatalf("claimed %+v", s)
+	}
+	post := func(path string, body any, code int) {
+		t.Helper()
+		if w := a.post(path, body); w.Code != code {
+			t.Fatalf("%s %v: %d %s", path, body, w.Code, w.Body)
+		}
+	}
+	cursor, _ := a.events("")
+	post("/api/agent/report", map[string]string{"session": "s1", "event": "held", "token": got.Report}, 204)
+	if s := last(); s.State != msgstate.Sent || !s.Held {
+		t.Fatalf("held %+v", s)
+	}
+	if _, evs := a.events(cursor); len(evs) != 1 || evs[0].Type != "answers" {
+		t.Fatalf("events after held %+v", evs)
+	}
+	post("/api/agent/report", map[string]string{"session": "s1", "event": "landed", "token": got.Report}, 204)
+	if s := last(); s.State != msgstate.WithAgent || s.Held {
+		t.Fatalf("landed %+v", s)
+	}
+	post("/api/agent/reply", map[string]any{"session": "s1", "ids": []int64{got.ID}, "state": "working", "text": "cutting"}, 204)
+	if s := last(); s.State != msgstate.Working || s.Reply != "cutting" {
+		t.Fatalf("working %+v", s)
+	}
+	if w := a.post("/api/agent/reply", map[string]any{"session": "s2", "ids": []int64{got.ID}, "state": "answered", "text": "x"}); w.Code != 409 || !strings.Contains(w.Body.String(), "another session") {
+		t.Fatalf("s2's reply %d %s", w.Code, w.Body)
+	}
+	post("/api/agent/reply", map[string]any{"session": "s1", "ids": []int64{got.ID}, "state": "answered", "text": "3 tests cut"}, 204)
+	post("/api/agent/report", map[string]string{"session": "s1", "event": "turn_ended"}, 204)
+	if s := last(); s.State != msgstate.Answered || s.Reply != "3 tests cut" {
+		t.Fatalf("answered %+v", s)
+	}
+}
+
+// A send claimed by a session that is gone before it landed goes to the
+// next session's wait.
+func TestASendWhoseClaimerIsGoneGoesToTheNextWait(t *testing.T) {
+	a := newAgentFx(t)
+	root := t.TempDir()
+	a.presence("s1", "pi: one", root)
+	a.review2("s1", root)
+	p := a.answered(root, "")
+	a.sendNow(p)
+	if w := a.wait("s1", root, 3); w.Code != 200 {
+		t.Fatalf("s1 %d %s", w.Code, w.Body)
+	}
+	a.clk.add(presenceTTL + time.Second)
+	a.presence("s2", "pi: two", root)
+	if w := a.wait("s2", root, 3); w.Code != 200 {
+		t.Fatalf("s2 got nothing: %d %s", w.Code, w.Body)
 	}
 }

@@ -1,7 +1,8 @@
 package serve
 
 // The agent side of serve: which agent sessions are connected, who the
-// review goes to, and delivery of Send. The shape (presence, a long-poll
+// review goes to, delivery of Send, and each send's state as the harness
+// reports it and the agent replies. The shape (presence, a long-poll
 // wait woken on send) is copied from cull's serve; sift does not import it.
 // sift has one review per machine, the latest round, so there is no project.
 
@@ -18,10 +19,13 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/sift/row"
 	"github.com/subaud-tools/tackle/internal/sift/store"
+	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
-// presenceTTL is how long a session counts as present after its last check-in.
-const presenceTTL = 90 * time.Second
+// presenceTTL is how long a session counts as present after its last
+// check-in; the store owns the value, since ClaimSend uses it too.
+const presenceTTL = store.PresenceTTL
 
 // maxWait caps one long poll.
 const maxWait = 60
@@ -240,7 +244,7 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 		s.touch(id, "", "") // a connected long poll is a live session
 		// Each send goes to the owner it was sent to while that owner is
 		// present; the store picks and claims it in one statement.
-		sd, ok, err := s.st.ClaimSend(r.Context(), id, s.presentSessions())
+		sd, ok, err := s.st.ClaimSend(r.Context(), id, s.presentSessions(), s.clock())
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
@@ -249,7 +253,7 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if ok {
-			writeJSON(w, http.StatusOK, map[string]any{"id": sd.ID, "round": sd.Round, "counts": sd.Counts, "text": SendText(sd)})
+			writeJSON(w, http.StatusOK, map[string]any{"id": sd.ID, "round": sd.Round, "counts": sd.Counts, "text": SendText(sd), "report": sd.Claim})
 			return
 		}
 		select {
@@ -310,17 +314,80 @@ func (s *Server) agentStatus(w http.ResponseWriter, r *http.Request) {
 		out["open"], out["decided"], out["sent"] = open, decided, sent
 		out["owner"], out["owner_present"] = rd.OwnerLabel, rd.OwnerSession != "" && s.present(rd.OwnerSession)
 	}
-	pend, err := s.st.Undelivered(r.Context())
+	pend, err := s.st.Unsettled(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	und := make([]map[string]any, 0, len(pend))
+	open := make([]map[string]any, 0, len(pend))
 	for _, sd := range pend {
-		und = append(und, map[string]any{"id": sd.ID, "round": sd.Round, "at": rfc(sd.CreatedAt), "counts": sd.Counts})
+		open = append(open, map[string]any{"id": sd.ID, "round": sd.Round, "state": sd.State, "at": rfc(sd.CreatedAt), "counts": sd.Counts})
 	}
-	out["undelivered"] = und
+	out["unsettled"] = open
 	writeJSON(w, http.StatusOK, out)
+}
+
+// agentReport is POST /api/agent/report: the harness says a send it was
+// handed (named by its claim's report token) is held while the agent is
+// mid-turn, or landed in the agent's session, or that the session's turn
+// ended. The store moves each send as msgstate allows.
+func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Session string                 `json:"session"`
+		Event   channelmcp.ReportEvent `json:"event"`
+		Token   string                 `json:"token"`
+	}
+	if err := decode(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch {
+	case b.Session == "":
+		writeErr(w, http.StatusBadRequest, "session is required")
+		return
+	case b.Event == channelmcp.ReportTurnEnded:
+	case b.Event != channelmcp.ReportHeld && b.Event != channelmcp.ReportLanded:
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("event %q: want held, landed or turn_ended", b.Event))
+		return
+	case b.Token == "":
+		writeErr(w, http.StatusBadRequest, "event "+string(b.Event)+" needs the send's token")
+		return
+	}
+	if err := s.st.ReportSends(r.Context(), b.Session, b.Event, b.Token); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// agentReply is POST /api/agent/reply: the agent marks sends it claimed
+// working (with its line), answered, declined or failed (with its reply),
+// all or nothing. A move the lifecycle refuses is 409 with the reason.
+func (s *Server) agentReply(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Session string         `json:"session"`
+		IDs     []int64        `json:"ids"`
+		State   msgstate.State `json:"state"`
+		Text    string         `json:"text"`
+	}
+	if err := decode(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if b.Session == "" {
+		writeErr(w, http.StatusBadRequest, "session is required")
+		return
+	}
+	err := s.st.ReplySends(r.Context(), b.Session, b.IDs, b.State, b.Text)
+	var no store.Refused
+	switch {
+	case errors.As(err, &no):
+		writeErr(w, http.StatusConflict, no.Reason)
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // SendText is the message an agent reads when the user presses Send: the

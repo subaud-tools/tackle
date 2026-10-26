@@ -38,10 +38,18 @@ func Tools() []channelmcp.Tool {
 			InputSchema: schema(`{"type":"object","properties":{` + pathProp + `}}`)},
 		{Name: "cull_review", Description: "Open cull's review page for this project (or the repository at path) in Court's browser and make this session the one his answers are sent to. Returns the page URL and how many items are open. Says so, and opens nothing, when there is nothing to review. Use once; never repeatedly.",
 			InputSchema: schema(`{"type":"object","properties":{` + pathProp + `}}`)},
-		{Name: "cull_status", Description: "What is open, answered and sent for this project (or the repository at path), who owns the review, and any sends not yet delivered.",
+		{Name: "cull_status", Description: "What is open, answered and sent for this project (or the repository at path), who owns the review, and the sends not yet settled, each with its state.",
 			InputSchema: schema(`{"type":"object","properties":{` + pathProp + `}}`)},
+		{Name: "cull_reply", Description: "Settle Court's Sends by id (each event's send_id), all or nothing: working with one line on what you are doing, then answered with a short report, or declined or failed with why. The page shows each Send's state with your line. Only the session a Send was delivered to may answer it.",
+			InputSchema: schema(replySchema)},
 	}
 }
+
+const replySchema = `{"type":"object","properties":{` +
+	`"ids":{"type":"array","items":{"type":"integer"},"description":"the sends this is for: each event's send_id"},` +
+	`"state":{"type":"string","enum":["working","answered","declined","failed"]},` +
+	`"text":{"type":"string","description":"working: one line on what you are doing; answered: a short report; declined or failed: why"}},` +
+	`"required":["ids","state","text"]}`
 
 func pretty(v any) string {
 	b, _ := json.MarshalIndent(v, "", "  ")
@@ -73,6 +81,17 @@ func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) 
 }
 
 func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	if name == "cull_reply" { // its ids are send ids, not test ids
+		var r struct {
+			IDs   []int64 `json:"ids"`
+			State string  `json:"state"`
+			Text  string  `json:"text"`
+		}
+		if err := json.Unmarshal(args, &r); err != nil {
+			return "", fmt.Errorf("bad arguments: %w", err)
+		}
+		return ch.reply(ctx, r.IDs, r.State, r.Text)
+	}
 	var a struct {
 		Path string   `json:"path"`
 		Base string   `json:"base"`
@@ -277,6 +296,21 @@ type agentStatus struct {
 	Answered int    `json:"answered"`
 	Sent     int    `json:"sent"`
 	Owner    string `json:"owner"`
+}
+
+func (ch *Channel) reply(ctx context.Context, ids []int64, state, text string) (string, error) {
+	if ch.ID.Session == "" {
+		return "", errors.New("this cull channel has no session id (not running under Claude Code or pi), so it has no sends to answer")
+	}
+	if _, err := ch.Client.Do(ctx, http.MethodPost, "/api/agent/reply", map[string]any{
+		"session": ch.ID.Session, "ids": ids, "state": state, "text": text}, nil); err != nil {
+		var se *StatusError
+		if errors.As(err, &se) && se.Code == http.StatusConflict {
+			return "", errors.New(se.Msg)
+		}
+		return "", err
+	}
+	return pretty(map[string]any{"ids": ids, "state": state}), nil
 }
 
 func (ch *Channel) status(ctx context.Context, path string) (string, error) {

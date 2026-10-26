@@ -16,6 +16,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/channel"
 	"github.com/subaud-tools/tackle/internal/sift/serve"
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/channelmcp"
 )
 
 const (
@@ -81,7 +82,8 @@ func runWait(args []string, out, errw io.Writer) error {
 		}
 		secs := int((poll + time.Second - 1) / time.Second)
 		var got struct {
-			Text string `json:"text"`
+			Text   string `json:"text"`
+			Report string `json:"report"`
 		}
 		code, err := client.Do(ctx, http.MethodGet, fmt.Sprintf("/api/agent/wait?session=%s&timeout=%d",
 			url.QueryEscape(session), secs), nil, &got)
@@ -93,6 +95,10 @@ func runWait(args []string, out, errw io.Writer) error {
 		}
 		if code == http.StatusOK && got.Text != "" {
 			_, _ = io.WriteString(out, got.Text+"\n")
+			// Printed is in front of the agent: the send is with it.
+			if err := client.Report(ctx, session, channelmcp.ReportLanded, got.Report); err != nil {
+				_, _ = fmt.Fprintf(errw, "sift wait: report landed: %v\n", err)
+			}
 			return nil
 		}
 	}

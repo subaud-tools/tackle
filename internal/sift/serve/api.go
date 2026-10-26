@@ -16,6 +16,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/rec"
 	"github.com/subaud-tools/tackle/internal/sift/row"
 	"github.com/subaud-tools/tackle/internal/sift/store"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 // Handler is the /api/ mux (mounted by localweb, which checks the token).
@@ -34,6 +35,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/agent/review", s.agentReview)
 	mux.HandleFunc("GET /api/agent/wait", s.agentWait)
 	mux.HandleFunc("GET /api/agent/status", s.agentStatus)
+	mux.HandleFunc("POST /api/agent/report", s.agentReport)
+	mux.HandleFunc("POST /api/agent/reply", s.agentReply)
 	mux.HandleFunc("GET /api/events", s.stream)
 	mux.HandleFunc("GET /api/poll", s.poll)
 	mux.HandleFunc("POST /api/stop", s.postStop)
@@ -88,6 +91,20 @@ type applyJSON struct {
 	LastDetail string `json:"last_detail,omitempty"`
 }
 
+// recentSendJSON is one of the round's newest sends on the page: what it
+// carried, where it stands (msgstate), whether the harness holds it while
+// the agent is mid-turn, whether a session claimed it, and the agent's
+// working line or reply.
+type recentSendJSON struct {
+	ID      int64          `json:"id"`
+	At      string         `json:"at"`
+	Counts  store.Counts   `json:"counts"`
+	State   msgstate.State `json:"state"`
+	Held    bool           `json:"held"`
+	Claimed bool           `json:"claimed"`
+	Reply   string         `json:"reply"`
+}
+
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	// Read the cursor before any review data: an event racing the reads is
 	// redelivered to the client, never skipped.
@@ -95,7 +112,7 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	rd, rows, err := s.st.LatestRound(r.Context())
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]any{"cursor": cursor, "round": nil, "rows": []row.Row{}, "files": []fileJSON{},
-			"progress": store.Progress{}, "applies": []applyJSON{}, "sends": 0, "home": home()})
+			"progress": store.Progress{}, "applies": []applyJSON{}, "sends": 0, "recent_sends": []recentSendJSON{}, "home": home()})
 		return
 	}
 	if err != nil {
@@ -116,6 +133,16 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	recent, err := s.st.RecentSends(r.Context(), rd.ID, 10)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rj := make([]recentSendJSON, 0, len(recent))
+	for _, sd := range recent {
+		rj = append(rj, recentSendJSON{ID: sd.ID, At: rfc(sd.CreatedAt), Counts: sd.Counts, State: sd.State,
+			Held: sd.Held, Claimed: sd.ClaimedBy != "", Reply: sd.Reply})
 	}
 	if rows == nil {
 		rows = []row.Row{}
@@ -139,14 +166,15 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		files = append(files, fileOf(it))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"cursor":   cursor,
-		"round":    roundJSON{ID: rd.ID, Kind: rd.Kind, At: rfc(rd.At), Summary: sum, Owner: rd.OwnerLabel},
-		"progress": prog,
-		"rows":     rows,
-		"files":    files,
-		"applies":  aj,
-		"sends":    sends,
-		"home":     home(),
+		"cursor":       cursor,
+		"round":        roundJSON{ID: rd.ID, Kind: rd.Kind, At: rfc(rd.At), Summary: sum, Owner: rd.OwnerLabel},
+		"progress":     prog,
+		"rows":         rows,
+		"files":        files,
+		"applies":      aj,
+		"sends":        sends,
+		"recent_sends": rj,
+		"home":         home(),
 	})
 }
 

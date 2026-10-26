@@ -100,6 +100,21 @@ textarea.sift-field {
   min-height: 1em;
   margin: 8px 0;
 }
+ul.sift-sends {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+li.sift-send {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--kit-line);
+}
+li.sift-send .sift-send-what {
+  min-width: 14em;
+}
 table.sift-rows {
   width: 100%;
   border-collapse: separate;

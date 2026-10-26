@@ -1318,6 +1318,69 @@ async function main() {
   );
   await bpr.close();
 
+  // ---- 10b. sends: one pill per Send, with the kit's label and the line
+  // under it, newest first; a reply redraws it live.
+  console.log('sends');
+  const sendServe = await startServe({ fixture: BACKLOG, sends: true });
+  serves.push(sendServe);
+  const sp = await open(pageUrl(sendServe), '.sift-send');
+  const pills = async () =>
+    sp.locator('.sift-send').evaluateAll((els) =>
+      els.map((el) => ({
+        id: Number(el.dataset.send),
+        label: el.querySelector('.kit-pill')?.textContent ?? '',
+        state: el.querySelector('.kit-pill')?.dataset.state ?? '',
+        line: el.querySelector('.kit-msg-line')?.textContent ?? '',
+      })),
+    );
+  const seen = await pills();
+  const want = [
+    ['sent', 'sent', 'no session has it'],
+    ['failed', 'failed', 'the base moved since the audit'],
+    ['declined', 'declined', 'the user asked to wait for the next round'],
+    ['answered', 'answered', 'one pull request opened'],
+    ['working', 'working', 'applying the accepted files'],
+    ['with_agent', 'with the agent', ''],
+    ['sent', 'sent', 'the agent is mid-turn; it reads this when the turn ends'],
+    ['no_reply', 'no reply', ''],
+  ];
+  check(
+    'the overview lists each send, newest first, with its state',
+    seen.length === want.length &&
+      want.every(([state], i) => seen[i].state === state),
+    JSON.stringify(seen),
+  );
+  for (const [i, [state, label, line]] of want.entries())
+    check(
+      `a ${state}${line ? ` (${line})` : ''} send's pill reads "${label}"`,
+      seen[i]?.label === label && seen[i]?.line === line,
+      JSON.stringify(seen[i]),
+    );
+  await shoot(sp, 'sends');
+  const withAgent = seen[5];
+  const moved = await apiOf(sendServe).api('/api/agent/reply', {
+    method: 'POST',
+    body: JSON.stringify({
+      session: 'seed',
+      ids: [withAgent.id],
+      state: 'working',
+      text: 'reading the notes',
+    }),
+  });
+  check(
+    'the agent marks a send working',
+    moved.status === 204,
+    String(moved.status),
+  );
+  check(
+    'and its pill redraws live with the line',
+    await until(async () => {
+      const p = (await pills()).find((x) => x.id === withAgent.id);
+      return p?.label === 'working' && p?.line === 'reading the notes';
+    }),
+  );
+  await sp.close();
+
   // ---- 11. a round the size of a real one
   console.log('scale');
   const bigServe = await startServe({ scale: 653 });

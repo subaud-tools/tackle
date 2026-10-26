@@ -5,7 +5,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,8 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/sift/row"
+	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/msgstate"
 )
 
 // AddResult is what AddRows did.
@@ -232,14 +236,23 @@ type Note struct {
 // Send is one press of Send. ID is 0 when nothing was new (nothing is
 // recorded then).
 type Send struct {
-	ID          int64
-	Round       int64
-	CreatedAt   time.Time
-	Counts      Counts
-	Notes       []Note
-	Owner       string // the review's owner session at send time ("" if none)
-	DeliveredTo string // "" until delivered
-	DeliveredAt time.Time
+	ID        int64
+	Round     int64
+	CreatedAt time.Time
+	Counts    Counts
+	Notes     []Note
+	Owner     string // the review's owner session at send time ("" if none)
+	// ClaimedBy is the session whose wait took the send ("" until one did),
+	// at ClaimedAt, with Claim, the report token the harness names it by.
+	ClaimedBy string
+	ClaimedAt time.Time
+	Claim     string
+	// State is where the send stands (msgstate); Held, that the harness
+	// holds it while the agent is mid-turn; Reply, the agent's working line
+	// or its reply.
+	State msgstate.State
+	Held  bool
+	Reply string
 	// Files and Rows name the decisions this Send marked sent (file keys,
 	// row ids); not recorded.
 	Files, Rows []string
@@ -371,7 +384,7 @@ func where(r row.Row) string {
 	return at + " · " + r.Check
 }
 
-const sendCols = `id, round_id, created_at, counts, notes, owner, delivered_to, delivered_at`
+const sendCols = `id, round_id, created_at, counts, notes, owner, delivered_to, delivered_at, claim, state, held, reply`
 
 type scanner interface{ Scan(...any) error }
 
@@ -383,12 +396,12 @@ func scanSend(r scanner) (Send, error) {
 		to           sql.NullString
 		dat          sql.NullInt64
 	)
-	if err := r.Scan(&sd.ID, &sd.Round, &at, &counts, &note, &sd.Owner, &to, &dat); err != nil {
+	if err := r.Scan(&sd.ID, &sd.Round, &at, &counts, &note, &sd.Owner, &to, &dat, &sd.Claim, &sd.State, &sd.Held, &sd.Reply); err != nil {
 		return Send{}, err
 	}
-	sd.CreatedAt, sd.DeliveredTo = time.UnixMilli(at), to.String
+	sd.CreatedAt, sd.ClaimedBy = time.UnixMilli(at), to.String
 	if dat.Valid {
-		sd.DeliveredAt = time.UnixMilli(dat.Int64)
+		sd.ClaimedAt = time.UnixMilli(dat.Int64)
 	}
 	if err := json.Unmarshal([]byte(counts), &sd.Counts); err != nil {
 		return Send{}, err
@@ -399,37 +412,74 @@ func scanSend(r scanner) (Send, error) {
 	return sd, nil
 }
 
-// ClaimSend delivers to session the oldest undelivered send it may take:
-// one whose recorded owner is session, has no owner, or whose owner is not
-// in present (the sessions serve sees connected). Picking and marking it
-// delivered is one statement, so two claimers never both get it. ok is
-// false when there is none.
-func (s *Store) ClaimSend(ctx context.Context, session string, present []string) (Send, bool, error) {
+// PresenceTTL is how long a session counts as present after its last
+// check-in. serve uses it to decide presence, and ClaimSend to decide that a
+// claim by a session not in present is old enough to take back.
+const PresenceTTL = 90 * time.Second
+
+// ClaimSend hands session the oldest send it may take: one whose recorded
+// owner is session, has no owner, or whose owner is not in present (the
+// sessions serve sees connected). A send is claimable while no session has
+// claimed it, or while it is still sent, its claimer is not in present and
+// it was claimed more than PresenceTTL before now: a session that died
+// before the send landed does not strand it, and a caller whose present was
+// read before another session claimed does not take the send from it. A
+// send that reached the agent is never handed out again. The claim records
+// the session, now and a new report token, and leaves the send sent: the
+// harness's landed report moves it. Picking and claiming it is one
+// statement, so two claimers never both get it; the round's revision moves
+// with it, for the page. ok is false when there is none.
+func (s *Store) ClaimSend(ctx context.Context, session string, present []string, now time.Time) (Send, bool, error) {
 	var sd Send
 	found := true
-	args := []any{session, time.Now().UnixMilli(), session}
-	notIn := " OR 1" // nobody present: every owner is gone
-	if len(present) > 0 {
-		notIn = " OR owner NOT IN (?" + strings.Repeat(",?", len(present)-1) + ")"
+	// notIn is "col is not one of present"; with nobody present, every
+	// owner and claimer is gone.
+	notIn := func(col string) string {
+		if len(present) == 0 {
+			return "1"
+		}
+		return col + " NOT IN (?" + strings.Repeat(",?", len(present)-1) + ")"
+	}
+	claimable := `(delivered_to IS NULL OR (state = 'sent' AND ` + notIn("delivered_to") + ` AND delivered_at <= ?))`
+	stale := now.Add(-PresenceTTL).UnixMilli()
+	args := []any{session, now.UnixMilli(), reportToken()}
+	addPresent := func() {
 		for _, p := range present {
 			args = append(args, p)
 		}
 	}
+	addPresent()
+	args = append(args, stale)
+	addPresent()
+	args = append(args, stale)
+	args = append(args, session)
+	addPresent()
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
 		var err error
-		sd, err = scanSend(tx.QueryRowContext(ctx, `UPDATE sends SET delivered_to = ?, delivered_at = ?
-			WHERE id = (SELECT id FROM sends WHERE delivered_to IS NULL AND (owner = ? OR owner = ''`+notIn+`) ORDER BY id LIMIT 1)
-			AND delivered_to IS NULL RETURNING `+sendCols, args...))
+		sd, err = scanSend(tx.QueryRowContext(ctx, `UPDATE sends SET delivered_to = ?, delivered_at = ?, claim = ?
+			WHERE `+claimable+` AND id = (SELECT id FROM sends WHERE `+claimable+` AND (owner = ? OR owner = '' OR `+notIn("owner")+`) ORDER BY id LIMIT 1)
+			RETURNING `+sendCols, args...))
 		if errors.Is(err, sql.ErrNoRows) {
 			found = false
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return bump(ctx, tx, sd.Round) // the page shows who has it
 	})
 	if err != nil {
 		return Send{}, false, err
 	}
 	return sd, found, nil
+}
+
+// reportToken is a claim's report token: 16 random hex characters, which
+// the Claude Code mod passes as an argument, so alphanumeric.
+func reportToken() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b) // crypto/rand.Read never fails
+	return hex.EncodeToString(b)
 }
 
 // Sends counts the round's sends.
@@ -439,9 +489,23 @@ func (s *Store) Sends(ctx context.Context, roundID int64) (int, error) {
 	return n, err
 }
 
-// Undelivered lists the sends not yet delivered, oldest first.
-func (s *Store) Undelivered(ctx context.Context) ([]Send, error) {
-	rs, err := s.db.QueryContext(ctx, `SELECT `+sendCols+` FROM sends WHERE delivered_to IS NULL ORDER BY id`)
+// Unclaimed lists the sends no session has claimed, oldest first.
+func (s *Store) Unclaimed(ctx context.Context) ([]Send, error) {
+	return listSends(ctx, s.db, `WHERE delivered_to IS NULL ORDER BY id`)
+}
+
+// Unsettled lists the sends not answered, declined or failed, oldest first.
+func (s *Store) Unsettled(ctx context.Context) ([]Send, error) {
+	return listSends(ctx, s.db, `WHERE state NOT IN ('answered', 'declined', 'failed') ORDER BY id`)
+}
+
+// RecentSends lists the round's newest n sends, newest first.
+func (s *Store) RecentSends(ctx context.Context, roundID int64, n int) ([]Send, error) {
+	return listSends(ctx, s.db, `WHERE round_id = ? ORDER BY id DESC LIMIT ?`, roundID, n)
+}
+
+func listSends(ctx context.Context, db querier, where string, args ...any) ([]Send, error) {
+	rs, err := db.QueryContext(ctx, `SELECT `+sendCols+` FROM sends `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -455,6 +519,118 @@ func (s *Store) Undelivered(ctx context.Context) ([]Send, error) {
 		out = append(out, sd)
 	}
 	return out, rs.Err()
+}
+
+// ReportSends applies a harness's report for session: held marks the
+// token's send held while it is still sent; landed moves it to with the
+// agent and clears held; turn_ended moves each send session claimed that is
+// with the agent or working to no reply. Each move is one msgstate.Allowed
+// draws, and a move it refuses is skipped, so a late landed report leaves a
+// working send working. Each round a report changes has its revision
+// bumped, so the page redraws.
+func (s *Store) ReportSends(ctx context.Context, session string, event channelmcp.ReportEvent, token string) error {
+	switch event {
+	case channelmcp.ReportHeld, channelmcp.ReportLanded, channelmcp.ReportTurnEnded:
+	default:
+		return fmt.Errorf("event %q: want held, landed or turn_ended", event)
+	}
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		// The first statement is a write (the main connection begins deferred).
+		if _, err := tx.ExecContext(ctx, `UPDATE sends SET held = held WHERE delivered_to = ?`, session); err != nil {
+			return err
+		}
+		where, args := `WHERE delivered_to = ? AND claim = ?`, []any{session, token}
+		if event == channelmcp.ReportTurnEnded {
+			where, args = `WHERE delivered_to = ?`, []any{session}
+		}
+		sends, err := listSends(ctx, tx, where, args...)
+		if err != nil {
+			return err
+		}
+		for _, sd := range sends {
+			state, held := sd.State, sd.Held
+			switch event {
+			case channelmcp.ReportHeld:
+				held = held || sd.State == msgstate.Sent
+			case channelmcp.ReportLanded:
+				if msgstate.Allowed(sd.State, msgstate.WithAgent) {
+					state = msgstate.WithAgent
+				}
+				held = false
+			case channelmcp.ReportTurnEnded:
+				if msgstate.Allowed(sd.State, msgstate.NoReply) {
+					state = msgstate.NoReply
+				}
+			}
+			if state == sd.State && held == sd.Held {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE sends SET state = ?, held = ? WHERE id = ?`, state, held, sd.ID); err != nil {
+				return err
+			}
+			if err := bump(ctx, tx, sd.Round); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Refused is a reply the lifecycle refuses, with the reason.
+type Refused struct{ Reason string }
+
+func (r Refused) Error() string { return r.Reason }
+
+// ReplySends is the agent's acknowledgement of sends ids, all or nothing:
+// working with its line, or answered, declined or failed with its reply.
+// Every id must be a send session claimed that msgstate.Acknowledge lets
+// move to state; one already in the settled state asked for is left as it
+// is, and one already working takes the new line. Anything else refuses
+// the whole call (Refused) and changes nothing.
+func (s *Store) ReplySends(ctx context.Context, session string, ids []int64, state msgstate.State, text string) error {
+	if state != msgstate.Working && !msgstate.Final(state) {
+		return Refused{fmt.Sprintf("state %q: want working, answered, declined or failed", state)}
+	}
+	if len(ids) == 0 {
+		return Refused{"ids: name the sends this reply is for"}
+	}
+	text = strings.TrimSpace(text)
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		// The first statement is a write (the main connection begins deferred).
+		if _, err := tx.ExecContext(ctx, `UPDATE sends SET held = held WHERE delivered_to = ?`, session); err != nil {
+			return err
+		}
+		var move []Send
+		for _, id := range ids {
+			sd, err := scanSend(tx.QueryRowContext(ctx, `SELECT `+sendCols+` FROM sends WHERE id = ?`, id))
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				return Refused{fmt.Sprintf("no send %d", id)}
+			case err != nil:
+				return err
+			case sd.ClaimedBy == "":
+				return Refused{fmt.Sprintf("send %d: no session has it yet", id)}
+			case sd.ClaimedBy != session:
+				return Refused{fmt.Sprintf("send %d: another session has it", id)}
+			case sd.State == state && msgstate.Final(state):
+				continue
+			case sd.State == state:
+				// working again: only the line changes
+			case !msgstate.Acknowledge(sd.State, state):
+				return Refused{fmt.Sprintf("send %d: is %s and cannot be marked %s", id, sd.State.Label(), state.Label())}
+			}
+			move = append(move, sd)
+		}
+		for _, sd := range move {
+			if _, err := tx.ExecContext(ctx, `UPDATE sends SET state = ?, held = 0, reply = ? WHERE id = ?`, state, text, sd.ID); err != nil {
+				return err
+			}
+			if err := bump(ctx, tx, sd.Round); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Apply is what sift apply did in one repo for a round.

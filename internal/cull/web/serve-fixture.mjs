@@ -74,7 +74,8 @@ function waitForAdvert(path, timeoutMs = 15000) {
   });
 }
 
-/** Start a seeded serve. opts.fixture overrides the seeded review.json. */
+/** Start a seeded serve. opts.fixture overrides the seeded review.json;
+ * opts.sends records a send in each state. */
 export async function startServe(opts = {}) {
   const { bin, seed } = build();
   const home = mkdtempSync(join(realpathSync(tmpdir()), 'cull-probe-home-'));
@@ -86,7 +87,7 @@ export async function startServe(opts = {}) {
         env: { ...process.env, CULL_HOME: home },
       }).toString(),
     );
-  const first = run();
+  const first = run(opts.sends ? ['-sends'] : []);
 
   let stderr = '';
   const proc = spawn(bin, SERVE_ARGS, {

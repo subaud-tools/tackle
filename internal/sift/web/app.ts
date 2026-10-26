@@ -28,6 +28,7 @@ import {
   initTheme,
   list,
   live,
+  messagePill,
   type Chip,
   type LiveStatus,
   type StatusTone,
@@ -68,6 +69,8 @@ import {
   progress,
   rowMeta,
   rowTitle,
+  sendLine,
+  sentAgo,
   unsent,
   verdictOf,
   type Entry,
@@ -104,6 +107,13 @@ function parseRoute(hash: string): string | null {
 function signature(r: Review): string {
   return (
     `${r.round?.id ?? 0}|${r.progress?.state}|${r.sends}|${r.applies.map((a) => a.repo + a.state).join(',')}|` +
+    (r.recent_sends ?? [])
+      .map(
+        (x) =>
+          `${x.id}:${x.state}:${x.held ? 1 : 0}:${x.claimed ? 1 : 0}:${x.reply}`,
+      )
+      .join(';') +
+    '|' +
     r.files
       .map((f) => {
         const d = f.decision;
@@ -681,7 +691,47 @@ export function boot(): void {
     lastView = vkey;
   }
 
+  /** The overview, with the round's newest sends under it. */
   function overview(): HTMLElement {
+    const doc = overviewDoc();
+    const sends = review?.recent_sends ?? [];
+    if (sends.length) doc.append(...sendsSection(sends));
+    return doc;
+  }
+
+  /** Each of the newest sends, newest first: what it carried, how long ago,
+   * and where it stands (the kit's pill, with the agent's line under it). */
+  function sendsSection(sends: RecentSend[]): HTMLElement[] {
+    const now = Date.now();
+    return [
+      h('div', { class: 'kit-label' }, 'sends'),
+      h(
+        'ul',
+        { class: 'sift-sends' },
+        sends.map((s) =>
+          h(
+            'li',
+            { class: 'sift-send', dataset: { send: String(s.id) } },
+            h(
+              'span',
+              { class: 'sift-send-what' },
+              [
+                s.counts.accept ? `${s.counts.accept} accepted` : '',
+                s.counts.edit ? `${s.counts.edit} edited` : '',
+                s.counts.reject ? `${s.counts.reject} rejected` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ') || 'nothing',
+            ),
+            h('span', { class: 'kit-muted' }, sentAgo(s.at, now)),
+            messagePill(s.state, sendLine(s)),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  function overviewDoc(): HTMLElement {
     if (perItem(review)) {
       const p = progress(review?.rows ?? []);
       if (!review?.rows.length)
