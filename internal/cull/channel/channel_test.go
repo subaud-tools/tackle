@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,13 +14,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/cull/serve"
 	"github.com/subaud-tools/tackle/internal/cull/store"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 const fakeKey = "ts-fake-0000"
@@ -258,9 +257,8 @@ type ident struct{ session, label, cwd string }
 
 func (e *env) connect(id ident) *client {
 	e.t.Helper()
-	cl := NewClient(nil)
-	cl.Find = serve.Running
-	return e.connectChannel(New(Identity{Session: id.session, Harness: "claude", Label: id.label, CWD: id.cwd}, cl, "test"))
+	cl := pageserve.NewClient(serve.Live(), nil)
+	return e.connectChannel(pageserve.New(Spec("test"), pageserve.Identity{Session: id.session, Harness: "claude", Label: id.label, CWD: id.cwd}, cl))
 }
 
 // connectChannel is connect for a channel the test built itself.
@@ -679,20 +677,6 @@ func TestSendReachesThisChannelOnceAndNoOtherProject(t *testing.T) {
 	assertNoKey(t, e, a, b)
 }
 
-func TestClientStartsServeWhenNotRunning(t *testing.T) {
-	t.Setenv("CULL_HOME", t.TempDir())
-	started := 0
-	cl := NewClient(func() (serve.Advert, error) { started++; return serve.Advert{}, errors.New("cannot start in a test") })
-	_, err := cl.Do(context.Background(), "GET", "/api/agent/status", nil, nil)
-	if started != 1 || err == nil || !strings.Contains(err.Error(), "starting cull serve") {
-		t.Errorf("started %d, err %v", started, err)
-	}
-	// The passive copy used by nothing else never starts it.
-	if _, err := NewClient(nil).Do(context.Background(), "GET", "/x", nil, nil); !errors.Is(err, ErrNoServe) {
-		t.Errorf("err = %v", err)
-	}
-}
-
 func TestReviewWithoutServeSaysSo(t *testing.T) {
 	e := newEnv(t, false)
 	c := e.connect(ident{"s-1", "claude · one", project(t)})
@@ -712,43 +696,6 @@ func assertNoKey(t *testing.T, e *env, cs ...*client) {
 	}
 	if strings.Contains(e.logs.String(), fakeKey) {
 		t.Errorf("the key appears in the channel's log")
-	}
-}
-
-func TestClientSerializesServeStarts(t *testing.T) {
-	var mu sync.Mutex
-	var live *serve.Advert
-	var starts, active, maxActive int32
-	cl := NewClient(func() (serve.Advert, error) {
-		n := atomic.AddInt32(&active, 1)
-		if n > atomic.LoadInt32(&maxActive) {
-			atomic.StoreInt32(&maxActive, n)
-		}
-		atomic.AddInt32(&starts, 1)
-		time.Sleep(100 * time.Millisecond)
-		atomic.AddInt32(&active, -1)
-		a := serve.Advert{Base: "http://127.0.0.1:1", Token: "t", PID: 1}
-		mu.Lock()
-		live = &a
-		mu.Unlock()
-		return a, nil
-	})
-	cl.Find = func() (serve.Advert, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if live == nil {
-			return serve.Advert{}, serve.ErrNotRunning
-		}
-		return *live, nil
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); _, _ = cl.Do(context.Background(), "GET", "/x", nil, nil) }()
-	}
-	wg.Wait()
-	if starts != 1 || maxActive != 1 {
-		t.Errorf("starts %d, max concurrent %d; want 1, 1", starts, maxActive)
 	}
 }
 

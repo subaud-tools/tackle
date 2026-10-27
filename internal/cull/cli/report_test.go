@@ -4,11 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
-	"github.com/subaud-tools/tackle/internal/cull/serve"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // cull report, which the Claude Code plugin's mod runs, posts the report to
@@ -30,13 +29,7 @@ func TestReportPostsToServe(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(srv.Close)
-	adv, _ := json.Marshal(serve.Advert{Base: srv.URL, Token: "tok", PID: os.Getpid()})
-	if err := os.MkdirAll(serve.LiveDir(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(serve.AdvertPath(), adv, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeEntry(t, pageserve.Entry{Base: srv.URL, Token: "tok"})
 	for _, c := range []struct {
 		args  []string
 		event string

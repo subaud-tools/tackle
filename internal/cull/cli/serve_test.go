@@ -1,8 +1,11 @@
 package cli
 
+// Starting serve in the background and opening the browser are pageserve's
+// ServeCommand, tested there; this tests cull's part: the path resolves to
+// its project's review, and serve's flags reach the running serve's entry.
+
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,50 +17,34 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/cull/serve"
 	"github.com/subaud-tools/tackle/internal/cull/store"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
-func serveRig(t *testing.T) (root string, opened *[]string, started *int) {
+func serveRig(t *testing.T) (root string) {
 	t.Helper()
 	t.Setenv("CULL_HOME", t.TempDir())
-	root = t.TempDir()
-	opened, started = &[]string{}, new(int)
-	origOpen, origStart := openBrowser, startDetached
-	openBrowser = func(u string) error { *opened = append(*opened, u); return nil }
-	startDetached = func(int) (serve.Advert, error) {
-		*started++
-		return serve.Advert{URL: "http://127.0.0.1:1/?t=tok", Base: "http://127.0.0.1:1"}, nil
-	}
-	t.Cleanup(func() { openBrowser, startDetached = origOpen, origStart })
-	return root, opened, started
+	return t.TempDir()
 }
 
-func writeAdvertFile(t *testing.T, a serve.Advert) {
+func writeEntry(t *testing.T, e pageserve.Entry) {
 	t.Helper()
-	a.PID = os.Getpid()
-	if err := os.MkdirAll(serve.LiveDir(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(a)
-	if err := os.WriteFile(serve.AdvertPath(), b, 0o600); err != nil {
+	e.PID = os.Getpid()
+	if err := serve.Live().Advertise(e); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestServeStartsAndOpensProject(t *testing.T) {
-	root, opened, started := serveRig(t)
-	code, out, errw := run(t, "", "serve", root)
-	if code != 0 {
-		t.Fatalf("code %d: %s", code, errw)
+func TestServePageOpensTheProjectsReview(t *testing.T) {
+	root := serveRig(t)
+	fragment, note, err := servePage(context.Background(), []string{root})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if *started != 1 || !strings.Contains(out, "cull serve started: http://127.0.0.1:1") {
-		t.Errorf("started=%d out=%q", *started, out)
+	if want := "#/p/" + projectID(t, root); fragment != want {
+		t.Errorf("fragment %q, want %q", fragment, want)
 	}
-	if !strings.Contains(out, "no review for") || !strings.Contains(out, "run cull check") {
-		t.Errorf("want no-review note: %q", out)
-	}
-	want := "http://127.0.0.1:1/?t=tok#/p/" + projectID(t, root)
-	if len(*opened) != 1 || (*opened)[0] != want {
-		t.Errorf("opened %v, want [%s]", *opened, want)
+	if !strings.Contains(note, "no review for") || !strings.Contains(note, "run cull check") {
+		t.Errorf("want no-review note: %q", note)
 	}
 }
 
@@ -78,7 +65,7 @@ func projectID(t *testing.T, root string) string {
 }
 
 func TestServeSubdirOpensSameProject(t *testing.T) {
-	root, opened, _ := serveRig(t)
+	root := serveRig(t)
 	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
 		t.Skipf("git init: %v %s", err, out)
 	}
@@ -90,40 +77,23 @@ func TestServeSubdirOpensSameProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := "#/p/" + projectID(t, real)
 	for _, p := range []string{root, sub} {
-		if code, _, errw := run(t, "", "serve", p); code != 0 {
-			t.Fatalf("code %d: %s", code, errw)
+		if fragment, _, err := servePage(context.Background(), []string{p}); err != nil || fragment != want {
+			t.Errorf("%s: %q %v, want %q", p, fragment, err, want)
 		}
-	}
-	want := "http://127.0.0.1:1/?t=tok#/p/" + projectID(t, real)
-	if len(*opened) != 2 || (*opened)[0] != want || (*opened)[1] != want {
-		t.Errorf("opened %v, want both %s", *opened, want)
 	}
 }
 
 func TestServeReusesRunning(t *testing.T) {
-	root, opened, started := serveRig(t)
-	writeAdvertFile(t, serve.Advert{URL: "http://127.0.0.1:2/?t=x", Base: "http://127.0.0.1:2"})
-	code, out, errw := run(t, "", "serve", root)
+	root := serveRig(t)
+	writeEntry(t, pageserve.Entry{URL: "http://127.0.0.1:2/?t=x", Base: "http://127.0.0.1:2"})
+	code, out, errw := run(t, "", "serve", root, "--no-open")
 	if code != 0 {
 		t.Fatalf("code %d: %s", code, errw)
 	}
-	if *started != 0 || !strings.Contains(out, "cull serve is running: http://127.0.0.1:2") {
-		t.Errorf("started=%d out=%q", *started, out)
-	}
-	want := "http://127.0.0.1:2/?t=x#/p/" + projectID(t, root)
-	if len(*opened) != 1 || (*opened)[0] != want {
-		t.Errorf("opened %v, want [%s]", *opened, want)
-	}
-}
-
-func TestServeNoOpen(t *testing.T) {
-	root, opened, _ := serveRig(t)
-	if code, _, errw := run(t, "", "serve", root, "--no-open"); code != 0 {
-		t.Fatalf("code %d: %s", code, errw)
-	}
-	if len(*opened) != 0 {
-		t.Errorf("opened %v", *opened)
+	if !strings.Contains(out, "cull serve is running: http://127.0.0.1:2") || !strings.Contains(out, "no review for") {
+		t.Errorf("out=%q", out)
 	}
 }
 
@@ -134,10 +104,10 @@ func TestServeStop(t *testing.T) {
 		t.Errorf("code %d out %q", code, out)
 	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = os.Remove(serve.AdvertPath())
+		_ = os.Remove(serve.Live().ServePath())
 	}))
 	defer ts.Close()
-	writeAdvertFile(t, serve.Advert{URL: ts.URL, Base: ts.URL})
+	writeEntry(t, pageserve.Entry{URL: ts.URL, Base: ts.URL})
 	code, out, errw := run(t, "", "serve", "--stop")
 	if code != 0 || !strings.Contains(out, "cull serve stopped") {
 		t.Errorf("code %d out %q err %q", code, out, errw)

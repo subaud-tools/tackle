@@ -13,9 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/subaud-tools/tackle/internal/cull/channel"
 	"github.com/subaud-tools/tackle/internal/cull/discover"
-	"github.com/subaud-tools/tackle/internal/cull/serve"
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/channelmcp"
 )
@@ -62,7 +60,7 @@ func runWait(args []string, out, errw io.Writer) error {
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
 	}
-	client := channel.NewClient(func() (serve.Advert, error) { return startDetached(0) })
+	client := client()
 	session := "wait:" + strconv.Itoa(os.Getpid())
 	label := "cull wait · " + root
 
