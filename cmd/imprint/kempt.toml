@@ -24,13 +24,15 @@ notes = [
   tool = "imprint"
   bin = "imprint"
 
-  # Claude Code: the imprint plugin from tackle's marketplace. The next plain
-  # `claude` session installs it at user scope. Its .mcp.json runs `imprint
+  # Claude Code: the imprint plugin from the subaud-tools marketplace
+  # (subaud-tools/plugins); the old tackle marketplace and its imprint@tackle
+  # are removed. The next plain `claude` session installs it at user scope. Its .mcp.json runs `imprint
   # channel` for the tools and its mod runs `imprint watch`, which turns each
   # progress message into a turn.
   [[packages.imprint.json-merge]]
   file = "~/.claude/settings.json"
-  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" }, autoUpdate = true } }, enabledPlugins = { "imprint@tackle" = true } }
+  merge = { extraKnownMarketplaces = { subaud-tools = { source = { source = "github", repo = "subaud-tools/plugins" }, autoUpdate = true } }, enabledPlugins = { "imprint@subaud-tools" = true } }
+  remove = ["extraKnownMarketplaces.tackle", "enabledPlugins.imprint@tackle"]
 
   # The bare server the plugin replaces, or the channel would start twice.
   [[packages.imprint.json-merge]]

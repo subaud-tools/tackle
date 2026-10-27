@@ -29,7 +29,3 @@ __pycache__/
 # Design docs never live in this public repo: specs and plans are in private tools-ops (docs/<repo>/).
 docs/specs/
 docs/plans/
-
-# Claude Code writes the mods API types here when a plugin is loaded with --plugin-dir.
-cmd/*/plugin/tsconfig.json
-cmd/*/plugin/.claude-plugin/types/

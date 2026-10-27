@@ -126,7 +126,7 @@ func TestDoctorPageServerAndChannels(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("notes failed doctor: %d", code)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"enabledPlugins":{"sift@tackle":true}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"enabledPlugins":{"sift@subaud-tools":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte("[mcp_servers.sift]\ncommand = \"sift\"\nargs = [\"channel\"]\n"), 0o600); err != nil {

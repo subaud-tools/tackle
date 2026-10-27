@@ -20,13 +20,15 @@ only = { os = "darwin" }
   tool = "cull"
   bin = "cull"
 
-  # Claude Code: the cull plugin from tackle's marketplace. The next plain
-  # `claude` session installs it at user scope. Its .mcp.json runs `cull
+  # Claude Code: the cull plugin from the subaud-tools marketplace
+  # (subaud-tools/plugins); the old tackle marketplace and its cull@tackle
+  # are removed. The next plain `claude` session installs it at user scope. Its .mcp.json runs `cull
   # channel` for the tools and its mod runs `cull watch`, which turns each of
   # Court's answers into a turn.
   [[packages.cull.json-merge]]
   file = "~/.claude/settings.json"
-  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" }, autoUpdate = true } }, enabledPlugins = { "cull@tackle" = true } }
+  merge = { extraKnownMarketplaces = { subaud-tools = { source = { source = "github", repo = "subaud-tools/plugins" }, autoUpdate = true } }, enabledPlugins = { "cull@subaud-tools" = true } }
+  remove = ["extraKnownMarketplaces.tackle", "enabledPlugins.cull@tackle"]
 
   # The bare server the plugin replaces, or the channel would start twice.
   [[packages.cull.json-merge]]

@@ -70,7 +70,7 @@ func TestDoctorAllOk(t *testing.T) {
 	ckWriteFile(t, root, "go.mod", "module x\n")
 	ckWriteFile(t, root, "a_test.go", "package x\nimport \"testing\"\nfunc TestA(t *testing.T) {}\n")
 	home := os.Getenv("HOME")
-	ckWriteFile(t, home, ".claude/settings.json", `{"theme":"dark","enabledPlugins":{"galley@galley":true,"cull@tackle":true}}`)
+	ckWriteFile(t, home, ".claude/settings.json", `{"theme":"dark","enabledPlugins":{"galley@subaud-tools":true,"cull@subaud-tools":true}}`)
 	ckWriteFile(t, home, ".pi/agent/channels.json", `{"channelServers":{"galley":{"command":"galley"},"cull":{"command":"cull","args":["channel"]}}}`)
 	code, out, _ := run(t, "", "doctor", root)
 	if code != 0 {
