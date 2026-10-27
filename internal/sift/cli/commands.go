@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"context"
 	"io"
 
-	"github.com/subaud-tools/tackle/internal/sift/channel"
-	"github.com/subaud-tools/tackle/internal/sift/serve"
 	tools "github.com/subaud-tools/tools-common"
-	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 func commands(stdin io.Reader) []tools.Command {
@@ -17,11 +14,7 @@ func commands(stdin io.Reader) []tools.Command {
 			Summary:  "detect the agent harnesses you use and write sift's config (profiles, roots, budgets)",
 			NewFlags: initFlags, Run: runInit(stdin),
 		},
-		{
-			Name: "skills", Group: "setup", Synopsis: "install [--agent NAME]…", Subcommands: []string{"install"},
-			Summary:  "install the sift skill for each agent harness, the version this binary was built with",
-			NewFlags: skillsFlags, Run: runSkills,
-		},
+		pageserve.SkillsCommand("sift", skill),
 		{
 			Name: "doctor", Group: "setup", Synopsis: "",
 			Summary:  "check what sift needs: config, profiles, roots, state; gh, the page server and channels are optional",
@@ -47,27 +40,15 @@ func commands(stdin io.Reader) []tools.Command {
 			Summary:  "store file recommendations (JSON on stdin), checked all or nothing",
 			NewFlags: proposeFlags, Run: runPropose(stdin),
 		},
-		{
-			Name: "serve", Group: "review", Synopsis: "[--no-open] [--port N] [--stop]",
-			Summary:  "open the review page (starts the local server if needed)",
-			NewFlags: serveFlags, Run: runServe,
-		},
+		shell().ServeCommand(serveHelp),
 		{
 			Name: "wait", Group: "review", Synopsis: "[--timeout D]",
 			Summary:  "wait until the user presses Send, then print what to do (for sessions without the sift channel)",
 			NewFlags: waitFlags, Run: runWait,
 		},
-		{
-			Name: "channel", Group: "review", Synopsis: "",
-			Summary:  "MCP server for an agent session: check, next, propose, review, apply, status, and Send as events",
-			NewFlags: channelFlags, Run: runChannel(stdin),
-		},
-		{
-			Name: "watch", Group: "review", Synopsis: "",
-			Summary:  "print the user's Sends as JSON lines: the Claude Code plugin's feed",
-			NewFlags: watchFlags, Run: runWatch,
-		},
-		channelmcp.ReportCommand(deliverReport),
+		shell().ChannelCommand(stdin, channelHelp),
+		shell().WatchCommand(watchHelp),
+		shell().ReportCommand(),
 		{
 			Name: "apply", Group: "review", Synopsis: "[--round N] [--dry-run] [--json]",
 			Summary:  "write each approved file whole, a branch per repo; a pull request with gh",
@@ -84,13 +65,4 @@ func commands(stdin io.Reader) []tools.Command {
 			NewFlags: reconcileFlags, Run: runReconcile,
 		},
 	}
-}
-
-// deliverReport is `sift report`'s delivery, which the Claude Code plugin's
-// mod runs: it posts the report to sift serve through the client `sift
-// watch` uses, starting serve if needed. A failed post is the command's
-// error, which the mod logs; it is not retried.
-func deliverReport(session string, event channelmcp.ReportEvent, token string) error {
-	client := channel.NewClient(func() (serve.Advert, error) { return serve.Start(executable(), 0) })
-	return client.Report(context.Background(), session, event, token)
 }

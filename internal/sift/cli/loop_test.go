@@ -20,49 +20,49 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/store"
 	"github.com/subaud-tools/tools-common/localweb"
 	"github.com/subaud-tools/tools-common/msgstate"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // ---- serve ------------------------------------------------------------------
 
-func serveRig(t *testing.T) (opened *[]string, started *int) {
+// serveRig isolates sift's state. Starting serve in the background and
+// opening the browser are pageserve's ServeCommand, tested there; these test
+// sift's part: the note, no arguments, and the running serve's entry.
+func serveRig(t *testing.T) {
 	t.Helper()
 	siftEnv(t)
-	opened, started = &[]string{}, new(int)
-	origOpen, origStart := openBrowser, startDetached
-	openBrowser = func(u string) error { *opened = append(*opened, u); return nil }
-	startDetached = func(int) (serve.Advert, error) {
-		*started++
-		return serve.Advert{URL: "http://127.0.0.1:1/?t=tok", Base: "http://127.0.0.1:1"}, nil
-	}
-	t.Cleanup(func() { openBrowser, startDetached = origOpen, origStart })
-	return opened, started
 }
 
-func TestServeStartsAndOpens(t *testing.T) {
-	opened, started := serveRig(t)
-	code, out, errw := run(t, "", "serve")
-	if code != 0 || *started != 1 || !strings.Contains(out, "sift serve started: http://127.0.0.1:1") || !strings.Contains(out, "run sift check") {
-		t.Fatalf("code %d started %d out %q err %q", code, *started, out, errw)
+func writeEntry(t *testing.T, e pageserve.Entry) {
+	t.Helper()
+	e.PID = os.Getpid()
+	if err := serve.Live().Advertise(e); err != nil {
+		t.Fatal(err)
 	}
-	if len(*opened) != 1 || (*opened)[0] != "http://127.0.0.1:1/?t=tok" {
-		t.Errorf("opened %v", *opened)
+}
+
+func TestServePageNotesThereIsNoRound(t *testing.T) {
+	serveRig(t)
+	fragment, note, err := servePage(context.Background(), nil)
+	if err != nil || fragment != "" || note != "no round yet: run sift check" {
+		t.Fatalf("%q %q %v", fragment, note, err)
+	}
+	seedRound(t)
+	if _, note, err := servePage(context.Background(), nil); err != nil || note != "" {
+		t.Fatalf("with a round: %q %v", note, err)
+	}
+	if code, _, errw := run(t, "", "serve", "x"); code != 2 || !strings.Contains(errw, "serve takes no arguments") {
+		t.Fatalf("an argument: %d %q", code, errw)
 	}
 }
 
 func TestServeNoOpenAndRunning(t *testing.T) {
-	opened, started := serveRig(t)
+	serveRig(t)
 	seedRound(t)
-	a := serve.Advert{URL: "http://127.0.0.1:2/?t=x", Base: "http://127.0.0.1:2", PID: os.Getpid()}
-	if err := os.MkdirAll(serve.LiveDir(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(a)
-	if err := os.WriteFile(serve.AdvertPath(), b, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeEntry(t, pageserve.Entry{URL: "http://127.0.0.1:2/?t=x", Base: "http://127.0.0.1:2"})
 	code, out, _ := run(t, "", "serve", "--no-open")
-	if code != 0 || *started != 0 || len(*opened) != 0 || !strings.Contains(out, "is running: http://127.0.0.1:2") || strings.Contains(out, "no round") {
-		t.Fatalf("code %d started %d opened %v out %q", code, *started, *opened, out)
+	if code != 0 || !strings.Contains(out, "is running: http://127.0.0.1:2") || strings.Contains(out, "no round") {
+		t.Fatalf("code %d out %q", code, out)
 	}
 }
 

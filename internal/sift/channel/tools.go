@@ -16,6 +16,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/recommend"
 	"github.com/subaud-tools/tackle/internal/sift/store"
 	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 func schema(s string) json.RawMessage { return json.RawMessage(s) }
@@ -71,8 +72,15 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", "; ")), " ")
 }
 
+// calls is one tool call: the channel it came through and the env sift's
+// tools use.
+type calls struct {
+	*Channel
+	*Env
+}
+
 // Call runs one tool.
-func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+func (ch calls) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	text, err := ch.call(ctx, name, args)
 	if err != nil {
 		return "", errors.New(oneLine(err.Error()))
@@ -80,7 +88,7 @@ func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) 
 	return text, nil
 }
 
-func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+func (ch calls) call(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	var a struct {
 		Round           int64     `json:"round"`
 		DryRun          bool      `json:"dry_run"`
@@ -115,7 +123,7 @@ func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) 
 	return "", fmt.Errorf("unknown tool %q", name)
 }
 
-func (ch *Channel) config() (config.Config, error) {
+func (ch calls) config() (config.Config, error) {
 	c, err := ch.LoadConfig()
 	if errors.Is(err, config.ErrMissing) {
 		return c, errors.New("no sift config: the user needs to run sift init")
@@ -123,7 +131,7 @@ func (ch *Channel) config() (config.Config, error) {
 	return c, err
 }
 
-func (ch *Channel) check(ctx context.Context) (string, error) {
+func (ch calls) check(ctx context.Context) (string, error) {
 	cfg, err := ch.config()
 	if err != nil {
 		return "", err
@@ -150,7 +158,7 @@ func (ch *Channel) check(ctx context.Context) (string, error) {
 	}), nil
 }
 
-func (ch *Channel) next(ctx context.Context, round int64) (string, error) {
+func (ch calls) next(ctx context.Context, round int64) (string, error) {
 	s, err := store.Open(ctx, store.Path())
 	if err != nil {
 		return "", err
@@ -163,7 +171,7 @@ func (ch *Channel) next(ctx context.Context, round int64) (string, error) {
 	return pretty(out), nil
 }
 
-func (ch *Channel) propose(ctx context.Context, round int64, recs []rec.Rec) (string, error) {
+func (ch calls) propose(ctx context.Context, round int64, recs []rec.Rec) (string, error) {
 	s, err := store.Open(ctx, store.Path())
 	if err != nil {
 		return "", err
@@ -182,7 +190,7 @@ func (ch *Channel) propose(ctx context.Context, round int64, recs []rec.Rec) (st
 	return pretty(out), nil
 }
 
-func (ch *Channel) apply(ctx context.Context, round int64, dry bool) (string, error) {
+func (ch calls) apply(ctx context.Context, round int64, dry bool) (string, error) {
 	s, err := store.Open(ctx, store.Path())
 	if err != nil {
 		return "", err
@@ -204,7 +212,7 @@ func (ch *Channel) apply(ctx context.Context, round int64, dry bool) (string, er
 	return pretty(res), nil
 }
 
-func (ch *Channel) clean(ctx context.Context, dry bool) (string, error) {
+func (ch calls) clean(ctx context.Context, dry bool) (string, error) {
 	s, err := store.Open(ctx, store.Path())
 	if err != nil {
 		return "", err
@@ -224,7 +232,7 @@ func (ch *Channel) clean(ctx context.Context, dry bool) (string, error) {
 	return pretty(map[string]any{"dry_run": dry, "steps": steps}), nil
 }
 
-func (ch *Channel) status(ctx context.Context) (string, error) {
+func (ch calls) status(ctx context.Context) (string, error) {
 	var out map[string]any
 	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status", nil, &out); err != nil {
 		return "", err
@@ -236,13 +244,13 @@ func (ch *Channel) status(ctx context.Context) (string, error) {
 	return pretty(out), nil
 }
 
-func (ch *Channel) reply(ctx context.Context, ids []int64, state, text string) (string, error) {
+func (ch calls) reply(ctx context.Context, ids []int64, state, text string) (string, error) {
 	if ch.ID.Session == "" {
 		return "", errors.New("this sift channel has no session id (not running under Claude Code or pi), so it has no sends to answer")
 	}
 	if _, err := ch.Client.Do(ctx, http.MethodPost, "/api/agent/reply", map[string]any{
 		"session": ch.ID.Session, "ids": ids, "state": state, "text": text}, nil); err != nil {
-		var se *StatusError
+		var se *pageserve.StatusError
 		if errors.As(err, &se) && se.Code == http.StatusConflict {
 			return "", errors.New(se.Msg)
 		}
@@ -251,7 +259,7 @@ func (ch *Channel) reply(ctx context.Context, ids []int64, state, text string) (
 	return pretty(map[string]any{"ids": ids, "state": state}), nil
 }
 
-func (ch *Channel) review(ctx context.Context) (string, error) {
+func (ch calls) review(ctx context.Context) (string, error) {
 	if ch.ID.Session == "" {
 		return "", errors.New("this sift channel has no session id (not running under Claude Code or pi), so the user's decisions could not be sent to it")
 	}

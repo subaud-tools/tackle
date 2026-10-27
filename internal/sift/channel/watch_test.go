@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/serve"
 	"github.com/subaud-tools/tackle/internal/sift/store"
 	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // sendARound records a round through c's tools, recommends every file,
@@ -64,20 +64,18 @@ func sendARound(t *testing.T, e *env, c *client) {
 // {"content": ..., "meta": {...}}, with the same meta the channel sends.
 func TestWatchPrintsASendAsOneLine(t *testing.T) {
 	e := newEnv(t)
-	id := Identity{Session: "s1", Harness: "claude", Label: "claude · s1", CWD: e.repo}
+	id := pageserve.Identity{Session: "s1", Harness: "claude", Label: "claude · s1", CWD: e.repo}
 
 	// The tools, as `sift channel` serves them under Claude Code.
-	cl := NewClient(nil)
-	cl.Find = serve.Running
-	tools := New(id, cl, "test")
+	cl := pageserve.NewClient(serve.Live(), nil)
+	tools := pageserve.New(e.spec(), id, cl)
 	tools.ServeOnly = true
 	c := e.connectChannel(tools)
 
 	// The events, as `sift watch` takes them.
 	r, w := io.Pipe()
-	wcl := NewClient(nil)
-	wcl.Find = serve.Running
-	watch := New(id, wcl, "test")
+	wcl := pageserve.NewClient(serve.Live(), nil)
+	watch := pageserve.New(e.spec(), id, wcl)
 	watch.Log = e.logs
 	watch.Retry, watch.Presence, watch.Poll = 50*time.Millisecond, 200*time.Millisecond, time.Second
 	watch.Push = channelmcp.NewLinesFor(w, "sift")
@@ -139,11 +137,8 @@ func TestChannelWaitsOnlyOutsideClaudeCode(t *testing.T) {
 			t.Setenv("AGENT_SESSION_CHILD", "")
 			t.Chdir(e.repo)
 
-			cl := NewClient(nil)
-			cl.Find = serve.Running
-			ch := ForSession(cl, "test")
-			ch.LookPath = func(string) (string, error) { return "", errors.New("no gh in tests") }
-			c := e.connectChannel(ch)
+			cl := pageserve.NewClient(serve.Live(), nil)
+			c := e.connectChannel(pageserve.ForSession(e.spec(), cl))
 			sendARound(t, e, c)
 
 			if tc.waits {
