@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.12.0] - 2026-10-26
+
+### Added
+- The picker groups a folder's sessions, and the sessions view, under "opened · N" and "not opened · N". A session nobody has attached to yet (one diazo started for a plan) shows a hollow dot and its age, and its preview says when it started.
+
 ## [sift 0.5.0] - 2026-10-26
 
 ### Changed
