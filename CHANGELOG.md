@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.6.1] - 2026-10-27
+
+### Changed
+- cull's page server, its channel and its `serve`, `channel`, `watch` and `report` commands now come from the family's shared server code (tools-common 0.31.1), the same code sift uses. Nothing you use changes: the commands, their output and where cull keeps its state are the same. A cull from before this release and one after still find each other's running page.
+
+## [sift 0.5.1] - 2026-10-27
+
+### Changed
+- sift's page server, its channel and its `serve`, `channel`, `watch`, `report` and `skills` commands now come from the family's shared server code (tools-common 0.31.1), the same code cull uses. Nothing you use changes: the commands, their output, the installed skill and where sift keeps its state are the same. A sift from before this release and one after still find each other's running page.
+
+## [imprint 0.4.1] - 2026-10-27
+
+### Changed
+- `imprint skills install` now comes from the family's shared code (tools-common 0.31.1). It installs the same skill with the same output.
+
 ## [proj 0.12.0] - 2026-10-26
 
 ### Added
