@@ -23,8 +23,8 @@ type ScannedSession struct {
 // command) never shifts the columns; see mainPaneCmd. window_active, last,
 // keeps the main pane in the session's current window, as list-panes -t
 // <session> did. session_last_attached and session_created come after it,
-// so the earlier columns keep their indexes. A function, because the option names come from the
-// environment.
+// so the earlier columns keep their indexes. A function, because the option
+// names come from the environment.
 func scanFormat() string {
 	return strings.Join([]string{
 		"#{session_name}",
