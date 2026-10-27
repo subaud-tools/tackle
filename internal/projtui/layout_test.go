@@ -31,7 +31,7 @@ func sessionRows(n int) []Row {
 	var rows []Row
 	for i := 0; i < n; i++ {
 		name := fmt.Sprintf("p/w%02d", i)
-		rows = append(rows, Row{Kind: RowSession, Label: name, Name: name, Project: "p", Agent: "pi"})
+		rows = append(rows, Row{Kind: RowSession, Label: name, Name: name, Project: "p", Agent: "pi", Opened: true})
 	}
 	return rows
 }
@@ -110,19 +110,20 @@ func firstRowShown(m Model) string {
 func TestEdgeScrolling(t *testing.T) {
 	m := sized(sessionsScope(newTestModel(sessionRows(60))))
 	slots := m.rowSlots()
-	for i := 0; i < slots-1; i++ {
+	// Row 0 is the "opened · 60" header; the cursor starts on row 1.
+	for i := 0; i < slots-2; i++ {
 		m = press(m, "down")
-		if got := firstRowShown(m); got != "p/w00" {
+		if got := firstRowShown(m); got != "opened · 60" {
 			t.Fatalf("list scrolled at cursor %d (top now %s); want still until the edge", m.cursor, got)
 		}
 	}
 	m = press(m, "down") // past the bottom edge: exactly one row
-	if got := firstRowShown(m); got != "p/w01" {
-		t.Fatalf("top = %s want p/w01 after crossing the edge", got)
+	if got := firstRowShown(m); got != "p/w00" {
+		t.Fatalf("top = %s want p/w00 after crossing the edge", got)
 	}
 	m = press(m, "up") // moving back inside the window scrolls nothing
-	if got := firstRowShown(m); got != "p/w01" {
-		t.Fatalf("top = %s want p/w01 after moving up inside the window", got)
+	if got := firstRowShown(m); got != "p/w00" {
+		t.Fatalf("top = %s want p/w00 after moving up inside the window", got)
 	}
 }
 

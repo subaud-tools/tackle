@@ -12,9 +12,16 @@ import (
 // a pane in its session's current window.
 func scanLine(f ...string) string { return scanLineWin("1", f...) }
 
-// scanLineWin is scanLine with window_active, the last column, given.
+// scanLineWin is scanLine with window_active given, and session_last_attached
+// and session_created empty.
 func scanLineWin(active string, f ...string) string {
-	return strings.Join(append(f, active), "\x1f")
+	return strings.Join(append(f, active, "", ""), "\x1f")
+}
+
+// scanLineAt is scanLine with session_last_attached and session_created, the
+// last two columns, given.
+func scanLineAt(lastAttached, created string, f ...string) string {
+	return strings.Join(append(f, "1", lastAttached, created), "\x1f")
 }
 
 // The main pane comes from the session's current window, as list-panes -t
@@ -66,6 +73,24 @@ func TestParseScanAttached(t *testing.T) {
 	}, "\n"))
 	if len(got) != 2 || !got[0].Attached || got[1].Attached {
 		t.Fatalf("attached = %+v, want a/w true, b/w false", got)
+	}
+}
+
+// An empty session_last_attached (never attached) parses as 0 without shifting
+// session_created; an epoch parses as itself.
+func TestParseScanLastAttached(t *testing.T) {
+	got := parseScan(strings.Join([]string{
+		scanLineAt("", "500", "a/w", "0", "0", "50", "%1", "zsh", "/a", "0", "100", "", "pi", "lab-a"),
+		scanLineAt("700", "600", "b/w", "0", "0", "50", "%2", "zsh", "/b", "0", "200", "", "pi", "lab-b"),
+	}, "\n"))
+	if len(got) != 2 {
+		t.Fatalf("parseScan = %+v, want 2 sessions", got)
+	}
+	if got[0].LastAttached != 0 || got[0].Created != 500 || got[0].Label != "lab-a" {
+		t.Fatalf("a/w = %+v, want LastAttached 0, Created 500, Label lab-a", got[0])
+	}
+	if got[1].LastAttached != 700 || got[1].Created != 600 {
+		t.Fatalf("b/w = %+v, want LastAttached 700, Created 600", got[1])
 	}
 }
 
@@ -125,6 +150,12 @@ func TestLiveSessionsOneCallPerServer(t *testing.T) {
 	got := LiveSessions()
 	if len(got) != 3 {
 		t.Fatalf("LiveSessions = %+v, want 3", got)
+	}
+	// EnsureSession starts them detached: none has been attached.
+	for _, s := range got {
+		if s.Opened || s.Created == 0 {
+			t.Fatalf("session %+v: want Opened false and Created set", s)
+		}
 	}
 	if calls != 2 {
 		t.Fatalf("tmux calls = %d, want 2 (the Servers() probe and the scan)", calls)
