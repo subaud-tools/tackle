@@ -70,8 +70,9 @@ func parseArgs(argv []string) (args, error) {
 
 func run(cwd string, argv []string, stdout, stderr io.Writer) int {
 	app := tools.New(tools.Config{
-		Name:   "creel",
-		Domain: "tackle.tools",
+		Name:    "creel",
+		Domain:  "tackle.tools",
+		Product: "tackle",
 		Version: tools.Version{
 			Number: version.Number(),
 			Commit: version.Commit(),

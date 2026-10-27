@@ -14,6 +14,7 @@ func Main(args []string, stdin io.Reader, out, errw io.Writer) int {
 	a := tools.New(tools.Config{
 		Name:    "cull",
 		Domain:  "tackle.tools",
+		Product: "tackle",
 		Version: tools.Version{Number: version.Number(), Commit: version.Commit(), Date: version.Date()},
 		Groups: []tools.Group{
 			{Key: "setup", Heading: "Setup"},

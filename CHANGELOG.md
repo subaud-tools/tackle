@@ -6,6 +6,51 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [sift 0.5.0] - 2026-10-26
+
+### Changed
+- The sift Claude Code plugin moved to the subaud-tools marketplace: `claude plugin marketplace add subaud-tools/plugins`, then `claude plugin install sift@subaud-tools`. `sift@tackle` is gone; `sift doctor` checks for `sift@subaud-tools`, and the kempt manifest enables it and removes `sift@tackle`.
+- sift is part of the tackle product: once tackle.tools is gated, `sift update` asks for links to `tackle` (tools-common v0.30.0). Until then it downloads anonymously, as before.
+- `sift login` signs in over two short runs: the first prints the code to type, the next saves the token once the machine is allowed; `--wait` does both in one run (tools-common v0.30.0).
+
+## [cull 0.6.0] - 2026-10-26
+
+### Changed
+- The cull Claude Code plugin moved to the subaud-tools marketplace: `claude plugin marketplace add subaud-tools/plugins`, then `claude plugin install cull@subaud-tools`. `cull@tackle` is gone; `cull doctor` checks for `cull@subaud-tools`, and the kempt manifest enables it and removes `cull@tackle`.
+- cull is part of the tackle product: once tackle.tools is gated, `cull update` asks for links to `tackle` (tools-common v0.30.0). Until then it downloads anonymously, as before.
+- `cull login` signs in over two short runs: the first prints the code to type, the next saves the token once the machine is allowed; `--wait` does both in one run (tools-common v0.30.0).
+
+## [imprint 0.4.0] - 2026-10-26
+
+### Changed
+- The imprint Claude Code plugin moved to the subaud-tools marketplace: `claude plugin marketplace add subaud-tools/plugins`, then `claude plugin install imprint@subaud-tools`. `imprint@tackle` is gone; the kempt manifest enables `imprint@subaud-tools` and removes `imprint@tackle`.
+- imprint is part of the tackle product: once tackle.tools is gated, `imprint update` asks for links to `tackle` (tools-common v0.30.0). Until then it downloads anonymously, as before.
+- `imprint login` signs in over two short runs: the first prints the code to type, the next saves the token once the machine is allowed; `--wait` does both in one run (tools-common v0.30.0).
+
+## [proj 0.11.0] - 2026-10-26
+
+### Added
+- The built-in `proj login` and `logout` (tools-common v0.30.0): `login` signs the machine in to its subaud.tools account over two short runs, the first printing a code to type, the next saving the token once the machine is allowed; `--wait` does both in one run. Nothing needs them yet.
+
+### Changed
+- proj is part of the tackle product: once tackle.tools is gated, `proj update` asks for links to `tackle` (tools-common v0.30.0). Until then it downloads anonymously, as before.
+
+## [creel 0.5.0] - 2026-10-26
+
+### Added
+- The built-in `creel login` and `logout` (tools-common v0.30.0): `login` signs the machine in to its subaud.tools account over two short runs, the first printing a code to type, the next saving the token once the machine is allowed; `--wait` does both in one run. Nothing needs them yet.
+
+### Changed
+- creel is part of the tackle product: once tackle.tools is gated, `creel update` asks for links to `tackle` (tools-common v0.30.0). Until then it downloads anonymously, as before.
+
+## [0.7.0] — 2026-10-26
+
+### Added
+- The built-in `scratch login` and `logout` (tools-common v0.30.0): `login` signs the machine in to its subaud.tools account over two short runs, the first printing a code to type, the next saving the token once the machine is allowed; `--wait` does both in one run. Nothing needs them yet.
+
+### Changed
+- scratch is part of the tackle product: once tackle.tools is gated, `scratch update` asks for links to `tackle` (tools-common v0.30.0). Until then it downloads anonymously, as before.
+
 ## [sift 0.4.0] - 2026-10-26
 
 ### Added
