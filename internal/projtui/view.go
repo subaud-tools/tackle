@@ -3,6 +3,7 @@ package projtui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -366,6 +367,7 @@ func (m Model) modelSelectPane(width int) string {
 //
 //	folders   ▸  name
 //	sessions  ●  name  pi·working  ✉2 !
+//	          ○  name  pi·waiting · 2d   (not opened: its age)
 //	saved    [x] name  pi·saved  (no transcript)
 
 // statusCell is a row's 3-column status: the folder glyph, the session dot,
@@ -373,6 +375,9 @@ func (m Model) modelSelectPane(width int) string {
 func statusCell(r Row) string {
 	switch r.Kind {
 	case RowSession:
+		if !r.Opened {
+			return " ○ "
+		}
 		return " ● "
 	case RowProject:
 		return " ▸ "
@@ -400,6 +405,9 @@ func rowMeta(r Row) string {
 			if r.State != "" {
 				s += "·" + r.State
 			}
+		}
+		if !r.Opened && r.Created > 0 {
+			s += " · " + age(r.Created, clock())
 		}
 	case RowSaved:
 		state := "saved"
@@ -463,7 +471,7 @@ func (m Model) renderRow(r Row, selected bool, width int) string {
 	var cell string
 	switch r.Kind {
 	case RowSession:
-		cell = " " + lipgloss.NewStyle().Foreground(dotColor(r.State)).Render("●") + " "
+		cell = " " + lipgloss.NewStyle().Foreground(dotColor(r.State)).Render(strings.TrimSpace(statusCell(r))) + " "
 	case RowProject:
 		cell = dimStyle.Render(statusCell(r))
 	case RowSaved:
@@ -534,6 +542,13 @@ func (m Model) previewPane(width int) string {
 				state = "unknown"
 			}
 			b.WriteString(agentStyle.Render(r.Agent) + dimStyle.Render(" · "+state) + "\n")
+		}
+		if !r.Opened {
+			line := "not opened"
+			if r.Created > 0 {
+				line += " · started " + age(r.Created, clock()) + " ago"
+			}
+			b.WriteString(dimStyle.Render(trunc(line, width)) + "\n")
 		}
 		if r.Unread > 0 || r.ActionRequired > 0 {
 			var segs []string
@@ -713,6 +728,24 @@ func trunc(s string, width int) string {
 		r = r[:len(r)-1]
 	}
 	return string(r) + "…"
+}
+
+// clock is the time ages count from; a seam so tests pin it.
+var clock = time.Now
+
+// age is how long before now the epoch created was, in its largest whole
+// unit: now (under a minute), 5m, 5h, 2d.
+func age(created int64, now time.Time) string {
+	d := now.Sub(time.Unix(created, 0))
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 }
 
 // dotColor encodes a session's agent state in its ●: green working, amber

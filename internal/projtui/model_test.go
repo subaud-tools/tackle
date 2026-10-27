@@ -386,10 +386,10 @@ func TestSessionRowCopiesAttentionCounts(t *testing.T) {
 	}
 	m := sessionsScope(newTestModel(input))
 	vis := m.visibleRows()
-	if len(vis) == 0 {
-		t.Fatal("expected at least one visible row")
+	if len(vis) != 2 {
+		t.Fatalf("visible rows = %+v, want a header and the session", vis)
 	}
-	row := vis[0]
+	row := vis[1]
 	if row.Unread != 3 {
 		t.Errorf("Unread: got %d, want 3", row.Unread)
 	}
@@ -451,11 +451,11 @@ func TestPreviewShowsGit(t *testing.T) {
 // discovery, rebuilds rows, and keeps the view/filter and a clamped cursor.
 func TestTickRefreshPreservesSelection(t *testing.T) {
 	m := newTestModelWithRefresh(
-		[]Row{{Kind: RowSession, Label: "p/w1", Name: "p/w1"}},
+		[]Row{{Kind: RowSession, Label: "p/w1", Name: "p/w1", Opened: true}},
 		func() (s, p []Row) {
 			return []Row{
-				{Kind: RowSession, Label: "p/w2", Name: "p/w2"},
-				{Kind: RowSession, Label: "p/w1", Name: "p/w1"},
+				{Kind: RowSession, Label: "p/w2", Name: "p/w2", Opened: true},
+				{Kind: RowSession, Label: "p/w1", Name: "p/w1", Opened: true},
 			}, nil
 		},
 	)
@@ -488,7 +488,7 @@ func TestTickRefreshPreservesSelection(t *testing.T) {
 		t.Fatalf("filter changed on tick: %q", m.filter)
 	}
 	vis := m.visibleRows()
-	if len(vis) != 2 || vis[0].Name != "p/w2" {
+	if len(vis) != 3 || vis[1].Name != "p/w2" {
 		t.Fatalf("rows not refreshed: %+v", vis)
 	}
 }
@@ -579,7 +579,7 @@ func TestReapModeEnterDoesNothing(t *testing.T) {
 }
 
 func TestReapModeHelpShowsOnlyReapKeys(t *testing.T) {
-	m := newTestModel([]Row{{Kind: RowSession, Label: "x/a", Name: "x/a", Socket: "proj-x"}}).reapMode()
+	m := newTestModel([]Row{{Kind: RowSession, Label: "x/a", Name: "x/a", Socket: "proj-x", Opened: true}}).reapMode()
 	m.saved = []Row{{Kind: RowSaved, Label: "y/b", Name: "y/b", Socket: "proj-y"}}
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = next.(Model)
@@ -589,7 +589,8 @@ func TestReapModeHelpShowsOnlyReapKeys(t *testing.T) {
 		}
 		for _, all := range []bool{false, true} {
 			m.help.ShowAll = all
-			v := m.View()
+			// The live tab's "opened · 1" group header is a label, not a key.
+			v := strings.ReplaceAll(m.View(), "opened · 1", "")
 			if !strings.Contains(v, tab.verb) {
 				t.Fatalf("%s (all=%v): help should offer %q, got:\n%s", tab.name, all, tab.verb, v)
 			}

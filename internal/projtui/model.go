@@ -89,7 +89,7 @@ const (
 	RowProject                // a project with no live session (entrance only)
 	RowNewWork                // synthetic "+ new work…" (project view, TOP)
 	RowSaved                  // a remembered session (saved scope)
-	RowHeader                 // a saved-scope window group label (not selectable)
+	RowHeader                 // a group label: saved window, opened/not opened (not selectable)
 )
 
 // Row is one selectable line. Sessions carry Socket/Name for jumping; projects
@@ -106,6 +106,10 @@ type Row struct {
 	Project        string
 	Unread         int
 	ActionRequired int
+	// Opened is false for a session nobody has attached to yet; Created is
+	// its start epoch, shown as the age of a not-opened row.
+	Opened  bool
+	Created int64
 
 	// Saved-scope fields (RowSaved only). Window is the saved Ghostty window
 	// (0 = unplaced); visibleRows turns changes of it into header rows.
@@ -275,6 +279,8 @@ func buildRows(roots proj.Roots, live []proj.Session) (sessions, projects []Row)
 			Project:        projectOf(s.Name),
 			Unread:         s.Unread,
 			ActionRequired: s.ActionRequired,
+			Opened:         s.Opened,
+			Created:        s.Created,
 		})
 	}
 
@@ -538,6 +544,9 @@ func (m Model) drillInto(project string) Model {
 // (new work) are always visible so "+ new work…" stays at the top.
 // In the saved scope a header row precedes each window group that still has
 // a visible row, so a filter never leaves an empty group's label behind.
+// The project view and the sessions scope list opened sessions first, then
+// not-opened ones, each under a header with its count; an empty group has
+// none.
 func (m Model) visibleRows() []Row {
 	rows := m.rows
 	if m.filter != "" {
@@ -547,6 +556,9 @@ func (m Model) visibleRows() []Row {
 				rows = append(rows, r)
 			}
 		}
+	}
+	if m.view == viewProject || (m.view == viewEntrance && m.scope == scopeSessions) {
+		return groupOpened(rows)
 	}
 	if m.view != viewEntrance || m.scope != scopeSaved {
 		return rows
@@ -561,6 +573,32 @@ func (m Model) visibleRows() []Row {
 			out = append(out, Row{Kind: RowHeader, Label: label, Window: r.Window})
 		}
 		out = append(out, r)
+	}
+	return out
+}
+
+// groupOpened puts rows' sessions under "opened · N" then "not opened · N",
+// keeping their order within each group; other rows (new work) stay first.
+func groupOpened(rows []Row) []Row {
+	var out, opened, notOpened []Row
+	for _, r := range rows {
+		switch {
+		case r.Kind != RowSession:
+			out = append(out, r)
+		case r.Opened:
+			opened = append(opened, r)
+		default:
+			notOpened = append(notOpened, r)
+		}
+	}
+	for _, g := range []struct {
+		label string
+		rows  []Row
+	}{{"opened", opened}, {"not opened", notOpened}} {
+		if len(g.rows) > 0 {
+			out = append(out, Row{Kind: RowHeader, Label: fmt.Sprintf("%s · %d", g.label, len(g.rows))})
+			out = append(out, g.rows...)
+		}
 	}
 	return out
 }
