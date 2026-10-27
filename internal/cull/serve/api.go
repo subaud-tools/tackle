@@ -15,7 +15,8 @@ import (
 	"github.com/subaud-tools/tools-common/msgstate"
 )
 
-// Handler is the /api/ mux (mounted by localweb, which checks the token).
+// Handler is cull's own /api/ routes; pageserve adds events, poll and stop
+// (mounted by localweb, which checks the token).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/review", s.review)
@@ -28,13 +29,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agent/status", s.agentStatus)
 	mux.HandleFunc("POST /api/agent/report", s.agentReport)
 	mux.HandleFunc("POST /api/agent/reply", s.agentReply)
-	mux.HandleFunc("GET /api/events", s.stream)
-	mux.HandleFunc("GET /api/poll", s.poll)
-	mux.HandleFunc("POST /api/stop", s.postStop)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.activity.Store(time.Now().UnixMilli())
-		mux.ServeHTTP(w, r)
-	})
+	return mux
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -45,11 +40,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
-}
-
-func (s *Server) postStop(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
-	go func() { time.Sleep(50 * time.Millisecond); s.stopNow() }()
 }
 
 // project resolves an id from text; ok is false after writing the error.
@@ -151,7 +141,7 @@ func (s *Server) recentSends(r *http.Request, projectID int64) ([]recentSendJSON
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	// Read the cursor before any review data: an event racing the reads is
 	// redelivered to the client, never skipped.
-	cursor := s.events.format(s.events.latest())
+	cursor := s.events.Cursor()
 	p, ok := s.project(w, r, r.URL.Query().Get("project"))
 	if !ok {
 		return
@@ -308,7 +298,7 @@ func (s *Server) putAnswers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.events.emit("answers", map[string]int64{"project": p.ID})
+	s.events.Emit("answers", map[string]int64{"project": p.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -326,7 +316,7 @@ func (s *Server) deleteAnswer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.events.emit("answers", map[string]int64{"project": p.ID})
+	s.events.Emit("answers", map[string]int64{"project": p.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -355,7 +345,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	n := sd.Counts.Total()
 	to := ""
 	if n > 0 {
-		s.events.emit("answers", map[string]int64{"project": p.ID})
+		s.events.Emit("answers", map[string]int64{"project": p.ID})
 		s.wakeAll()
 		if _, ok := s.ownerPresent(owner); ok {
 			to = owner.OwnerLabel

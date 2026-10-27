@@ -257,7 +257,7 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if ok {
-				s.events.emit("answers", map[string]int64{"project": p.ID})
+				s.events.Emit("answers", map[string]int64{"project": p.ID})
 				writeJSON(w, http.StatusOK, map[string]any{"id": sd.ID, "project": p.ID, "root": p.Root,
 					"counts": sd.Counts, "text": SendText(sd, p.Root), "report": sd.Claim})
 				return
@@ -386,7 +386,7 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, id := range changed {
-		s.events.emit("answers", map[string]int64{"project": id})
+		s.events.Emit("answers", map[string]int64{"project": id})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -420,7 +420,7 @@ func (s *Server) agentReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, id := range changed {
-		s.events.emit("answers", map[string]int64{"project": id})
+		s.events.Emit("answers", map[string]int64{"project": id})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

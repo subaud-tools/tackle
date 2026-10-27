@@ -4,132 +4,108 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
-	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
+	"github.com/subaud-tools/tackle/internal/cull/channel"
 	"github.com/subaud-tools/tackle/internal/cull/discover"
 	"github.com/subaud-tools/tackle/internal/cull/serve"
 	"github.com/subaud-tools/tackle/internal/cull/store"
 	"github.com/subaud-tools/tackle/internal/version"
 	tools "github.com/subaud-tools/tools-common"
-	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
-// Test seams for the serve command.
-var (
-	openBrowser   = localweb.OpenBrowser
-	startDetached = defaultStartDetached
-)
-
-func defaultStartDetached(port int) (serve.Advert, error) { return serve.Start(executable(), port) }
-
-func executable() string {
-	p, err := os.Executable()
-	if err != nil {
-		return ""
+// shell is cull's serve, channel, watch and report commands: pageserve's,
+// with cull's channel, its serve and its review page.
+func shell() pageserve.Commands {
+	return pageserve.Commands{
+		Spec:    channel.Spec(version.Number()),
+		Process: pageserve.Process{Live: serve.Live(), Args: []string{"serve", "--foreground", "--no-open"}},
+		Group:   "check",
+		Serve:   serveForeground,
+		Page:    servePage,
 	}
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
-	}
-	return p
 }
 
-var serveFlags = flags("serve", "cull serve [path] [--no-open] [--port N] [--foreground] [--stop]",
-	"Starts the review page's server in the background (one per machine) and opens the\n"+
+// client finds cull serve, else starts it from this binary.
+func client() *pageserve.Client {
+	p := shell().Process
+	return pageserve.NewClient(p.Live, func() (pageserve.Entry, error) { return p.Ensure(pageserve.Executable()) })
+}
+
+var serveHelp = pageserve.Help{
+	Synopsis: "[path] [--no-open] [--port N] [--stop]",
+	Summary:  "open the review page (starts the local server if needed)",
+	Long: "Starts the review page's server in the background (one per machine) and opens the\n" +
 		"project's review. When it is already running, opens the running one. Needs no egress.",
-	func(fs *flag.FlagSet) {
-		fs.Bool("no-open", false, "don't open the browser")
-		fs.Bool("foreground", false, "run in this process until stopped (used by the background start)")
-		fs.Bool("stop", false, "stop the running server")
-		fs.Int("port", 0, "port (default: the last one used, else a free one)")
-	})
+}
 
-func runServe(args []string, out, errw io.Writer) error {
-	fs := serveFlags()
-	pos, err := parse(fs, args, out)
-	if err != nil {
-		return err
-	}
-	if len(pos) > 1 {
-		return tools.UsageError{Msg: "serve takes at most one path"}
-	}
-	ctx := context.Background()
-	if boolFlag(fs, "stop") {
-		if err := serve.Stop(ctx); errors.Is(err, serve.ErrNotRunning) {
-			_, _ = fmt.Fprintln(out, "cull serve is not running")
-			return nil
-		} else if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintln(out, "cull serve stopped")
-		return nil
-	}
-	port := 0
-	if v, err := strconv.Atoi(str(fs, "port")); err == nil {
-		port = v
-	}
-	if boolFlag(fs, "foreground") {
-		st, err := store.Open(ctx, store.Path())
-		if err != nil {
-			return err
-		}
-		defer func() { _ = st.Close() }()
-		sctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		return serve.Run(sctx, st, serve.Options{Port: port, Idle: 8 * time.Hour, Version: version.Number(), Log: errw,
-			Ready: func(string) {}})
-	}
+var channelHelp = pageserve.Help{
+	Summary: "MCP server for an agent session: check, apply, review and Court's answers as events",
+	Long: "Runs cull's MCP server on stdin/stdout for an agent session (Claude Code or pi starts it).\n" +
+		"It starts cull serve if needed and gives the agent cull_check, cull_apply, cull_check_group,\n" +
+		"cull_review and cull_status. Under pi it also registers the session and delivers Court's\n" +
+		"answers as events; under Claude Code `cull watch`, which the cull plugin runs, does that.\n" +
+		"stdout carries MCP frames only; logs go to stderr.",
+}
 
-	path := "."
-	if len(pos) == 1 {
-		path = pos[0]
-	}
-	if _, err := os.Stat(path); err != nil {
-		return tools.Exitf(2, "%v", err)
-	}
-	root, err := discover.Root(path)
-	if err != nil {
-		return tools.Exitf(2, "%v", err)
-	}
+var watchHelp = pageserve.Help{
+	Summary: "print Court's answers as JSON lines: the Claude Code plugin's feed",
+	Long: "Registers the session with cull serve and prints each of Court's Sends for it as one JSON\n" +
+		"line {\"text\": ..., \"content\": ..., \"meta\": {...}} on stdout. The cull plugin's mod runs\n" +
+		"it for a Claude Code session and starts a turn with each line's text. Logs go to stderr.\n" +
+		"Runs until signalled. In a session pi's claude-bridge runs, it prints {\"stop\": ...} and\n" +
+		"exits 0.",
+}
+
+// serveForeground is `cull serve --foreground`: the server over the store, in
+// this process until ctx ends.
+func serveForeground(ctx context.Context, port int, errw io.Writer) error {
 	st, err := store.Open(ctx, store.Path())
 	if err != nil {
 		return err
 	}
+	defer func() { _ = st.Close() }()
+	return serve.Run(ctx, st, serve.Options{Port: port, Idle: 8 * time.Hour, Version: version.Number(), Log: errw,
+		Ready: func(string) {}})
+}
+
+// servePage resolves `cull serve [path]` to the project's review: the
+// fragment that opens it, and a note when it has no review yet.
+func servePage(ctx context.Context, args []string) (fragment, note string, err error) {
+	if len(args) > 1 {
+		return "", "", tools.UsageError{Msg: "serve takes at most one path"}
+	}
+	path := "."
+	if len(args) == 1 {
+		path = args[0]
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", "", tools.Exitf(2, "%v", err)
+	}
+	root, err := discover.Root(path)
+	if err != nil {
+		return "", "", tools.Exitf(2, "%v", err)
+	}
+	st, err := store.Open(ctx, store.Path())
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = st.Close() }()
 	proj, err := st.Project(ctx, root)
 	if err != nil {
-		_ = st.Close()
-		return err
+		return "", "", err
 	}
 	_, _, runErr := st.LatestRun(ctx, proj.ID)
-	_ = st.Close()
 	if runErr != nil && !errors.Is(runErr, sql.ErrNoRows) {
-		return runErr
-	}
-
-	adv, err := serve.Running()
-	switch {
-	case errors.Is(err, serve.ErrNotRunning):
-		if adv, err = startDetached(port); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(out, "cull serve started: %s\n", adv.Base)
-	case err != nil:
-		return err
-	default:
-		_, _ = fmt.Fprintf(out, "cull serve is running: %s\n", adv.Base)
+		return "", "", runErr
 	}
 	if runErr != nil {
-		_, _ = fmt.Fprintf(out, "no review for %s yet — run cull check\n", root)
+		note = fmt.Sprintf("no review for %s yet — run cull check", root)
 	}
-	if !boolFlag(fs, "no-open") {
-		_ = openBrowser(adv.URL + "#/p/" + strconv.FormatInt(proj.ID, 10))
-	}
-	return nil
+	return "#/p/" + strconv.FormatInt(proj.ID, 10), note, nil
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/cull/key"
 	"github.com/subaud-tools/tackle/internal/cull/timing"
 	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 func schema(s string) json.RawMessage { return json.RawMessage(s) }
@@ -62,8 +63,8 @@ func oneLine(s string) string {
 }
 
 // Call runs one tool. Nothing it returns can contain the TypeSafe key.
-func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
-	text, err := ch.call(ctx, name, args)
+func Call(ctx context.Context, ch *Channel, name string, args json.RawMessage) (string, error) {
+	text, err := call(ctx, ch, name, args)
 	k, _, kerr := key.Load()
 	if kerr != nil || k == "" {
 		k = ""
@@ -80,7 +81,7 @@ func (ch *Channel) Call(ctx context.Context, name string, args json.RawMessage) 
 	return scrub(text), nil
 }
 
-func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+func call(ctx context.Context, ch *Channel, name string, args json.RawMessage) (string, error) {
 	if name == "cull_reply" { // its ids are send ids, not test ids
 		var r struct {
 			IDs   []int64 `json:"ids"`
@@ -90,7 +91,7 @@ func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) 
 		if err := json.Unmarshal(args, &r); err != nil {
 			return "", fmt.Errorf("bad arguments: %w", err)
 		}
-		return ch.reply(ctx, r.IDs, r.State, r.Text)
+		return runReply(ctx, ch, r.IDs, r.State, r.Text)
 	}
 	var a struct {
 		Path string   `json:"path"`
@@ -105,33 +106,30 @@ func (ch *Channel) call(ctx context.Context, name string, args json.RawMessage) 
 	}
 	switch name {
 	case "cull_check":
-		return ch.check(ctx, a.Path, a.Base)
+		return runCheck(ctx, ch, a.Path, a.Base)
 	case "cull_apply":
-		return ch.apply(ctx, a.Path, a.IDs)
+		return runApply(ctx, ch, a.Path, a.IDs)
 	case "cull_check_group":
 		if a.ID == "" {
 			return "", errors.New("id is required")
 		}
-		return ch.checkGroup(ctx, a.Path, a.ID)
+		return runCheckGroup(ctx, ch, a.Path, a.ID)
 	case "cull_time":
-		return ch.timeRun(ctx, a.Path)
+		return runTime(ctx, ch, a.Path)
 	case "cull_review":
-		return ch.review(ctx, a.Path)
+		return runReview(ctx, ch, a.Path)
 	case "cull_status":
-		return ch.status(ctx, a.Path)
+		return runStatus(ctx, ch, a.Path)
 	}
 	return "", fmt.Errorf("unknown tool %q", name)
 }
 
 // where resolves the path argument: the session's project root by default, a
 // relative path against the session's directory.
-func (ch *Channel) where(path string) (string, error) {
+func where(ch *Channel, path string) (string, error) {
 	switch {
 	case path == "":
-		if ch.rootErr != nil {
-			return "", ch.rootErr
-		}
-		return ch.root, nil
+		return ch.Root()
 	case filepath.IsAbs(path):
 		return path, nil
 	}
@@ -140,8 +138,8 @@ func (ch *Channel) where(path string) (string, error) {
 
 // judging prepares what check and check_group need: the project's root, a
 // Jev client, and the refusals a missing key or egress setting deserve.
-func (ch *Channel) judging(path string) (string, string, judge.Evaluator, error) {
-	p, err := ch.where(path)
+func judging(ch *Channel, path string) (string, string, judge.Evaluator, error) {
+	p, err := where(ch, path)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -173,8 +171,8 @@ func judgeErr(err error) error {
 	return err
 }
 
-func (ch *Channel) check(ctx context.Context, path, base string) (string, error) {
-	p, root, ev, err := ch.judging(path)
+func runCheck(ctx context.Context, ch *Channel, path, base string) (string, error) {
+	p, root, ev, err := judging(ch, path)
 	if err != nil {
 		return "", err
 	}
@@ -204,8 +202,8 @@ func (ch *Channel) check(ctx context.Context, path, base string) (string, error)
 	}), nil
 }
 
-func (ch *Channel) checkGroup(ctx context.Context, path, id string) (string, error) {
-	_, root, ev, err := ch.judging(path)
+func runCheckGroup(ctx context.Context, ch *Channel, path, id string) (string, error) {
+	_, root, ev, err := judging(ch, path)
 	if err != nil {
 		return "", err
 	}
@@ -224,10 +222,10 @@ type verifyLine struct {
 	OutputTail string `json:"output_tail,omitempty"`
 }
 
-// apply is exactly `cull apply`: the same apply.Run (preflight, baseline,
+// runApply is exactly `cull apply`: the same apply.Run (preflight, baseline,
 // rollback), its exit code mapped to words for the agent.
-func (ch *Channel) apply(ctx context.Context, path string, ids []string) (string, error) {
-	p, err := ch.where(path)
+func runApply(ctx context.Context, ch *Channel, path string, ids []string) (string, error) {
+	p, err := where(ch, path)
 	if err != nil {
 		return "", err
 	}
@@ -298,13 +296,13 @@ type agentStatus struct {
 	Owner    string `json:"owner"`
 }
 
-func (ch *Channel) reply(ctx context.Context, ids []int64, state, text string) (string, error) {
+func runReply(ctx context.Context, ch *Channel, ids []int64, state, text string) (string, error) {
 	if ch.ID.Session == "" {
 		return "", errors.New("this cull channel has no session id (not running under Claude Code or pi), so it has no sends to answer")
 	}
 	if _, err := ch.Client.Do(ctx, http.MethodPost, "/api/agent/reply", map[string]any{
 		"session": ch.ID.Session, "ids": ids, "state": state, "text": text}, nil); err != nil {
-		var se *StatusError
+		var se *pageserve.StatusError
 		if errors.As(err, &se) && se.Code == http.StatusConflict {
 			return "", errors.New(se.Msg)
 		}
@@ -313,13 +311,13 @@ func (ch *Channel) reply(ctx context.Context, ids []int64, state, text string) (
 	return pretty(map[string]any{"ids": ids, "state": state}), nil
 }
 
-func (ch *Channel) status(ctx context.Context, path string) (string, error) {
-	root, err := ch.where(path)
+func runStatus(ctx context.Context, ch *Channel, path string) (string, error) {
+	root, err := where(ch, path)
 	if err != nil {
 		return "", err
 	}
 	var out map[string]any
-	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status?"+q("root", root), nil, &out); err != nil {
+	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status?"+pageserve.Query("root", root), nil, &out); err != nil {
 		return "", err
 	}
 	if ch.ServeOnly {
@@ -329,8 +327,8 @@ func (ch *Channel) status(ctx context.Context, path string) (string, error) {
 	return pretty(out), nil
 }
 
-func (ch *Channel) review(ctx context.Context, path string) (string, error) {
-	root, err := ch.where(path)
+func runReview(ctx context.Context, ch *Channel, path string) (string, error) {
+	root, err := where(ch, path)
 	if err != nil {
 		return "", err
 	}
@@ -338,7 +336,7 @@ func (ch *Channel) review(ctx context.Context, path string) (string, error) {
 		return "", errors.New("this cull channel has no session id (not running under Claude Code or pi), so Court's answers could not be sent to it")
 	}
 	var st agentStatus
-	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status?"+q("root", root), nil, &st); err != nil {
+	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status?"+pageserve.Query("root", root), nil, &st); err != nil {
 		return "", err
 	}
 	if st.Open == 0 {
@@ -359,8 +357,8 @@ func (ch *Channel) review(ctx context.Context, path string) (string, error) {
 	return pretty(res), nil
 }
 
-func (ch *Channel) timeRun(ctx context.Context, path string) (string, error) {
-	p, err := ch.where(path)
+func runTime(ctx context.Context, ch *Channel, path string) (string, error) {
+	p, err := where(ch, path)
 	if err != nil {
 		return "", err
 	}

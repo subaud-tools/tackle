@@ -11,6 +11,7 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/cull/serve"
 	"github.com/subaud-tools/tools-common/channelmcp"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // `cull watch` is the channel's presence and wait loop with a JSON line on
@@ -21,12 +22,11 @@ func TestWatchPrintsASendAsOneLine(t *testing.T) {
 	e := newEnv(t, true)
 	root := project(t)
 	e.jev.set(map[string]float64{`"test_name":"TestMaybe"`: 0.4})
-	id := Identity{Session: "s-1", Harness: "claude", Label: "claude · one", CWD: root}
+	id := pageserve.Identity{Session: "s-1", Harness: "claude", Label: "claude · one", CWD: root}
 
 	// The tools, as `cull channel` serves them under Claude Code.
-	cl := NewClient(nil)
-	cl.Find = serve.Running
-	tools := New(id, cl, "test")
+	cl := pageserve.NewClient(serve.Live(), nil)
+	tools := pageserve.New(Spec("test"), id, cl)
 	tools.ServeOnly = true
 	a := e.connectChannel(tools)
 	var ck checkResult
@@ -35,9 +35,8 @@ func TestWatchPrintsASendAsOneLine(t *testing.T) {
 
 	// The events, as `cull watch` takes them.
 	r, w := io.Pipe()
-	wcl := NewClient(nil)
-	wcl.Find = serve.Running
-	watch := New(id, wcl, "test")
+	wcl := pageserve.NewClient(serve.Live(), nil)
+	watch := pageserve.New(Spec("test"), id, wcl)
 	watch.Log = e.logs
 	watch.Retry, watch.Presence, watch.Poll = 50*time.Millisecond, 200*time.Millisecond, time.Second
 	watch.Push = channelmcp.NewLinesFor(w, "cull")
@@ -99,9 +98,8 @@ func TestChannelWaitsOnlyOutsideClaudeCode(t *testing.T) {
 			t.Setenv("AGENT_SESSION_CHILD", "")
 			t.Chdir(root)
 
-			cl := NewClient(nil)
-			cl.Find = serve.Running
-			c := e.connectChannel(ForSession(cl, "test"))
+			cl := pageserve.NewClient(serve.Live(), nil)
+			c := e.connectChannel(pageserve.ForSession(Spec("test"), cl))
 			var ck checkResult
 			c.toolJSON("cull_check", map[string]any{}, &ck)
 			c.toolJSON("cull_review", map[string]any{}, &struct{}{})
