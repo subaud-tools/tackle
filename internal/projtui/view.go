@@ -545,8 +545,12 @@ func (m Model) previewPane(width int) string {
 		}
 		if !r.Opened {
 			line := "not opened"
-			if r.Created > 0 {
-				line += " · started " + age(r.Created, clock()) + " ago"
+			switch a := age(r.Created, clock()); {
+			case r.Created == 0:
+			case a == "now":
+				line += " · started just now"
+			default:
+				line += " · started " + a + " ago"
 			}
 			b.WriteString(dimStyle.Render(trunc(line, width)) + "\n")
 		}

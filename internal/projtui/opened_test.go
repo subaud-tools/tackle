@@ -140,6 +140,17 @@ func TestNotOpenedPreview(t *testing.T) {
 	}
 }
 
+// A session started under a minute ago says "just now", not "now ago".
+func TestNotOpenedPreviewJustStarted(t *testing.T) {
+	pinClock(t)
+	r := openedFixture()[1]
+	r.Created = fixedNow.Unix()
+	m := sized(sessionsScope(newTestModel([]Row{r})))
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "not opened · started just now") {
+		t.Fatalf("preview missing the just-started line:\n%s", v)
+	}
+}
+
 func TestAge(t *testing.T) {
 	for _, c := range []struct {
 		ago  time.Duration
