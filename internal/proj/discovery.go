@@ -3,9 +3,13 @@ package proj
 import "time"
 
 // Session is a live tmux session discovered across the per-project servers.
+// Opened is false for a session nobody has attached to yet (one started in
+// the background); Created is its session_created epoch.
 type Session struct {
 	Name, Socket, Dir, Agent, State string
 	Unread, ActionRequired          int
+	Opened                          bool
+	Created                         int64
 }
 
 // LiveSessions returns every live session across all Servers(), enriched with
@@ -39,6 +43,8 @@ func LiveSessions() []Session {
 				State:          state,
 				Unread:         a.Unread,
 				ActionRequired: a.ActionRequired,
+				Opened:         s.LastAttached > 0,
+				Created:        s.Created,
 			})
 		}
 	}

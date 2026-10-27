@@ -14,13 +14,16 @@ type ScannedSession struct {
 	Conversation string // @harness_session
 	Agent        string // @proj_agent (AgentOption())
 	Label        string // LabelOption()
+	LastAttached int64  // session_last_attached epoch, 0 if never attached
+	Created      int64  // session_created epoch
 }
 
 // scanFormat is the list-panes -a format ScanServer reads, one pane per line.
 // Fields are separated by \x1f so an empty one (an unset option, a blank
 // command) never shifts the columns; see mainPaneCmd. window_active, last,
 // keeps the main pane in the session's current window, as list-panes -t
-// <session> did. A function, because the option names come from the
+// <session> did. session_last_attached and session_created come after it,
+// so the earlier columns keep their indexes. A function, because the option names come from the
 // environment.
 func scanFormat() string {
 	return strings.Join([]string{
@@ -37,10 +40,12 @@ func scanFormat() string {
 		"#{" + AgentOption() + "}",
 		"#{" + LabelOption() + "}",
 		"#{window_active}",
+		"#{session_last_attached}",
+		"#{session_created}",
 	}, "\x1f")
 }
 
-const scanFields = 13
+const scanFields = 15
 
 // ScanServer reads socket's sessions with one `list-panes -a` call.
 // A server that is not running returns the tmux error.
@@ -81,6 +86,8 @@ func parseScan(out string) []ScannedSession {
 			Conversation: f[9],
 			Agent:        f[10],
 			Label:        f[11],
+			LastAttached: int64(atoi(f[13])),
+			Created:      int64(atoi(f[14])),
 		}
 		if !seen {
 			idx[f[0]] = len(sessions)
