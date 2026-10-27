@@ -26,13 +26,16 @@ notes = [
   tool = "sift"
   bin = "sift"
 
-  # Claude Code: the sift plugin from tackle's marketplace. The next plain
-  # `claude` session installs it at user scope. Its .mcp.json runs `sift
+  # Claude Code: the sift plugin from the subaud-tools marketplace
+  # (subaud-tools/plugins); its old sift@tackle is removed. The tackle
+  # marketplace entry stays, since cull, imprint and sift share it and each
+  # manifest moves only its own plugin. The next plain `claude` session installs it at user scope. Its .mcp.json runs `sift
   # channel` for the tools and its mod runs `sift watch`, which turns each of
   # the user's Sends into a turn.
   [[packages.sift.json-merge]]
   file = "~/.claude/settings.json"
-  merge = { extraKnownMarketplaces = { tackle = { source = { source = "github", repo = "subaud-tools/tackle" }, autoUpdate = true } }, enabledPlugins = { "sift@tackle" = true } }
+  merge = { extraKnownMarketplaces = { subaud-tools = { source = { source = "github", repo = "subaud-tools/plugins" }, autoUpdate = true } }, enabledPlugins = { "sift@subaud-tools" = true } }
+  remove = ["enabledPlugins.sift@tackle"]
 
   # The bare server the plugin replaces, or the channel would start twice.
   [[packages.sift.json-merge]]

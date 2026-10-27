@@ -153,7 +153,7 @@ func runDoctor(args []string, out, errw io.Writer) error {
 	}
 
 	home, _ := os.UserHomeDir()
-	if pluginEnabled(claudeSettings(home), "cull@tackle") {
+	if pluginEnabled(claudeSettings(home), "cull@subaud-tools") {
 		line("~/.claude/settings.json", false, "", "")
 	} else {
 		line("~/.claude/settings.json", false, "the cull plugin is not enabled for Claude Code: install cull with kempt", "")

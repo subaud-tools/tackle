@@ -147,7 +147,7 @@ func channelRegistered(p profile.Profile) (where string, ok bool) {
 			dir = filepath.Join(home, ".claude")
 		}
 		where = filepath.Join(dir, "settings.json")
-		return where + " enabledPlugins", pluginEnabled(where, "sift@tackle")
+		return where + " enabledPlugins", pluginEnabled(where, "sift@subaud-tools")
 	case "codex":
 		where = filepath.Join(p.HomeDir(), "config.toml")
 		var c struct {

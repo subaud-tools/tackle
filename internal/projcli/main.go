@@ -19,8 +19,9 @@ import (
 // out/errw and returning the process exit code.
 func Dispatch(args []string, out, errw io.Writer) int {
 	app := tools.New(tools.Config{
-		Name:   "proj",
-		Domain: "tackle.tools",
+		Name:    "proj",
+		Domain:  "tackle.tools",
+		Product: "tackle",
 		Version: tools.Version{
 			Number: version.Number(),
 			Commit: version.Commit(),

@@ -19,8 +19,9 @@ func run(cwd string, args []string, stdout io.Writer) int {
 	}
 
 	app := tools.New(tools.Config{
-		Name:   "scratch",
-		Domain: "tackle.tools",
+		Name:    "scratch",
+		Domain:  "tackle.tools",
+		Product: "tackle",
 		Version: tools.Version{
 			Number: version.Number(),
 			Commit: version.Commit(),

@@ -1,6 +1,0 @@
-{
-  "description": "Starts a turn with each imprint event",
-  "modules": [
-    "./register.js"
-  ]
-}

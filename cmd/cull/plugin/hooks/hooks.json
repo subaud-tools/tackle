@@ -1,6 +1,0 @@
-{
-  "description": "Starts a turn with each cull event",
-  "modules": [
-    "./register.js"
-  ]
-}

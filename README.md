@@ -13,7 +13,7 @@ member. One Go monorepo; each tool is an independent binary under `cmd/`.
 - **sift** — audits the instruction files coding agents read (global files, repo files, skills), has the agent recommend one revised version per file, and puts each in front of you on a local page; what you approve becomes one pull request per repo. (Preview.)
   Install: `kempt apply -manifest cmd/sift/kempt.toml -packages sift`, then `sift skills install` and `sift init --root DIR`.
 - **imprint** — guides a coding agent through publishing npm packages, trusted publishers and deprecation, opening each approval for you and checking every step on the registry.
-  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install the binary with `curl -fsSL https://tackle.tools/install.sh | sh -s imprint`, run `imprint skills install`, then install its Claude Code plugin with `claude plugin marketplace add subaud-tools/tackle` and `claude plugin install imprint@tackle`. Turn on auto-update for the `tackle` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `tackle` and choose **Enable auto-update**.
+  Install: `kempt apply -manifest cmd/imprint/kempt.toml -packages imprint`, then `imprint skills install`. Without kempt, install the binary with `curl -fsSL https://tackle.tools/install.sh | sh -s imprint`, run `imprint skills install`, then install its Claude Code plugin with `claude plugin marketplace add subaud-tools/plugins` and `claude plugin install imprint@subaud-tools`. Turn on auto-update for the `subaud-tools` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `subaud-tools` and choose **Enable auto-update**.
 
 casebook moved to its own repo, https://github.com/subaud-tools/casebook (casebook.tools).
 
@@ -247,14 +247,14 @@ merge them.
 
 **Install:** `kempt apply -manifest cmd/cull/kempt.toml -packages cull`. This installs the binary, enables the `cull` plugin for Claude Code, and registers the `cull` channel for pi. Then run `cull init` in each project: the first time it stores your TypeSafe key (once per machine); in each project it asks whether that project may send test code to Jev, and adds `.cull/` to the project's ignore file.
 
-To install the Claude Code plugin yourself, run:
+The Claude Code plugin lives in the [subaud-tools/plugins](https://github.com/subaud-tools/plugins) marketplace. To install it yourself, run:
 
-    claude plugin marketplace add subaud-tools/tackle
-    claude plugin install cull@tackle
+    claude plugin marketplace add subaud-tools/plugins
+    claude plugin install cull@subaud-tools
 
 A session started after that hears `cull`. In a session that is already open, run `/reload-plugins`.
 
-Turn on auto-update for the `tackle` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `tackle` and choose **Enable auto-update**.
+Turn on auto-update for the `subaud-tools` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `subaud-tools` and choose **Enable auto-update**.
 
 **Commands**
 
@@ -334,14 +334,14 @@ local page. What you approve becomes one pull request per repo.
 
 **Install:** `kempt apply -manifest cmd/sift/kempt.toml -packages sift`. This installs the binary, enables the `sift` plugin for Claude Code, and registers the `sift` channel for pi. Then run `sift skills install`, which installs the sift skill for each agent harness it finds, and again after each upgrade. Run `sift init --root DIR` once to name the directories to audit. `sift doctor` checks the setup.
 
-To install the Claude Code plugin yourself, run:
+The Claude Code plugin lives in the [subaud-tools/plugins](https://github.com/subaud-tools/plugins) marketplace. To install it yourself, run:
 
-    claude plugin marketplace add subaud-tools/tackle
-    claude plugin install sift@tackle
+    claude plugin marketplace add subaud-tools/plugins
+    claude plugin install sift@subaud-tools
 
 A session started after that hears `sift`. In a session that is already open, run `/reload-plugins`.
 
-Turn on auto-update for the `tackle` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `tackle` and choose **Enable auto-update**.
+Turn on auto-update for the `subaud-tools` marketplace so the plugin stays current: in Claude Code, run `/plugin`, open the **Marketplaces** tab, select `subaud-tools` and choose **Enable auto-update**.
 
 **Commands**
 
