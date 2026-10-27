@@ -19,7 +19,8 @@ import (
 	"github.com/subaud-tools/tools-common/msgstate"
 )
 
-// Handler is the /api/ mux (mounted by localweb, which checks the token).
+// Handler is sift's own /api/ routes; pageserve adds events, poll and stop
+// (mounted by localweb, which checks the token).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/review", s.review)
@@ -37,13 +38,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agent/status", s.agentStatus)
 	mux.HandleFunc("POST /api/agent/report", s.agentReport)
 	mux.HandleFunc("POST /api/agent/reply", s.agentReply)
-	mux.HandleFunc("GET /api/events", s.stream)
-	mux.HandleFunc("GET /api/poll", s.poll)
-	mux.HandleFunc("POST /api/stop", s.postStop)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.activity.Store(time.Now().UnixMilli())
-		mux.ServeHTTP(w, r)
-	})
+	return mux
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -54,11 +49,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
-}
-
-func (s *Server) postStop(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
-	go func() { time.Sleep(50 * time.Millisecond); s.stopNow() }()
 }
 
 func rfc(t time.Time) string {
@@ -108,7 +98,7 @@ type recentSendJSON struct {
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	// Read the cursor before any review data: an event racing the reads is
 	// redelivered to the client, never skipped.
-	cursor := s.events.format(s.events.latest())
+	cursor := s.events.Cursor()
 	rd, rows, err := s.st.LatestRound(r.Context())
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]any{"cursor": cursor, "round": nil, "rows": []row.Row{}, "files": []fileJSON{},
@@ -321,7 +311,7 @@ func (s *Server) putDecisions(w http.ResponseWriter, r *http.Request) {
 		s.rowErr(w, r.Context(), b.Round, err)
 		return
 	}
-	s.events.emit("decisions", map[string]int64{"round": b.Round})
+	s.events.Emit("decisions", map[string]int64{"round": b.Round})
 	// The answered rows as they now are: the page shows them, and its next
 	// decision answers their fingerprints.
 	writeJSON(w, http.StatusOK, map[string]any{"rows": after})
@@ -384,7 +374,7 @@ func (s *Server) deleteDecision(w http.ResponseWriter, r *http.Request) {
 		s.rowErr(w, r.Context(), round, err)
 		return
 	}
-	s.events.emit("decisions", map[string]int64{"round": round})
+	s.events.Emit("decisions", map[string]int64{"round": round})
 	writeJSON(w, http.StatusOK, map[string]any{"rows": []row.Row{after}})
 }
 
@@ -472,7 +462,7 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request) {
 		fileErr(w, err)
 		return
 	}
-	s.events.emit("decisions", map[string]int64{"round": b.Round})
+	s.events.Emit("decisions", map[string]int64{"round": b.Round})
 	writeJSON(w, http.StatusOK, map[string]any{"files": filesOf(after)})
 }
 
@@ -528,7 +518,7 @@ func (s *Server) clearFile(w http.ResponseWriter, r *http.Request) {
 		fileErr(w, err)
 		return
 	}
-	s.events.emit("decisions", map[string]int64{"round": b.Round})
+	s.events.Emit("decisions", map[string]int64{"round": b.Round})
 	writeJSON(w, http.StatusOK, map[string]any{"files": filesOf(after)})
 }
 
@@ -585,7 +575,7 @@ func (s *Server) putNote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.events.emit("decisions", map[string]int64{"round": b.Round})
+	s.events.Emit("decisions", map[string]int64{"round": b.Round})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -653,7 +643,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	n := sd.Counts.Total()
 	to := ""
 	if sd.ID != 0 {
-		s.events.emit("decisions", map[string]int64{"round": b.Round})
+		s.events.Emit("decisions", map[string]int64{"round": b.Round})
 		s.wakeAll()
 		if rd.OwnerSession != "" && s.present(rd.OwnerSession) {
 			to = rd.OwnerLabel

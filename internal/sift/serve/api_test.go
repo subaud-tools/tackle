@@ -36,7 +36,11 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = s.Close() })
 	f := &fixture{t: t, st: s}
 	f.srv = New(s)
-	f.h = f.srv.Handler()
+	mux := http.NewServeMux()
+	mux.Handle("/", f.srv.Handler())
+	mux.HandleFunc("GET /api/poll", f.srv.events.Poll)
+	mux.HandleFunc("GET /api/events", f.srv.events.Stream)
+	f.h = mux
 	f.record()
 	return f
 }
@@ -233,6 +237,12 @@ func (f *fixture) decide(id, action string, extra string) *httptest.ResponseReco
 	return f.do("PUT", "/api/decisions", fmt.Sprintf(`{"round":%d,"decisions":[{"id":%q,"action":%q%s}]}`, f.round, id, action, extra))
 }
 
+// wireEvent is one event of GET /api/poll, as the page reads it.
+type wireEvent struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
 func (f *fixture) events(since string) []wireEvent {
 	f.t.Helper()
 	var r struct {
@@ -251,7 +261,7 @@ func TestReviewShape(t *testing.T) {
 	if len(m.Rows) != 3 || m.Rows[0].ID != "r-neg" || m.Rows[0].Text != "- Push to a branch." || !m.Rows[2].Certain {
 		t.Fatalf("rows %+v", m.Rows)
 	}
-	if !strings.HasPrefix(m.Cursor, f.srv.events.boot+"-") {
+	if m.Cursor != f.srv.events.Cursor() {
 		t.Errorf("cursor %q", m.Cursor)
 	}
 }

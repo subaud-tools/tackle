@@ -20,6 +20,7 @@ import (
 	st "github.com/subaud-tools/tackle/internal/sift/sifttest"
 	"github.com/subaud-tools/tackle/internal/sift/store"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 type syncBuf struct {
@@ -35,6 +36,7 @@ type env struct {
 	st   *store.Store
 	logs *syncBuf
 	repo string
+	env  *Env // the tools' config and gh, shared by every channel the test connects
 }
 
 // newEnv isolates sift's state, config and git, writes a fixture workspace
@@ -57,7 +59,8 @@ func newEnv(t *testing.T) *env {
 	if err := config.Save(config.Path(), c); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, logs: &syncBuf{}, repo: repo}
+	e := &env{t: t, logs: &syncBuf{}, repo: repo,
+		env: &Env{LookPath: func(string) (string, error) { return "", errors.New("no gh in tests") }}}
 	s, err := store.Open(context.Background(), store.Path())
 	if err != nil {
 		t.Fatal(err)
@@ -135,9 +138,13 @@ type client struct {
 
 func (e *env) connect(session string) *client {
 	e.t.Helper()
-	cl := NewClient(nil)
-	cl.Find = serve.Running
-	return e.connectChannel(New(Identity{Session: session, Harness: "claude", Label: "claude · " + session, CWD: e.repo}, cl, "test"))
+	cl := pageserve.NewClient(serve.Live(), nil)
+	return e.connectChannel(pageserve.New(e.spec(), pageserve.Identity{Session: session, Harness: "claude", Label: "claude · " + session, CWD: e.repo}, cl))
+}
+
+// spec is sift's channel over the test's env.
+func (e *env) spec() pageserve.Spec {
+	return Spec("test", e.env)
 }
 
 // connectChannel is connect for a channel the test built itself.
@@ -145,7 +152,6 @@ func (e *env) connectChannel(ch *Channel) *client {
 	t := e.t
 	t.Helper()
 	ch.Log = e.logs
-	ch.LookPath = func(string) (string, error) { return "", errors.New("no gh in tests") }
 	ch.Retry, ch.Presence, ch.Poll = 50*time.Millisecond, 200*time.Millisecond, time.Second
 	c := &client{t: t, wait: map[int]chan rpc{}, events: make(chan event, 16), opened: make(chan string, 8), ch: ch}
 	ch.Open = func(u string) error { c.opened <- u; return nil }
@@ -426,7 +432,7 @@ func TestReviewWithNothingToReview(t *testing.T) {
 func TestCheckWithoutConfigSaysWhatToRun(t *testing.T) {
 	e := newEnv(t)
 	c := e.connect("s1")
-	c.ch.LoadConfig = func() (config.Config, error) { return config.Config{}, config.ErrMissing }
+	e.env.LoadConfig = func() (config.Config, error) { return config.Config{}, config.ErrMissing }
 	text, isErr := c.tool("sift_check", map[string]any{})
 	if !isErr || !strings.Contains(text, "sift init") {
 		t.Fatalf("%v %s", isErr, text)

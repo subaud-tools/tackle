@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/subaud-tools/tackle/internal/sift/channel"
 	"github.com/subaud-tools/tackle/internal/sift/serve"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // Inside pi's claude-bridge the hosting pi session's channel delivers
@@ -25,18 +25,18 @@ func TestWatchStopsInABridgeChild(t *testing.T) {
 	t.Setenv("AGENT_SESSION_ID", "x")
 	var mu sync.Mutex
 	finds := 0
-	cl := channel.NewClient(nil)
-	cl.Find = func() (serve.Advert, error) {
+	cl := pageserve.NewClient(serve.Live(), nil)
+	cl.Find = func() (pageserve.Entry, error) {
 		mu.Lock()
 		finds++
 		mu.Unlock()
-		return serve.Advert{Base: "http://127.0.0.1:1", Token: "tok"}, nil
+		return pageserve.Entry{Base: "http://127.0.0.1:1", Token: "tok"}, nil
 	}
 	var out bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
-	go func() { done <- watch(ctx, &out, io.Discard, cl) }()
+	go func() { done <- shell().Watch(ctx, &out, io.Discard, cl) }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -88,13 +88,13 @@ func TestWatchLineCarriesText(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	cl := channel.NewClient(nil)
-	cl.Find = func() (serve.Advert, error) { return serve.Advert{Base: srv.URL, Token: "tok"}, nil }
+	cl := pageserve.NewClient(serve.Live(), nil)
+	cl.Find = func() (pageserve.Entry, error) { return pageserve.Entry{Base: srv.URL, Token: "tok"}, nil }
 
 	r, w := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = watch(ctx, w, io.Discard, cl) }()
+	go func() { _ = shell().Watch(ctx, w, io.Discard, cl) }()
 
 	lines := make(chan string, 1)
 	go func() {
