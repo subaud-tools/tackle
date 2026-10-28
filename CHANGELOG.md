@@ -6,6 +6,32 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull Unreleased]
+
+### Changed
+- When cull's page server shuts down after 8 hours with no use, it stays stopped until the next cull tool call. Before, an open agent session started it again at once, so it never stayed stopped. Nothing else changes: a tool call or `cull serve` starts it as before (tools-common 0.32.0).
+- `cull update` prints the notice cull's site publishes, when there is one.
+
+### Fixed
+- `cull <command> -h` and the man page name the command again: `Usage: cull check [path] [--diff base]`, not `Usage: cull [path] [--diff base]`.
+
+## [sift Unreleased]
+
+### Changed
+- When sift's page server shuts down after 8 hours with no use, it stays stopped until the next sift tool call. Before, an open agent session started it again at once, so it never stayed stopped. Nothing else changes: a tool call or `sift serve` starts it as before (tools-common 0.32.0).
+- `sift update` prints the notice sift's site publishes, when there is one.
+
+### Fixed
+- `sift <command> -h` and the man page name the command again: `Usage: sift apply [--round N] [--dry-run] [--json]`, not `Usage: sift [--round N] [--dry-run] [--json]`.
+
+## [imprint Unreleased]
+
+### Changed
+- `imprint update` prints the notice imprint's site publishes, when there is one (tools-common 0.32.0).
+
+### Fixed
+- `imprint login -h` and `imprint skills -h` name the command again: `Usage: imprint login [--name NAME] [--wait]`, not `Usage: imprint [--name NAME] [--wait]`.
+
 ## [cull 0.6.1] - 2026-10-27
 
 ### Changed
