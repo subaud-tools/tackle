@@ -272,8 +272,8 @@ export function boot(): void {
       const p = actP(x);
       return {
         id: x.id,
-        key: `${x.state.tests.length} tests · ${file}`,
-        title: x.state.tests.map((m) => m.name).join(', '),
+        key: `${(x.state.tests ?? []).length} tests · ${file}`,
+        title: (x.state.tests ?? []).map((m) => m.name).join(', '),
         meta: meta(p),
         sub: a
           ? `answered ${a}`

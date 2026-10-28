@@ -73,6 +73,11 @@ cull-web: _cull-web-deps
     cd {{ cull_web }} && npm run --silent lint
     cd {{ cull_web }} && npm run --silent fmt:check
 
+# Rewrite web/wire.d.ts from the Go structs the page reads; the wire test
+# fails while it is stale.
+cull-wire:
+    go test ./internal/cull/serve -run TestTheWireTypeIsCommitted -update
+
 # Rebuild the committed bundle (build:js + build:css only).
 cull-assets: _cull-web-deps
     cd {{ cull_web }} && npm run --silent build:js && npm run --silent build:css

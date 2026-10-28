@@ -61,7 +61,8 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request, v string) (stor
 	return p, true
 }
 
-type answerJSON struct {
+// answer is Court's answer to one item, on the page.
+type answer struct {
 	Value      string `json:"value"`
 	Note       string `json:"note"`
 	Via        string `json:"via"`
@@ -70,7 +71,12 @@ type answerJSON struct {
 	SentAt     string `json:"sent_at,omitempty"`
 }
 
-type itemJSON struct {
+// itemBase is one item of the run on the page. State and Jev are the bytes
+// stored at check time, sent as stored: a judge.State or judge.GroupState and
+// Jev's answers to the rubric's questions, by Kind. Go cannot declare a type
+// that depends on Kind, so wire.d.ts declares them unknown and the page
+// narrows them (TestItem and GroupItem, web/kinds.d.ts).
+type itemBase struct {
 	ID      string          `json:"id"`
 	Kind    string          `json:"kind"`
 	Hash    string          `json:"hash"`
@@ -83,7 +89,7 @@ type itemJSON struct {
 	Jev     json.RawMessage `json:"jev"`
 	Rows    [][]string      `json:"rows,omitempty"`
 	Members []string        `json:"members,omitempty"`
-	Answer  *answerJSON     `json:"answer,omitempty"`
+	Answer  *answer         `json:"answer,omitempty"`
 }
 
 func rfc(t time.Time) string {
@@ -110,11 +116,11 @@ func actProb(it store.Item) float64 {
 	return v.Verdict.Probabilities["cut"]
 }
 
-// recentSendJSON is one of the project's newest sends on the page: what it
+// recentSend is one of the project's newest sends on the page: what it
 // carried, where it stands (msgstate), whether the harness holds it while
 // the agent is mid-turn, whether a session claimed it, and the agent's
 // working line or reply.
-type recentSendJSON struct {
+type recentSend struct {
 	ID      int64          `json:"id"`
 	At      string         `json:"at"`
 	Counts  store.Counts   `json:"counts"`
@@ -125,17 +131,50 @@ type recentSendJSON struct {
 }
 
 // recentSends is the project's newest sends, newest first, for the page.
-func (s *Server) recentSends(r *http.Request, projectID int64) ([]recentSendJSON, error) {
+func (s *Server) recentSends(r *http.Request, projectID int64) ([]recentSend, error) {
 	sends, err := s.st.RecentSends(r.Context(), projectID, 10)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]recentSendJSON, 0, len(sends))
+	out := make([]recentSend, 0, len(sends))
 	for _, sd := range sends {
-		out = append(out, recentSendJSON{ID: sd.ID, At: rfc(sd.CreatedAt), Counts: sd.Counts, State: sd.State,
+		out = append(out, recentSend{ID: sd.ID, At: rfc(sd.CreatedAt), Counts: sd.Counts, State: sd.State,
 			Held: sd.Held, Claimed: sd.ClaimedBy != "", Reply: sd.Reply})
 	}
 	return out, nil
+}
+
+// review is GET /api/review: the project, its latest run (null before the
+// first) with its items, how many answers it holds and how many were sent
+// (absent before the first run), and its newest sends. Blind is always false
+// here; cursor is where the page's event stream starts.
+type review struct {
+	Cursor      string          `json:"cursor"`
+	Project     reviewProject   `json:"project"`
+	Run         *reviewRun      `json:"run"`
+	Items       []itemBase      `json:"items"`
+	Answered    *answeredCounts `json:"answered,omitempty"`
+	Blind       bool            `json:"blind"`
+	RecentSends []recentSend    `json:"recent_sends"`
+}
+
+type reviewProject struct {
+	ID   int64  `json:"id"`
+	Root string `json:"root"`
+}
+
+type reviewRun struct {
+	ID      int64          `json:"id"`
+	At      string         `json:"at"`
+	Mode    string         `json:"mode"`
+	Base    string         `json:"base"`
+	Total   int            `json:"total"`
+	Summary map[string]int `json:"summary"`
+}
+
+type answeredCounts struct {
+	Total int `json:"total"`
+	Sent  int `json:"sent"`
 }
 
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +185,7 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	proj := map[string]any{"id": p.ID, "root": p.Root}
+	proj := reviewProject{ID: p.ID, Root: p.Root}
 	recent, err := s.recentSends(r, p.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -154,8 +193,7 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	}
 	run, items, err := s.st.LatestRun(r.Context(), p.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{"project": proj, "run": nil, "items": []itemJSON{}, "blind": false, "cursor": cursor,
-			"recent_sends": recent})
+		writeJSON(w, http.StatusOK, review{Cursor: cursor, Project: proj, Items: []itemBase{}, RecentSends: recent})
 		return
 	}
 	if err != nil {
@@ -183,25 +221,24 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 			sent++
 		}
 	}
-	out := make([]itemJSON, 0, len(items))
+	out := make([]itemBase, 0, len(items))
 	for _, it := range items {
-		j := itemJSON{ID: it.ID, Kind: it.Kind, Hash: it.Hash, File: it.File, Name: it.Name, Verdict: it.Verdict,
+		j := itemBase{ID: it.ID, Kind: it.Kind, Hash: it.Hash, File: it.File, Name: it.Name, Verdict: it.Verdict,
 			Rule: it.Rule, Model: it.Model, State: it.State, Jev: it.Jev, Rows: it.Rows, Members: it.Members}
 		if a, ok := answers[store.Key{ItemID: it.ID, Hash: it.Hash}]; ok {
-			j.Answer = &answerJSON{Value: a.Value, Note: a.Note, Via: a.Via, Blind: a.Blind,
+			j.Answer = &answer{Value: a.Value, Note: a.Note, Via: a.Via, Blind: a.Blind,
 				AnsweredAt: rfc(a.AnsweredAt), SentAt: rfc(a.SentAt)}
 		}
 		out = append(out, j)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": proj,
-		"run": map[string]any{"id": run.ID, "at": rfc(run.At), "mode": run.Mode, "base": run.Base,
-			"summary": run.Summary, "total": run.Total},
-		"items":        out,
-		"blind":        false,
-		"cursor":       cursor,
-		"answered":     map[string]int{"total": len(answers), "sent": sent},
-		"recent_sends": recent,
+	writeJSON(w, http.StatusOK, review{
+		Cursor:  cursor,
+		Project: proj,
+		Run: &reviewRun{ID: run.ID, At: rfc(run.At), Mode: run.Mode, Base: run.Base,
+			Total: run.Total, Summary: run.Summary},
+		Items:       out,
+		Answered:    &answeredCounts{Total: len(answers), Sent: sent},
+		RecentSends: recent,
 	})
 }
 

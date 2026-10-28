@@ -173,7 +173,7 @@ function byConcern(items) {
 function bySize(groups) {
   const m = /* @__PURE__ */ new Map();
   for (const g of groups) {
-    const n = g.state.tests.length;
+    const n = (g.state.tests ?? []).length;
     const key = n >= 5 ? "5+" : String(Math.max(n, 2));
     m.set(key, [...m.get(key) ?? [], g]);
   }
@@ -426,7 +426,7 @@ function groupItem(ctx, g) {
   const a = ctx.answerOf(g.id);
   const l = lean(g);
   const p = actP(g);
-  const members = g.state.tests;
+  const members = g.state.tests ?? [];
   const kick = `group · ${ctx.rootName} · ${g.file}`;
   const head = [
     backLink(ctx),
@@ -975,8 +975,8 @@ function boot() {
       const p = actP(x);
       return {
         id: x.id,
-        key: `${x.state.tests.length} tests · ${file}`,
-        title: x.state.tests.map((m) => m.name).join(", "),
+        key: `${(x.state.tests ?? []).length} tests · ${file}`,
+        title: (x.state.tests ?? []).map((m) => m.name).join(", "),
         meta: meta(p),
         sub: a ? `answered ${a}` : BLIND ? "" : `merge ${p.toFixed(2)} · same behavior ${x.jev.same_behavior.noul.toFixed(2)}`,
         selectable: true
