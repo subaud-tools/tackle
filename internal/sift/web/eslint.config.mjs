@@ -29,7 +29,8 @@ const rules = {
 
 export default [
   {
-    ignores: ['node_modules/', 'kit.d.ts'],
+    // wire.d.ts is generated and checked by its Go test.
+    ignores: ['node_modules/', 'kit.d.ts', 'wire.d.ts'],
   },
   ...tseslint.configs.recommendedTypeChecked.map((c) => ({
     ...c,

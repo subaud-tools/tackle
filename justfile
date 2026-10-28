@@ -115,6 +115,11 @@ sift-web: _sift-web-deps
     cd {{ sift_web }} && npm run --silent lint
     cd {{ sift_web }} && npm run --silent fmt:check
 
+# Rewrite web/wire.d.ts from the Go structs the page reads; the wire test
+# fails while it is stale.
+sift-wire:
+    go test ./internal/sift/serve -run TestTheWireTypeIsCommitted -update
+
 # Rebuild the committed bundle (build:js + build:css only).
 sift-assets: _sift-web-deps
     cd {{ sift_web }} && npm run --silent build:js && npm run --silent build:css

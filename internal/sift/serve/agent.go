@@ -268,8 +268,32 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// status is GET /api/agent/status: where the latest round stands (all zero
+// before the first) and every send not yet settled.
+type status struct {
+	Round        int64           `json:"round"`
+	State        store.State     `json:"state"`
+	Files        int             `json:"files"`
+	Recommended  int             `json:"recommended"`
+	Open         int             `json:"open"`
+	Decided      int             `json:"decided"`
+	Sent         int             `json:"sent"`
+	Owner        string          `json:"owner"`
+	OwnerPresent bool            `json:"owner_present"`
+	Unsettled    []unsettledSend `json:"unsettled"`
+}
+
+// unsettledSend is a send the agent has not settled.
+type unsettledSend struct {
+	ID     int64          `json:"id"`
+	Round  int64          `json:"round"`
+	State  msgstate.State `json:"state"`
+	At     string         `json:"at"`
+	Counts store.Counts   `json:"counts"`
+}
+
 func (s *Server) agentStatus(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{"round": 0, "state": "", "files": 0, "recommended": 0, "open": 0, "decided": 0, "sent": 0, "owner": "", "owner_present": false}
+	var out status
 	rd, rows, err := s.st.LatestRound(r.Context())
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -310,20 +334,19 @@ func (s *Server) agentStatus(w http.ResponseWriter, r *http.Request) {
 				count(it.Decision != nil, it.Decision != nil && it.Decision.Sent)
 			}
 		}
-		out["round"], out["state"], out["files"], out["recommended"] = rd.ID, prog.State, prog.Files, prog.Recommended
-		out["open"], out["decided"], out["sent"] = open, decided, sent
-		out["owner"], out["owner_present"] = rd.OwnerLabel, rd.OwnerSession != "" && s.present(rd.OwnerSession)
+		out.Round, out.State, out.Files, out.Recommended = rd.ID, prog.State, prog.Files, prog.Recommended
+		out.Open, out.Decided, out.Sent = open, decided, sent
+		out.Owner, out.OwnerPresent = rd.OwnerLabel, rd.OwnerSession != "" && s.present(rd.OwnerSession)
 	}
 	pend, err := s.st.Unsettled(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	open := make([]map[string]any, 0, len(pend))
+	out.Unsettled = make([]unsettledSend, 0, len(pend))
 	for _, sd := range pend {
-		open = append(open, map[string]any{"id": sd.ID, "round": sd.Round, "state": sd.State, "at": rfc(sd.CreatedAt), "counts": sd.Counts})
+		out.Unsettled = append(out.Unsettled, unsettledSend{ID: sd.ID, Round: sd.Round, State: sd.State, At: rfc(sd.CreatedAt), Counts: sd.Counts})
 	}
-	out["unsettled"] = open
 	writeJSON(w, http.StatusOK, out)
 }
 

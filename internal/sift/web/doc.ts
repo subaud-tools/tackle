@@ -500,7 +500,7 @@ function findingsTable(f: FileView, rows: Finding[]): HTMLElement {
       h('th', null, 'what the chosen version does'),
     ),
     rows.map((r) => {
-      const a = f.rec?.findings.find((x) => x.row === r.id);
+      const a = f.rec?.findings?.find((x) => x.row === r.id);
       const did = didFor(f, r.id);
       // The recommendation's own words carry its fixed / kept mark.
       const mark =
@@ -860,7 +860,7 @@ export function noChangeDoc(ctx: NoChangeCtx, files: FileView[]): HTMLElement {
             h(
               'td',
               { class: 'p' },
-              f.rec?.findings.find((x) => x.row === r.id)?.how ?? '—',
+              f.rec?.findings?.find((x) => x.row === r.id)?.how ?? '—',
             ),
           ),
         ),
