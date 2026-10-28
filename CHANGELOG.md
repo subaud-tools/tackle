@@ -6,6 +6,22 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.7.0] - 2026-10-28
+
+### Changed
+- cull's page types are generated from its Go server, its lint rules and browser probe come from the family's shared page build (tools-common 0.33.0), and the server's responses are typed. Nothing you see changes.
+
+### Fixed
+- A group whose first test alone was over the size limit came back with no tests, and the page crashed reading it. The page now shows the group with no tests.
+
+## [sift 0.6.0] - 2026-10-28
+
+### Changed
+- sift's page types are generated from its Go server, its lint rules and browser probe come from the family's shared page build (tools-common 0.33.0), and the server's responses are typed. Nothing you see changes.
+
+### Fixed
+- A recommendation with no findings came back with none, and the page crashed reading it. The page now shows it with no findings.
+
 ## [cull 0.6.2] - 2026-10-27
 
 ### Changed
