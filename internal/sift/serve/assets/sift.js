@@ -453,7 +453,7 @@ function chosen(f) {
   return f.decision ? choiceOf[f.decision.action] : null;
 }
 function didFor(f, row) {
-  const a = f.rec?.findings.find((x) => x.row === row);
+  const a = f.rec?.findings?.find((x) => x.row === row);
   const rec = a ? `${a.did}: ${a.how}` : "—";
   switch (chosen(f)) {
     case "current":
@@ -1231,7 +1231,7 @@ function findingsTable(f, rows) {
       h2("th", null, "what the chosen version does")
     ),
     rows.map((r) => {
-      const a = f.rec?.findings.find((x) => x.row === r.id);
+      const a = f.rec?.findings?.find((x) => x.row === r.id);
       const did = didFor(f, r.id);
       const mark = a && did.startsWith(`${a.did}: `) ? [
         h2("span", { class: `sift-did ${a.did}` }, a.did),
@@ -1520,7 +1520,7 @@ function noChangeDoc(ctx, files) {
             h2(
               "td",
               { class: "p" },
-              f.rec?.findings.find((x) => x.row === r.id)?.how ?? "—"
+              f.rec?.findings?.find((x) => x.row === r.id)?.how ?? "—"
             )
           )
         )

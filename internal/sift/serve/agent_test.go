@@ -197,7 +197,7 @@ func TestReportsAndRepliesMoveASend(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 || len(got.Report) != 16 {
 		t.Fatalf("wait %d %s", w.Code, w.Body)
 	}
-	last := func() recentSendJSON {
+	last := func() recentSend {
 		t.Helper()
 		rs := f.review().RecentSends
 		if len(rs) != 1 || rs[0].ID != got.ID {

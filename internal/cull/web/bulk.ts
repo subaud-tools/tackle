@@ -73,7 +73,7 @@ export interface SizeRow {
 export function bySize(groups: GroupItem[]): SizeRow[] {
   const m = new Map<string, GroupItem[]>();
   for (const g of groups) {
-    const n = g.state.tests.length;
+    const n = (g.state.tests ?? []).length;
     const key = n >= 5 ? '5+' : String(Math.max(n, 2));
     m.set(key, [...(m.get(key) ?? []), g]);
   }

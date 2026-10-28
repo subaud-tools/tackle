@@ -14,62 +14,10 @@
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import pkg from 'playwright-core';
-import { startServe, cleanupBuild, FIXTURE } from './serve-fixture.mjs';
+import { check, launchOrSkip, run, sleep, until } from './build/probe.mjs';
+import { startServe, FIXTURE } from './serve-fixture.mjs';
 import { buckets, byConcern } from './bulk.ts';
 import { concern } from './model.ts';
-
-const { chromium } = pkg;
-const required = process.env.KIT_BROWSER === 'required';
-
-let passes = 0;
-let fails = 0;
-function check(label, ok, detail = '') {
-  if (ok) {
-    console.log(`  ✓ ${label}`);
-    passes++;
-  } else {
-    console.error(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`);
-    fails++;
-  }
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(fn, ms = 4000) {
-  const end = Date.now() + ms;
-  for (;;) {
-    let v;
-    try {
-      v = await fn();
-    } catch {
-      v = false;
-    }
-    if (v) return v;
-    if (Date.now() > end) return false;
-    await sleep(50);
-  }
-}
-
-let serve = null;
-let sendServe = null;
-let browser = null;
-async function cleanup() {
-  try {
-    await browser?.close();
-  } catch {
-    // already gone
-  }
-  for (const s of [serve, sendServe]) {
-    try {
-      await s?.stop();
-    } catch {
-      // already gone
-    }
-  }
-  cleanupBuild();
-}
-process.on('SIGINT', () => cleanup().finally(() => process.exit(130)));
-process.on('SIGTERM', () => cleanup().finally(() => process.exit(143)));
 
 const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
 const tests = fixture.items.filter((i) => i.kind === 'test');
@@ -78,17 +26,9 @@ const expectBuckets = buckets(tests, new Map());
 const expectGroups = buckets(groups, new Map());
 
 async function main() {
-  try {
-    browser = await chromium.launch({ headless: true });
-  } catch (err) {
-    if (required) {
-      console.error(`probe: no chromium (KIT_BROWSER=required): ${err}`);
-      process.exit(1);
-    }
-    console.log('probe: no chromium; skipped');
-    return;
-  }
-  serve = await startServe();
+  const browser = await launchOrSkip();
+  if (!browser) return;
+  const serve = await startServe();
   const pid = serve.projectId;
   const out =
     process.env.PROBE_OUT ||
@@ -804,7 +744,7 @@ async function main() {
   // ---- sends: one pill per Send, with the kit's label and the line under
   // it, newest first; a reply redraws it live.
   console.log('sends');
-  sendServe = await startServe({ sends: true });
+  const sendServe = await startServe({ sends: true });
   const su = new URL(sendServe.url);
   su.hash = `#/p/${sendServe.projectId}`;
   const sp = await ctx.newPage();
@@ -903,13 +843,4 @@ async function main() {
   console.log('  screenshots:', shots.join(' '));
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(err);
-  fails++;
-} finally {
-  await cleanup();
-}
-console.log(`\n${passes} passed, ${fails} failed`);
-process.exit(fails ? 1 : 0);
+run(main);

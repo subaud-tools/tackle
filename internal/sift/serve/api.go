@@ -58,7 +58,7 @@ func rfc(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-type roundJSON struct {
+type reviewRound struct {
 	ID      int64          `json:"id"`
 	Kind    string         `json:"kind"`
 	At      string         `json:"at"`
@@ -66,7 +66,7 @@ type roundJSON struct {
 	Owner   string         `json:"owner"`
 }
 
-type applyJSON struct {
+type applyRecord struct {
 	Repo   string   `json:"repo"`
 	Base   string   `json:"base"`
 	Branch string   `json:"branch"`
@@ -81,11 +81,11 @@ type applyJSON struct {
 	LastDetail string `json:"last_detail,omitempty"`
 }
 
-// recentSendJSON is one of the round's newest sends on the page: what it
+// recentSend is one of the round's newest sends on the page: what it
 // carried, where it stands (msgstate), whether the harness holds it while
 // the agent is mid-turn, whether a session claimed it, and the agent's
 // working line or reply.
-type recentSendJSON struct {
+type recentSend struct {
 	ID      int64          `json:"id"`
 	At      string         `json:"at"`
 	Counts  store.Counts   `json:"counts"`
@@ -95,14 +95,49 @@ type recentSendJSON struct {
 	Reply   string         `json:"reply"`
 }
 
+// review is GET /api/review: the latest round (null before the first) with
+// its progress, rows, files, apply records, how many sends it had and its
+// newest sends, and the user's home directory (so the page can show paths
+// under it as ~/…). Cursor is where the page's event stream starts.
+type review struct {
+	Cursor      string         `json:"cursor"`
+	Round       *reviewRound   `json:"round"`
+	Progress    store.Progress `json:"progress"`
+	Rows        []finding      `json:"rows"`
+	Files       []fileView     `json:"files"`
+	Applies     []applyRecord  `json:"applies"`
+	Sends       int            `json:"sends"`
+	RecentSends []recentSend   `json:"recent_sends"`
+	Home        string         `json:"home"`
+}
+
+// finding is a row on the page (named for wire.d.ts).
+type finding row.Row
+
+// findings is rows as the page reads them.
+func findings(rows []row.Row) []finding {
+	out := make([]finding, len(rows))
+	for i, r := range rows {
+		out[i] = finding(r)
+	}
+	return out
+}
+
+// recommendation and fileDecision are a file's rec.Rec and rec.Decision on
+// the page, named apart from row.Decision for wire.d.ts.
+type (
+	recommendation rec.Rec
+	fileDecision   rec.Decision
+)
+
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	// Read the cursor before any review data: an event racing the reads is
 	// redelivered to the client, never skipped.
 	cursor := s.events.Cursor()
 	rd, rows, err := s.st.LatestRound(r.Context())
 	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{"cursor": cursor, "round": nil, "rows": []row.Row{}, "files": []fileJSON{},
-			"progress": store.Progress{}, "applies": []applyJSON{}, "sends": 0, "recent_sends": []recentSendJSON{}, "home": home()})
+		writeJSON(w, http.StatusOK, review{Cursor: cursor, Rows: []finding{}, Files: []fileView{}, Applies: []applyRecord{},
+			RecentSends: []recentSend{}, Home: home()})
 		return
 	}
 	if err != nil {
@@ -114,9 +149,9 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	aj := make([]applyJSON, 0, len(applies))
+	aj := make([]applyRecord, 0, len(applies))
 	for _, a := range applies {
-		aj = append(aj, applyJSON{Repo: a.Repo, Base: a.Base, Branch: a.Branch, PR: a.PR, State: a.State, Detail: a.Detail,
+		aj = append(aj, applyRecord{Repo: a.Repo, Base: a.Base, Branch: a.Branch, PR: a.PR, State: a.State, Detail: a.Detail,
 			Rows: append([]string{}, a.Rows...), At: rfc(a.At), LastState: a.Last.State, LastDetail: a.Last.Detail})
 	}
 	sends, err := s.st.Sends(r.Context(), rd.ID)
@@ -129,9 +164,9 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rj := make([]recentSendJSON, 0, len(recent))
+	rj := make([]recentSend, 0, len(recent))
 	for _, sd := range recent {
-		rj = append(rj, recentSendJSON{ID: sd.ID, At: rfc(sd.CreatedAt), Counts: sd.Counts, State: sd.State,
+		rj = append(rj, recentSend{ID: sd.ID, At: rfc(sd.CreatedAt), Counts: sd.Counts, State: sd.State,
 			Held: sd.Held, Claimed: sd.ClaimedBy != "", Reply: sd.Reply})
 	}
 	if rows == nil {
@@ -151,43 +186,43 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	files := make([]fileJSON, 0, len(items))
+	files := make([]fileView, 0, len(items))
 	for _, it := range items {
 		files = append(files, fileOf(it))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"cursor":       cursor,
-		"round":        roundJSON{ID: rd.ID, Kind: rd.Kind, At: rfc(rd.At), Summary: sum, Owner: rd.OwnerLabel},
-		"progress":     prog,
-		"rows":         rows,
-		"files":        files,
-		"applies":      aj,
-		"sends":        sends,
-		"recent_sends": rj,
-		"home":         home(),
+	writeJSON(w, http.StatusOK, review{
+		Cursor:      cursor,
+		Round:       &reviewRound{ID: rd.ID, Kind: rd.Kind, At: rfc(rd.At), Summary: sum, Owner: rd.OwnerLabel},
+		Progress:    prog,
+		Rows:        findings(rows),
+		Files:       files,
+		Applies:     aj,
+		Sends:       sends,
+		RecentSends: rj,
+		Home:        home(),
 	})
 }
 
-// fileJSON is one of an audit round's files on the page: where it is, its
+// fileView is one of an audit round's files on the page: where it is, its
 // size before (Size) and after (After: the recommendation, or the user's
 // edit), its findings, the recommendation, the decision, the fingerprint a
 // decision answers and the files decided with it. The audited content
 // itself is read on demand (GET /api/base).
-type fileJSON struct {
-	Key         string        `json:"key"`
-	Path        string        `json:"path"`
-	Source      row.Source    `json:"source"`
-	Commit      string        `json:"commit,omitempty"`
-	Class       string        `json:"class"`
-	Budget      int           `json:"budget"`
-	Base        string        `json:"base"`
-	Size        int           `json:"size"`
-	After       int           `json:"after"`
-	Rows        []string      `json:"rows"`
-	Rec         *rec.Rec      `json:"rec"`
-	Decision    *rec.Decision `json:"decision"`
-	Fingerprint string        `json:"fingerprint"`
-	Group       []string      `json:"group"`
+type fileView struct {
+	Key         string          `json:"key"`
+	Path        string          `json:"path"`
+	Source      row.Source      `json:"source"`
+	Commit      string          `json:"commit,omitempty"`
+	Class       string          `json:"class"`
+	Budget      int             `json:"budget"`
+	Base        string          `json:"base"`
+	Size        int             `json:"size"`
+	After       int             `json:"after"`
+	Rows        []string        `json:"rows"`
+	Rec         *recommendation `json:"rec"`
+	Decision    *fileDecision   `json:"decision"`
+	Fingerprint string          `json:"fingerprint"`
+	Group       []string        `json:"group"`
 	// Unchanged: the recommendation leaves the file (and its group) as it
 	// is; the page lists it under nothing to change. Muted: its findings
 	// are muted (it was agreed with).
@@ -195,9 +230,9 @@ type fileJSON struct {
 	Muted     bool `json:"muted"`
 }
 
-func fileOf(it store.FileItem) fileJSON {
-	f := fileJSON{Key: it.Key, Path: it.Source.File, Source: it.Source, Commit: it.Commit, Class: it.Class, Budget: it.Budget,
-		Base: it.Base, Size: it.Size, After: it.Size, Rows: append([]string{}, it.Rows...), Rec: it.Rec, Decision: it.Decision,
+func fileOf(it store.FileItem) fileView {
+	f := fileView{Key: it.Key, Path: it.Source.File, Source: it.Source, Commit: it.Commit, Class: it.Class, Budget: it.Budget,
+		Base: it.Base, Size: it.Size, After: it.Size, Rows: append([]string{}, it.Rows...), Rec: (*recommendation)(it.Rec), Decision: (*fileDecision)(it.Decision),
 		Fingerprint: it.Fingerprint, Group: append([]string{}, it.Group...), Unchanged: it.Unchanged, Muted: it.Muted}
 	if it.Rec != nil {
 		f.After = len(it.Rec.Content)
@@ -478,8 +513,8 @@ func seenIn(prints, decisions map[string]string) map[string]store.Seen {
 
 // filesOf is a decision's snapshot on the wire: the group's files as they
 // now are. The page shows them, and its next decision answers their prints.
-func filesOf(items []store.FileItem) []fileJSON {
-	out := make([]fileJSON, 0, len(items))
+func filesOf(items []store.FileItem) []fileView {
+	out := make([]fileView, 0, len(items))
 	for _, it := range items {
 		out = append(out, fileOf(it))
 	}

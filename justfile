@@ -73,14 +73,21 @@ cull-web: _cull-web-deps
     cd {{ cull_web }} && npm run --silent lint
     cd {{ cull_web }} && npm run --silent fmt:check
 
+# Rewrite web/wire.d.ts from the Go structs the page reads; the wire test
+# fails while it is stale.
+cull-wire:
+    go test ./internal/cull/serve -run TestTheWireTypeIsCommitted -update
+
 # Rebuild the committed bundle (build:js + build:css only).
 cull-assets: _cull-web-deps
     cd {{ cull_web }} && npm run --silent build:js && npm run --silent build:css
 
-# The committed bundle matches web/: nothing else notices a stale one.
+# The committed bundle matches web/, and the files copied from tools-common
+# match the version go.mod pins: nothing else notices a stale one.
 cull-bundle-fresh: cull-assets
     git diff --exit-code -- internal/cull/serve/assets/cull.js internal/cull/serve/assets/cull.css \
       || { echo "the committed cull bundle does not match web/: run 'just cull-assets' and commit the result"; exit 1; }
+    just _copies-fresh {{ cull_web }}
 
 # The page in a real headless chromium against a seeded cull serve (--no-open;
 # web/serve-fixture.mjs builds the cull binary and the seeder itself).
@@ -110,14 +117,21 @@ sift-web: _sift-web-deps
     cd {{ sift_web }} && npm run --silent lint
     cd {{ sift_web }} && npm run --silent fmt:check
 
+# Rewrite web/wire.d.ts from the Go structs the page reads; the wire test
+# fails while it is stale.
+sift-wire:
+    go test ./internal/sift/serve -run TestTheWireTypeIsCommitted -update
+
 # Rebuild the committed bundle (build:js + build:css only).
 sift-assets: _sift-web-deps
     cd {{ sift_web }} && npm run --silent build:js && npm run --silent build:css
 
-# The committed bundle matches web/: nothing else notices a stale one.
+# The committed bundle matches web/, and the files copied from tools-common
+# match the version go.mod pins: nothing else notices a stale one.
 sift-bundle-fresh: sift-assets
     git diff --exit-code -- internal/sift/serve/assets/sift.js internal/sift/serve/assets/sift.css \
       || { echo "the committed sift bundle does not match web/: run 'just sift-assets' and commit the result"; exit 1; }
+    just _copies-fresh {{ sift_web }}
 
 # The page in a real headless chromium against a seeded sift serve (--no-open;
 # web/serve-fixture.mjs builds the sift binary and the seeder itself): the
@@ -127,3 +141,20 @@ sift-bundle-fresh: sift-assets
 # `cd internal/sift/web && node node_modules/playwright-core/cli.js install chromium chromium-headless-shell`.
 sift-probe: _sift-web-deps
     cd {{ sift_web }} && KIT_BROWSER=required npm run --silent probe
+
+# Each file a page's build copies from tools-common is byte for byte the one
+# in the version go.mod pins: kit.d.ts (npm run kit-types) and build/'s
+# eslint base and probe scaffolding (npm run page-build, committed).
+_copies-fresh web:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    go mod download github.com/subaud-tools/tools-common
+    kit="$(go list -m -f '{{{{.Dir}}' github.com/subaud-tools/tools-common)"
+    pin="$(go list -m -f '{{{{.Version}}' github.com/subaud-tools/tools-common)"
+    bad=0
+    for pair in assets/kit.d.ts:kit.d.ts:kit-types build/eslint.base.mjs:build/eslint.base.mjs:page-build build/probe.mjs:build/probe.mjs:page-build; do
+      IFS=: read -r src dst fix <<< "$pair"
+      cmp -s "$kit/localweb/page/$src" "{{ web }}/$dst" \
+        || { echo "{{ web }}/$dst differs from tools-common $pin's localweb/page/$src: run 'cd {{ web }} && npm run $fix'"; bad=1; }
+    done
+    exit "$bad"

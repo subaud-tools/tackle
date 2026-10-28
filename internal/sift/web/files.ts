@@ -234,7 +234,7 @@ export function chosen(f: FileView): Choice | null {
 /** What the version picked (the recommendation, undecided) does about
  * the finding row. */
 export function didFor(f: FileView, row: string): string {
-  const a = f.rec?.findings.find((x) => x.row === row);
+  const a = f.rec?.findings?.find((x) => x.row === row);
   const rec = a ? `${a.did}: ${a.how}` : '—';
   switch (chosen(f)) {
     case 'current':

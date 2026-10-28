@@ -1,8 +1,98 @@
-// Wire types for GET /api/review (internal/cull/serve/api.go). Ambient.
+// wire.d.ts — the Go↔page contract, generated. Do not edit.
+//
+// Written by internal/cull/serve/wire_test.go from the json tags of review
+// (GET /api/review), judge.State and judge.GroupState, and every type they
+// reach. An item's state and jev are unknown here: Go stores them as bytes
+// whose shape depends on the item's kind, which web/kinds.d.ts narrows.
+// Regenerate with `just cull-wire`.
 
-type Noul = { type: 'noul'; noul: number };
+export interface Review {
+  cursor: string;
+  project: ReviewProject;
+  run: ReviewRun | null;
+  items: ItemBase[] | null;
+  answered?: AnsweredCounts;
+  blind: boolean;
+  recent_sends: RecentSend[] | null;
+}
 
-interface Answer {
+export interface State {
+  note: string;
+  language: string;
+  framework: string;
+  test_name: string;
+  test_source: string;
+  setup_context: string;
+  code_under_test: Callee[] | null;
+  truncated: boolean;
+}
+
+export interface GroupState {
+  note: string;
+  language: string;
+  framework: string;
+  file: string;
+  tests: GroupTest[] | null;
+  truncated: boolean;
+}
+
+export interface ReviewProject {
+  id: number;
+  root: string;
+}
+
+export interface ReviewRun {
+  id: number;
+  at: string;
+  mode: string;
+  base: string;
+  total: number;
+  summary: Record<string, number> | null;
+}
+
+export interface ItemBase {
+  id: string;
+  kind: string;
+  hash: string;
+  file: string;
+  name: string;
+  verdict: string;
+  rule: string;
+  model: string;
+  state: unknown | null;
+  jev: unknown | null;
+  rows?: string[][];
+  members?: string[];
+  answer?: Answer;
+}
+
+export interface AnsweredCounts {
+  total: number;
+  sent: number;
+}
+
+export interface RecentSend {
+  id: number;
+  at: string;
+  counts: Counts;
+  state: MessageState;
+  held: boolean;
+  claimed: boolean;
+  reply: string;
+}
+
+export interface Callee {
+  symbol: string;
+  file: string;
+  source: string;
+}
+
+export interface GroupTest {
+  name: string;
+  source: string;
+}
+
+export interface Answer {
   value: string;
   note: string;
   via: string;
@@ -11,120 +101,18 @@ interface Answer {
   sent_at?: string;
 }
 
-interface TestState {
-  note: string;
-  language: string;
-  framework: string;
-  test_name: string;
-  test_source: string;
-  setup_context: string;
-  code_under_test: { symbol: string; file: string; source: string }[];
-  truncated: boolean;
+export interface Counts {
+  cut: number;
+  keep: number;
+  merge: number;
+  separate: number;
 }
 
-interface GroupState {
-  note: string;
-  language: string;
-  framework: string;
-  file: string;
-  tests: { name: string; source: string }[];
-  truncated: boolean;
-}
-
-interface TestJev {
-  verdict: {
-    type: 'choice';
-    choice: string;
-    probabilities: { cut: number; keep: number; review: number };
-    confidence: number;
-  };
-  regression_value: {
-    type: 'score';
-    score: number;
-    probabilities?: Record<string, number>;
-    confidence?: number;
-  };
-  tautological: Noul;
-  mock_only: Noul;
-  framework_behavior: Noul;
-  incidental_detail: Noul;
-  not_missed: Noul;
-}
-
-interface GroupJev {
-  verdict: {
-    type: 'choice';
-    choice: string;
-    probabilities: {
-      consolidate: number;
-      keep_separate: number;
-      review: number;
-    };
-    confidence: number;
-  };
-  same_behavior: Noul;
-  exact_duplicate: Noul;
-  loss_if_merged: Noul;
-}
-
-interface ItemBase {
-  id: string;
-  hash: string;
-  file: string;
-  name: string;
-  verdict: string;
-  rule: string;
-  model: string;
-  jev: unknown;
-  answer?: Answer;
-}
-
-interface TestItem extends ItemBase {
-  kind: 'test';
-  state: TestState;
-  jev: TestJev;
-}
-
-interface GroupItem extends ItemBase {
-  kind: 'group';
-  state: GroupState;
-  jev: GroupJev;
-  rows?: string[][];
-  members?: string[];
-}
-
-type Item = TestItem | GroupItem;
-
-interface ReviewRun {
-  id: number;
-  at: string;
-  mode: string;
-  base: string;
-  total: number;
-  summary: Record<string, number>;
-}
-
-/** One of the project's newest sends (internal/cull/serve recentSendJSON):
- * what it carried, where it stands, whether the harness holds it while the
- * agent is mid-turn, whether a session claimed it, and the agent's working
- * line or reply. */
-interface RecentSend {
-  id: number;
-  at: string;
-  counts: { cut: number; keep: number; merge: number; separate: number };
-  state: import('/_kit/kit.js').MessageState;
-  held: boolean;
-  claimed: boolean;
-  reply: string;
-}
-
-interface Review {
-  cursor: string;
-  project: { id: number; root: string };
-  run: ReviewRun | null;
-  items: Item[];
-  answered: { total: number; sent: number };
-  blind: boolean;
-  /** The project's newest sends, newest first. */
-  recent_sends: RecentSend[];
-}
+export type MessageState =
+  | 'sent'
+  | 'with_agent'
+  | 'working'
+  | 'answered'
+  | 'declined'
+  | 'failed'
+  | 'no_reply';

@@ -17,7 +17,8 @@ export function groupItem(ctx: Ctx, g: GroupItem): HTMLElement {
   const a = ctx.answerOf(g.id);
   const l = lean(g);
   const p = actP(g);
-  const members = g.state.tests;
+  // null when its first test alone passed the cap (judge.GroupStateFor)
+  const members = g.state.tests ?? [];
   const kick = `group · ${ctx.rootName} · ${g.file}`;
   const head = [
     backLink(ctx),

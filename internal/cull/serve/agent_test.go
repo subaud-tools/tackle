@@ -383,11 +383,11 @@ func TestWorkspaceSessionOwnsARepositorysReview(t *testing.T) {
 }
 
 // recent is the project's newest sends as the review shows them.
-func (a *agentFx) recent(p store.Project) []recentSendJSON {
+func (a *agentFx) recent(p store.Project) []recentSend {
 	a.t.Helper()
 	w := a.do("GET", fmt.Sprintf("/api/review?project=%d", p.ID), "")
 	var r struct {
-		RecentSends []recentSendJSON `json:"recent_sends"`
+		RecentSends []recentSend `json:"recent_sends"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil || w.Code != 200 {
 		a.t.Fatalf("review %d %s", w.Code, w.Body)
@@ -417,7 +417,7 @@ func TestReportsAndRepliesMoveASend(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 || len(got.Report) != 16 {
 		t.Fatalf("wait %d %s", w.Code, w.Body)
 	}
-	last := func() recentSendJSON {
+	last := func() recentSend {
 		t.Helper()
 		rs := a.recent(p)
 		if len(rs) != 1 || rs[0].ID != got.ID {

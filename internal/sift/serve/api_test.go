@@ -213,11 +213,11 @@ func (f *fixture) currentPrint(id string) string {
 }
 
 type reviewOut struct {
-	Sends       int              `json:"sends"`
-	RecentSends []recentSendJSON `json:"recent_sends"`
-	Cursor      string           `json:"cursor"`
-	Round       *roundJSON       `json:"round"`
-	Rows        []row.Row        `json:"rows"`
+	Sends       int          `json:"sends"`
+	RecentSends []recentSend `json:"recent_sends"`
+	Cursor      string       `json:"cursor"`
+	Round       *reviewRound `json:"round"`
+	Rows        []row.Row    `json:"rows"`
 }
 
 func (f *fixture) review() reviewOut {
