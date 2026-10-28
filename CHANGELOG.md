@@ -13,6 +13,7 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 - `cull update` prints the notice cull's site publishes, when there is one.
 
 ### Fixed
+- `cull report`, which the Claude Code plugin runs after each turn, gives up after 5 seconds when cull's server doesn't answer. Before, it could hold the plugin for 90 seconds (tools-common 0.32.1).
 - `cull <command> -h` and the man page name the command again: `Usage: cull check [path] [--diff base]`, not `Usage: cull [path] [--diff base]`.
 
 ## [sift 0.5.2] - 2026-10-27
@@ -22,6 +23,7 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 - `sift update` prints the notice sift's site publishes, when there is one.
 
 ### Fixed
+- `sift report`, which the Claude Code plugin runs after each turn, gives up after 5 seconds when sift's server doesn't answer. Before, it could hold the plugin for 90 seconds (tools-common 0.32.1).
 - `sift <command> -h` and the man page name the command again: `Usage: sift apply [--round N] [--dry-run] [--json]`, not `Usage: sift [--round N] [--dry-run] [--json]`.
 
 ## [imprint 0.4.2] - 2026-10-27
