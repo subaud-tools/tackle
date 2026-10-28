@@ -24,47 +24,9 @@
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import pkg from 'playwright-core';
-import {
-  startServe,
-  cleanupBuild,
-  FIXTURE,
-  BACKLOG,
-} from './serve-fixture.mjs';
+import { check, launchOrSkip, run, sleep, until } from './build/probe.mjs';
+import { startServe, FIXTURE, BACKLOG } from './serve-fixture.mjs';
 
-const { chromium } = pkg;
-const required = process.env.KIT_BROWSER === 'required';
-
-let passes = 0;
-let fails = 0;
-function check(label, ok, detail = '') {
-  if (ok) {
-    console.log(`  ✓ ${label}`);
-    passes++;
-  } else {
-    console.error(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`);
-    fails++;
-  }
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(fn, ms = 4000) {
-  const end = Date.now() + ms;
-  for (;;) {
-    let v;
-    try {
-      v = await fn();
-    } catch {
-      v = false;
-    }
-    if (v) return v;
-    if (Date.now() > end) return false;
-    await sleep(50);
-  }
-}
-
-const serves = [];
-let browser = null;
 // A decision key, once the page has no decision saving: a group's keys do
 // nothing while its last decision saves (the app marks that on .kit-app).
 async function settled(p) {
@@ -77,24 +39,6 @@ async function decideKey(p, key) {
   await settled(p);
   await p.keyboard.press(key);
 }
-
-async function cleanup() {
-  try {
-    await browser?.close();
-  } catch {
-    // already gone
-  }
-  for (const s of serves) {
-    try {
-      await s.stop();
-    } catch {
-      // already gone
-    }
-  }
-  cleanupBuild();
-}
-process.on('SIGINT', () => cleanup().finally(() => process.exit(130)));
-process.on('SIGTERM', () => cleanup().finally(() => process.exit(143)));
 
 const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
 // The kit draws a count in its own span: "review" + "0/4".
@@ -124,18 +68,9 @@ function apiOf(serve) {
 }
 
 async function main() {
-  try {
-    browser = await chromium.launch({ headless: true });
-  } catch (err) {
-    if (required) {
-      console.error(`probe: no chromium (KIT_BROWSER=required): ${err}`);
-      process.exit(1);
-    }
-    console.log('probe: no chromium; skipped');
-    return;
-  }
+  const browser = await launchOrSkip();
+  if (!browser) return;
   const serve = await startServe();
-  serves.push(serve);
   const { api, review } = apiOf(serve);
   const out =
     process.env.PROBE_OUT ||
@@ -1113,7 +1048,6 @@ async function main() {
   // ---- 9. a round still being recommended: the page waits
   console.log('recommending');
   const recServe = await startServe({ recommending: true });
-  serves.push(recServe);
   const rp = await open(pageUrl(recServe), '.kit-doc h1');
   check(
     'the page says the agent is still recommending, and how far it got',
@@ -1131,7 +1065,6 @@ async function main() {
   // ---- 10. a backlog round: decided per item
   console.log('backlog');
   const blServe = await startServe({ fixture: BACKLOG });
-  serves.push(blServe);
   const bl = apiOf(blServe);
   const bp0 = await open(pageUrl(blServe));
   const groupsShown = (await bp0.locator('.kit-row').allInnerTexts()).map(norm);
@@ -1285,7 +1218,6 @@ async function main() {
   // A backlog round with an item the agent has not answered waits too: no
   // item list, no Send, and a decision is refused.
   const blRec = await startServe({ fixture: BACKLOG, recommending: true });
-  serves.push(blRec);
   const bpr = await open(pageUrl(blRec), '.kit-doc h1');
   check(
     'a backlog round still being recommended says how far the agent got',
@@ -1322,7 +1254,6 @@ async function main() {
   // under it, newest first; a reply redraws it live.
   console.log('sends');
   const sendServe = await startServe({ fixture: BACKLOG, sends: true });
-  serves.push(sendServe);
   const sp = await open(pageUrl(sendServe), '.sift-send');
   const pills = async () =>
     sp.locator('.sift-send').evaluateAll((els) =>
@@ -1384,7 +1315,6 @@ async function main() {
   // ---- 11. a round the size of a real one
   console.log('scale');
   const bigServe = await startServe({ scale: 653 });
-  serves.push(bigServe);
   const bp = await ctx.newPage();
   bp.on('pageerror', (e) => errors.push(String(e)));
   const t0 = Date.now();
@@ -1416,13 +1346,4 @@ async function main() {
   console.log('  screenshots:', shots.join(' '));
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(err);
-  fails++;
-} finally {
-  await cleanup();
-}
-console.log(`\n${passes} passed, ${fails} failed`);
-process.exit(fails ? 1 : 0);
+run(main);

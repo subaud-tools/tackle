@@ -4,6 +4,8 @@
 // SIFT_HOME from testdata/round.json (one round; its files written under a
 // temp base, the repos committed), starts `sift serve --foreground --no-open`
 // on it and returns {url, base, token, home, round, stop}.
+// Each serve, and the built binaries, are stopped and removed at the probe's
+// cleanup (build/probe.mjs onCleanup).
 //
 // BROWSER SAFETY: serve is always started with --no-open (asserted at module
 // load) and --foreground, which never opens a browser.
@@ -13,6 +15,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { onCleanup, until } from './build/probe.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../../..');
@@ -42,29 +45,17 @@ function build() {
     stdio: 'inherit',
   });
   built = { dir, bin, seed };
+  onCleanup(cleanupBuild);
   return built;
 }
 
-function waitForAdvert(path, timeoutMs = 15000) {
-  return new Promise((res, rej) => {
-    const start = Date.now();
-    const t = setInterval(() => {
-      try {
-        const adv = JSON.parse(readFileSync(path, 'utf8'));
-        if (adv.url && adv.token) {
-          clearInterval(t);
-          res(adv);
-          return;
-        }
-      } catch {
-        // not yet
-      }
-      if (Date.now() - start > timeoutMs) {
-        clearInterval(t);
-        rej(new Error(`sift serve did not start within ${timeoutMs}ms`));
-      }
-    }, 100);
-  });
+async function waitForAdvert(path, timeoutMs = 15000) {
+  const adv = await until(() => {
+    const a = JSON.parse(readFileSync(path, 'utf8'));
+    return a.url && a.token ? a : null;
+  }, timeoutMs);
+  if (!adv) throw new Error(`sift serve did not start within ${timeoutMs}ms`);
+  return adv;
 }
 
 export const BACKLOG = join(here, 'testdata', 'backlog.json');
@@ -98,7 +89,7 @@ export async function startServe(opts = {}) {
     proc.kill();
     throw new Error(`${String(err)}\nstderr: ${stderr}`);
   }
-  return {
+  const serve = {
     url: adv.url,
     base: adv.base,
     token: adv.token,
@@ -127,9 +118,11 @@ export async function startServe(opts = {}) {
       rmSync(base, { recursive: true, force: true });
     },
   };
+  onCleanup(() => serve.stop());
+  return serve;
 }
 
-export function cleanupBuild() {
+function cleanupBuild() {
   if (built) rmSync(built.dir, { recursive: true, force: true });
   built = null;
 }
