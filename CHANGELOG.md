@@ -6,7 +6,7 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
-## [cull Unreleased]
+## [cull 0.6.2] - 2026-10-27
 
 ### Changed
 - When cull's page server shuts down after 8 hours with no use, it stays stopped until the next cull tool call. Before, an open agent session started it again at once, so it never stayed stopped. Nothing else changes: a tool call or `cull serve` starts it as before (tools-common 0.32.0).
@@ -15,7 +15,7 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 ### Fixed
 - `cull <command> -h` and the man page name the command again: `Usage: cull check [path] [--diff base]`, not `Usage: cull [path] [--diff base]`.
 
-## [sift Unreleased]
+## [sift 0.5.2] - 2026-10-27
 
 ### Changed
 - When sift's page server shuts down after 8 hours with no use, it stays stopped until the next sift tool call. Before, an open agent session started it again at once, so it never stayed stopped. Nothing else changes: a tool call or `sift serve` starts it as before (tools-common 0.32.0).
@@ -24,7 +24,7 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 ### Fixed
 - `sift <command> -h` and the man page name the command again: `Usage: sift apply [--round N] [--dry-run] [--json]`, not `Usage: sift [--round N] [--dry-run] [--json]`.
 
-## [imprint Unreleased]
+## [imprint 0.4.2] - 2026-10-27
 
 ### Changed
 - `imprint update` prints the notice imprint's site publishes, when there is one (tools-common 0.32.0).
