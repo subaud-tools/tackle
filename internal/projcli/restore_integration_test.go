@@ -27,6 +27,7 @@ func startSandboxServer(t *testing.T, sock, stubDir string) {
 	}
 	run("-f", "/dev/null", "new-session", "-d", "-s", "_boot")
 	run("set-option", "-g", "default-command", "/bin/sh")
+	run("set-option", "-g", "default-shell", "/bin/sh")
 	run("set-environment", "-g", "PATH", stubDir+":/usr/bin:/bin")
 }
 
@@ -34,11 +35,20 @@ func TestRestoreEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
+	sockets, err := os.MkdirTemp("/tmp", "proj-restore-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockets) })
+	t.Setenv("TMUX_TMPDIR", sockets)
 	sock, name := "proj-restoretest-e2e", "restoretest-e2e/w"
 	t.Cleanup(func() { _ = exec.Command("tmux", "-L", sock, "kill-server").Run() })
 
 	// Isolated record and transcript store holding the conversation.
 	t.Setenv("PROJ_HOME", t.TempDir())
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	enableSessionThemes(t)
 	root := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", filepath.Join(root, "pi"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))
@@ -54,6 +64,9 @@ func TestRestoreEndToEnd(t *testing.T) {
 	stubDir := t.TempDir()
 	stub := "#!/bin/sh\necho \"STUB PI $*\"\nsleep 30\n"
 	if err := os.WriteFile(filepath.Join(stubDir, "pi"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stubDir, "osascript"), []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -107,7 +120,11 @@ func TestRestoreEndToEnd(t *testing.T) {
 	var pane string
 	for time.Now().Before(deadline) {
 		pane, _ = proj.Run(sock, "capture-pane", "-p", "-t", "="+name+":")
-		if strings.Contains(pane, "STUB PI --session idE2E") {
+		if strings.Contains(pane, "STUB PI --session idE2E --use-theme proj-session-"+rec.Sessions[name].ID) {
+			path := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "themes", "proj-session-"+rec.Sessions[name].ID+".json")
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("resumed theme missing: %v", err)
+			}
 			return
 		}
 		time.Sleep(100 * time.Millisecond)

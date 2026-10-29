@@ -2,6 +2,8 @@ package proj
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -16,6 +18,7 @@ type recordedCall struct {
 // the create path. Returns a pointer to the recorded call slice.
 func withFakeRun(t *testing.T) *[]recordedCall {
 	t.Helper()
+	isolateSessionThemes(t)
 	var calls []recordedCall
 	origRunner, origNew := runner, newSessionHome
 	t.Cleanup(func() { runner, newSessionHome = origRunner, origNew })
@@ -41,6 +44,8 @@ func find(calls []recordedCall, verb string) *recordedCall {
 
 func TestEnsureSessionCommandRunsInPaneAndSkipsSendKeys(t *testing.T) {
 	calls := withFakeRun(t)
+	writeConfig(t, "session_themes = true\n")
+	stubBins(t, "pi")
 	cmd := []string{"hail", "shim", "--id", "arg with spaces", "-x"}
 	created, err := EnsureSession("proj-x", "x/w", "/tmp/dir", "pi", "", cmd)
 	if err != nil || !created {
@@ -60,6 +65,7 @@ func TestEnsureSessionCommandRunsInPaneAndSkipsSendKeys(t *testing.T) {
 	if find(*calls, "send-keys") != nil {
 		t.Fatal("send-keys issued when --command was given")
 	}
+	assertNoPiThemes(t)
 	// The agent is still recorded for proj list.
 	setOpt := findAgentOption(*calls)
 	if setOpt == nil {
@@ -88,6 +94,9 @@ func TestEnsureSessionNoCommandDoesNotAppendArgv(t *testing.T) {
 }
 
 func TestEnsureSessionReuseIsUntouched(t *testing.T) {
+	isolateSessionThemes(t)
+	writeConfig(t, "session_themes = true\n")
+	stubBins(t, "pi")
 	var calls []recordedCall
 	origRunner, origNew := runner, newSessionHome
 	t.Cleanup(func() { runner, newSessionHome = origRunner, origNew })
@@ -99,7 +108,7 @@ func TestEnsureSessionReuseIsUntouched(t *testing.T) {
 		calls = append(calls, recordedCall{socket, append([]string(nil), args...)})
 		return "", nil // has-session succeeds -> reuse
 	}
-	created, err := EnsureSession("proj-x", "x/w", "/tmp/dir", "pi", "", []string{"hail", "shim"})
+	created, err := EnsureSession("proj-x", "x/w", "/tmp/dir", "pi", "", nil)
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -110,6 +119,7 @@ func TestEnsureSessionReuseIsUntouched(t *testing.T) {
 	if len(calls) != 1 || calls[0].args[0] != "has-session" {
 		t.Fatalf("reuse issued extra calls: %v", calls)
 	}
+	assertNoPiThemes(t)
 }
 
 // findAgentOption returns the set-option call that writes AgentOption(), if any.
@@ -154,6 +164,9 @@ func TestRestoreSessionTypesResume(t *testing.T) {
 }
 
 func TestRestoreSessionReuseLeavesPane(t *testing.T) {
+	isolateSessionThemes(t)
+	writeConfig(t, "session_themes = true\n")
+	stubBins(t, "pi")
 	var calls []recordedCall
 	orig := runner
 	t.Cleanup(func() { runner = orig })
@@ -168,6 +181,7 @@ func TestRestoreSessionReuseLeavesPane(t *testing.T) {
 	if find(calls, "send-keys") != nil || find(calls, "respawn-pane") != nil {
 		t.Fatalf("existing session was touched: %v", calls)
 	}
+	assertNoPiThemes(t)
 }
 
 func TestEnsureSessionInstallsHooks(t *testing.T) {
@@ -186,5 +200,12 @@ func TestEnsureSessionInstallsHooks(t *testing.T) {
 	}
 	if !slices.Contains(hooks, "session-created[80]") || !slices.Contains(hooks, "after-set-option[80]") {
 		t.Fatalf("hooks installed = %v", hooks)
+	}
+}
+
+func assertNoPiThemes(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "themes")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected theme directory: %v", err)
 	}
 }

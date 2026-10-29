@@ -222,6 +222,17 @@ func ReconcileThemes(force bool) error {
 		byTTY := o.matched()
 		appliedSessions := map[string]bool{}
 		var applyErr error
+		// Pi watches these stable paths; refreshing them never types a command
+		// into, or restarts, an existing pane. Keep failures independent of the
+		// successful-terminal ledger so its retry semantics remain unchanged.
+		for _, s := range o.sessions {
+			e := r.Sessions[s.name]
+			if e.Agent == "pi" && e.GroupID != "" {
+				if _, err := preparePiTheme(e, r); err != nil {
+					applyErr = fmt.Errorf("proj: refresh pi theme for %s: %w", s.name, err)
+				}
+			}
+		}
 		for _, t := range o.terminals {
 			s, ok := byTTY[t.TTY]
 			if !ok {

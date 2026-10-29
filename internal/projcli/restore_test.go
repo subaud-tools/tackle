@@ -26,6 +26,8 @@ type fakeRestore struct {
 func withFakeRestore(t *testing.T, sessions map[string]proj.Entry, fail map[string]error, exists map[string]bool) *fakeRestore {
 	t.Helper()
 	t.Setenv("PROJ_HOME", t.TempDir())
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", filepath.Join(root, "pi"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, "claude"))

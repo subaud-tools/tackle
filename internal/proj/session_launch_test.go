@@ -42,7 +42,7 @@ func TestAgentLaunchCmd(t *testing.T) {
 		{"none", "repo/nfl-4", "whatever", ""},
 	}
 	for _, c := range cases {
-		if got := agentLaunchCmd(c.agent, c.name, c.model); got != c.want {
+		if got := agentLaunchCmd(c.agent, c.name, c.model, ""); got != c.want {
 			t.Errorf("agentLaunchCmd(%q,%q,%q) = %q, want %q", c.agent, c.name, c.model, got, c.want)
 		}
 	}
@@ -52,7 +52,7 @@ func TestAgentLaunchCmd(t *testing.T) {
 // typed into the pane as ONE argument — the same guarantee zsh's ${(qq)n} gives.
 func TestAgentLaunchCmdQuotesName(t *testing.T) {
 	stubBins(t, "claude")
-	got := agentLaunchCmd("claude", "a'b c", "")
+	got := agentLaunchCmd("claude", "a'b c", "", "")
 	want := `claude --name 'a'\''b c' --`
 	if got != want {
 		t.Errorf("agentLaunchCmd quoting = %q, want %q", got, want)
@@ -64,7 +64,7 @@ func TestAgentLaunchCmdQuotesName(t *testing.T) {
 func TestAgentLaunchCmdMissingBinDegrades(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // empty dir: nothing resolvable
 	for _, agent := range []string{"claude", "pi", "cursor"} {
-		if got := agentLaunchCmd(agent, "x", ""); got != "" {
+		if got := agentLaunchCmd(agent, "x", "", ""); got != "" {
 			t.Errorf("agentLaunchCmd(%q) with no bin = %q, want \"\"", agent, got)
 		}
 	}
@@ -83,12 +83,12 @@ func TestResumeLaunchCmd(t *testing.T) {
 		{"none", "x", ""},
 	}
 	for _, c := range cases {
-		if got := resumeLaunchCmd(c.agent, c.conv); got != c.want {
+		if got := resumeLaunchCmd(c.agent, c.conv, ""); got != c.want {
 			t.Errorf("resumeLaunchCmd(%q, %q) = %q want %q", c.agent, c.conv, got, c.want)
 		}
 	}
 	t.Setenv("PATH", t.TempDir())
-	if got := resumeLaunchCmd("pi", "x"); got != "" {
+	if got := resumeLaunchCmd("pi", "x", ""); got != "" {
 		t.Errorf("pi not installed: got %q want \"\"", got)
 	}
 }

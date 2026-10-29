@@ -64,7 +64,7 @@ var newSessionHome = func(socket, name string) error {
 // A reused session is left untouched: neither command nor agent is re-applied,
 // so proj never clobbers a pane the user is working in.
 func EnsureSession(socket, name, dir, agent, model string, command []string) (created bool, err error) {
-	return ensureSession(socket, name, dir, agent, agentLaunchCmd(agent, name, model), command)
+	return ensureSession(socket, name, dir, agent, model, "", command)
 }
 
 // RestoreSession is EnsureSession for a remembered session: when it creates
@@ -73,18 +73,25 @@ func EnsureSession(socket, name, dir, agent, model string, command []string) (cr
 // when there is no conversation to resume. An existing session is left
 // untouched, exactly as EnsureSession leaves it.
 func RestoreSession(socket, name, dir, agent, conversation string) (created bool, err error) {
-	launch := resumeLaunchCmd(agent, conversation)
-	if launch == "" {
-		launch = agentLaunchCmd(agent, name, "")
-	}
-	return ensureSession(socket, name, dir, agent, launch, nil)
+	return ensureSession(socket, name, dir, agent, "", conversation, nil)
 }
 
-// ensureSession is the shared create path; launch is the command typed into
-// the pane when no explicit command is given ("" types nothing).
-func ensureSession(socket, name, dir, agent, launch string, command []string) (created bool, err error) {
+// ensureSession prepares a selected theme only on the ordinary pi create path.
+func ensureSession(socket, name, dir, agent, model, conversation string, command []string) (created bool, err error) {
 	if _, err := runner(socket, "has-session", "-t", "="+name); err == nil {
 		return false, nil // exists → reuse
+	}
+	theme := ""
+	var themedEntry Entry
+	if agent == "pi" && len(command) == 0 && hasBin("pi") && SessionThemesEnabled() {
+		themedEntry, theme, err = prepareLaunchPiTheme(socket, name, dir)
+		if err != nil {
+			return false, err
+		}
+	}
+	launch := resumeLaunchCmd(agent, conversation, theme)
+	if launch == "" {
+		launch = agentLaunchCmd(agent, name, model, theme)
 	}
 	// Create from $HOME (no -c) so the server cwd and #{session_path} are both
 	// $HOME and never pin to a dir that may later be deleted (worktree).
@@ -102,6 +109,11 @@ func ensureSession(socket, name, dir, agent, launch string, command []string) (c
 	}
 	if _, err := runner(socket, respawn...); err != nil {
 		return false, err
+	}
+	if themedEntry.ID != "" {
+		if _, err := runner(socket, "set-option", "-t", name, "@proj_session_id", themedEntry.ID); err != nil {
+			return false, err
+		}
 	}
 	// label = the work segment (after the last '/'), for muster.
 	label := name
@@ -170,16 +182,16 @@ func CurrentSessionName() string {
 //
 // The session name is quoted the same way zsh's ${(qq)n} does, guarding names
 // with shell metacharacters when typed into the pane.
-func agentLaunchCmd(agent, name, model string) string {
+func agentLaunchCmd(agent, name, model, theme string) string {
 	switch agent {
 	case "pi":
 		if !hasBin("pi") {
 			return ""
 		}
 		if model != "" {
-			return "pi --model " + shellQuote(model) + " --name " + shellQuote(name)
+			return "pi --model " + shellQuote(model) + " --name " + shellQuote(name) + piThemeFlag(theme)
 		}
-		return "pi --name " + shellQuote(name)
+		return "pi --name " + shellQuote(name) + piThemeFlag(theme)
 	case "claude":
 		if !hasBin("claude") {
 			return ""
@@ -202,14 +214,14 @@ func agentLaunchCmd(agent, name, model string) string {
 // agent, or "" when there is nothing to resume (no id, an agent proj cannot
 // resume, or the binary is absent). No --name: both agents restore the name
 // stored with the conversation, and pi's CLI --name would rewrite it.
-func resumeLaunchCmd(agent, conversation string) string {
+func resumeLaunchCmd(agent, conversation, theme string) string {
 	if conversation == "" {
 		return ""
 	}
 	switch agent {
 	case "pi":
 		if hasBin("pi") {
-			return "pi --session " + shellQuote(conversation)
+			return "pi --session " + shellQuote(conversation) + piThemeFlag(theme)
 		}
 	case "claude":
 		if hasBin("claude") {
@@ -229,4 +241,11 @@ func hasBin(bin string) bool {
 // zsh's ${(qq)s}: wrap in single quotes and escape embedded single quotes.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func piThemeFlag(theme string) string {
+	if theme == "" {
+		return ""
+	}
+	return " --use-theme " + shellQuote(theme)
 }

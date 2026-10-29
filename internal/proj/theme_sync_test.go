@@ -14,6 +14,7 @@ import (
 // All external boundaries are stubbed; no desktop, sockets or terminal devices.
 func themeFixture(t *testing.T) (*string, *int, *[][]byte, *bool) {
 	t.Helper()
+	isolateSessionThemes(t)
 	recordHome(t)
 	writeConfig(t, "session_themes = true\n")
 	oldScript, oldRunner, oldSockets, oldWrite, oldNow := osascript, runner, themeSockets, writeTerminal, themeNow
@@ -105,6 +106,30 @@ func TestReconcileTTYMovesKeepStableIdentityAndAbsentLayout(t *testing.T) {
 	}
 	r, _ := LoadRecord()
 	a := r.Sessions["a"]
+	themePath := filepath.Join(os.Getenv("PI_CODING_AGENT_DIR"), "themes", "proj-session-stable-a.json")
+	before, err := os.ReadFile(themePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFile, err := os.Open(themePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldFile.Close()
+	oldInfo, err := oldFile.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileThemes(true); err != nil {
+		t.Fatal(err)
+	}
+	sameInfo, err := os.Stat(themePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(oldInfo, sameInfo) || !oldInfo.ModTime().Equal(sameInfo.ModTime()) {
+		t.Fatal("unchanged/renamed theme was rewritten")
+	}
 	if a.ID != "stable-a" || a.Shade != "deep" || a.GroupID != "saved" || len(*writes) != 3 {
 		t.Fatalf("first reconciliation: a=%+v writes=%d", a, len(*writes))
 	}
@@ -117,6 +142,28 @@ func TestReconcileTTYMovesKeepStableIdentityAndAbsentLayout(t *testing.T) {
 	}
 	r, _ = LoadRecord()
 	moved := r.Sessions["a"]
+	after, err := os.ReadFile(themePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newInfo, err := os.Stat(themePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(before, after) || os.SameFile(oldInfo, newInfo) {
+		t.Fatal("move did not atomically replace the stable theme path")
+	}
+	oldBytes := make([]byte, len(before))
+	if _, err := oldFile.ReadAt(oldBytes, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldBytes, before) {
+		t.Fatal("move edited the old inode in place")
+	}
+	files, err := filepath.Glob(filepath.Join(filepath.Dir(themePath), "*"))
+	if err != nil || len(files) != 3 {
+		t.Fatalf("rename/move created extra themes: %v, %v", files, err)
+	}
 	if moved.ID != a.ID || moved.Shade != a.Shade || moved.GroupID == a.GroupID || moved.GroupID != r.Sessions["c"].GroupID {
 		t.Fatalf("move: %+v -> %+v", a, moved)
 	}
