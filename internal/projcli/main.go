@@ -71,6 +71,14 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		NewFlags: func() *flag.FlagSet { fs, _ := newReapFlags(); return fs },
 		Run:      cmdReap,
 	})
+	app.Register(tools.Command{
+		Name:     "terminal",
+		Summary:  "show or open the Ghostty terminal of a session (--json)",
+		Synopsis: "terminal --socket <path> --pane <%id> [--go] --json",
+		Help:     "Prints the state of the tmux session that owns --pane on the server at --socket (a path, as in $TMUX) as {state,session}: attached, detached or ended. With --go it focuses the Ghostty terminal attached to the session, or opens a new Ghostty window attached to it, selects the pane, and prints the state after; --go on an ended session exits 1.",
+		NewFlags: func() *flag.FlagSet { fs, _ := newTerminalFlags(); return fs },
+		Run:      cmdTerminal,
+	})
 
 	// PRESERVE the special routes BEFORE delegating to Dispatch.
 	// No args → the Bubble Tea picker.
@@ -85,7 +93,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	case "__save-layout":
 		_ = proj.SaveLayoutSettled() // silent for the same reason as __snapshot
 		return 0
-	// list/current/new/sidebar/reap now flow through Dispatch (which parses their
+	// list/current/new/sidebar/reap/terminal now flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
@@ -96,7 +104,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			return startPicker("", "", true)
 		}
 		return app.Dispatch(args, out, errw)
-	case "list", "current", "new", "sidebar",
+	case "list", "current", "new", "sidebar", "terminal",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}
@@ -113,6 +121,54 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	}
 	// Unknown flag/command → let Dispatch report it (exit 2).
 	return app.Dispatch(args, out, errw)
+}
+
+// terminalFlags holds `proj terminal`'s parsed flags.
+type terminalFlags struct {
+	socket *string
+	pane   *string
+	goTo   *bool
+	json   *bool
+}
+
+// newTerminalFlags is proj terminal's side-effect-free flag constructor.
+func newTerminalFlags() (*flag.FlagSet, *terminalFlags) {
+	fs := flag.NewFlagSet("terminal", flag.ContinueOnError)
+	f := &terminalFlags{
+		socket: fs.String("socket", "", "the tmux server's socket path (the part of $TMUX before the first comma)"),
+		pane:   fs.String("pane", "", "a pane of the session ($TMUX_PANE)"),
+		goTo:   fs.Bool("go", false, "show the session's Ghostty terminal, or open one"),
+		json:   fs.Bool("json", false, "emit JSON"),
+	}
+	tools.SetUsage(fs, "proj terminal --socket <path> --pane <%id> [--go] --json",
+		"Prints the state of the session that owns the pane as {state,session}: attached, "+
+			"detached or ended. With --go it focuses the Ghostty terminal attached to it, or "+
+			"opens a new Ghostty window attached to it, selects the pane and prints the state "+
+			"after; --go on an ended session exits 1.")
+	return fs, f
+}
+
+// cmdTerminal implements `proj terminal`, which diazo runs to show or open a
+// session's terminal.
+func cmdTerminal(args []string, out, errw io.Writer) error {
+	fs, f := newTerminalFlags()
+	if err := tools.ParseFlags(fs, args, out); err != nil {
+		return err
+	}
+	if !*f.json {
+		return tools.UsageError{Msg: "only --json is supported"}
+	}
+	if *f.socket == "" || *f.pane == "" {
+		return tools.UsageError{Msg: "--socket and --pane are required"}
+	}
+	if !*f.goTo {
+		return writeJSON(out, proj.Terminal(*f.socket, *f.pane))
+	}
+	st, err := proj.TerminalGo(*f.socket, *f.pane)
+	if err != nil {
+		return tools.Exitf(1, "%v", err)
+	}
+	return writeJSON(out, st)
 }
 
 // parseProjectArgs parses `[--claude|--pi|--cursor] <project>`, returning the
