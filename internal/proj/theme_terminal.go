@@ -41,7 +41,7 @@ func writeTerminalDevice(tty string, b []byte) error {
 		return err
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
-	if info.Mode()&os.ModeCharDevice == 0 || !ok || st.Uid != uint32(os.Getuid()) {
+	if info.Mode()&os.ModeCharDevice == 0 || !ok || int64(st.Uid) != int64(os.Getuid()) {
 		return fmt.Errorf("proj: not an owned terminal device: %s", tty)
 	}
 	n, err := f.Write(b)

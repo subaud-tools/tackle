@@ -74,7 +74,7 @@ func GhosttyOpen(groups [][]SavedSession, out io.Writer) error {
 					}
 					win = strings.TrimSpace(id)
 					if win == "" {
-						return fmt.Errorf("Ghostty returned an empty window ID")
+						return fmt.Errorf("ghostty returned an empty window ID")
 					}
 					if s.GroupID == "" {
 						return nil

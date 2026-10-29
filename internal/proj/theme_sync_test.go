@@ -115,7 +115,7 @@ func TestReconcileTTYMovesKeepStableIdentityAndAbsentLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer oldFile.Close()
+	defer func() { _ = oldFile.Close() }()
 	oldInfo, err := oldFile.Stat()
 	if err != nil {
 		t.Fatal(err)
