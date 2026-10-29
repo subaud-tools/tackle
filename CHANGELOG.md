@@ -6,6 +6,12 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.14.0] - 2026-10-29
+
+### Added
+- Optional persistent session themes for Ghostty, tmux, and pi. A window owns its hue family, and sessions retain their shade through renames and restoration. Moving a session between windows changes its hue. The feature defaults off and uses `session_themes` in proj's existing configuration.
+- `proj theme` exposes the enabled setting and resolved session palette, and assigns a hue to a known window. Pi themes use stable files and reload without restarting the agent; ordinary launches are unchanged when the feature is off.
+
 ## [proj 0.13.0] - 2026-10-29
 
 ### Added
