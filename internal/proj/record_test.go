@@ -23,8 +23,8 @@ func TestLoadRecordMissingIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRecord: %v", err)
 	}
-	if rec.Version != 1 || len(rec.Sessions) != 0 {
-		t.Fatalf("got version=%d sessions=%d, want 1 and 0", rec.Version, len(rec.Sessions))
+	if rec.Version != 2 || len(rec.Sessions) != 0 {
+		t.Fatalf("got version=%d sessions=%d, want 2 and 0", rec.Version, len(rec.Sessions))
 	}
 	if rec.Sessions == nil {
 		t.Fatal("Sessions is nil; want an empty map callers can write to")
@@ -113,7 +113,7 @@ func TestUpdateRecordVersionGuard(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	future := []byte(`{"version":2,"sessions":{}}`)
+	future := []byte(`{"version":3,"sessions":{}}`)
 	if err := os.WriteFile(p, future, 0o600); err != nil {
 		t.Fatal(err)
 	}

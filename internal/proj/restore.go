@@ -46,6 +46,9 @@ func CurrentLiveState() LiveState {
 // entry is skipped; a name the layout lists twice keeps its first position.
 func SavedSessions(rec Record, live LiveState, t Transcripts) []SavedSession {
 	mk := func(name string, e Entry, win int) SavedSession {
+		if win > 0 && win <= len(rec.Layout.GroupIDs) {
+			e.GroupID = rec.Layout.GroupIDs[win-1]
+		}
 		_, ok := t.Locate(e.Conversation)
 		return SavedSession{Name: name, Entry: e, Window: win,
 			Running: live.Running[name], Attached: live.Attached[name], Transcript: ok}

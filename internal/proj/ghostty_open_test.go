@@ -15,6 +15,8 @@ type scriptCall struct {
 // window id, and stubs the attach check.
 func fakeGhostty(t *testing.T, attached bool) *[]scriptCall {
 	t.Helper()
+	isolateSessionThemes(t)
+	recordHome(t)
 	var calls []scriptCall
 	origScript, origClient, origWait, origTmux := osascript, hasClient, attachPoll, tmuxBin
 	t.Cleanup(func() { osascript, hasClient, attachPoll, tmuxBin = origScript, origClient, origWait, origTmux })

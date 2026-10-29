@@ -1,6 +1,7 @@
 package proj
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/sessiontheme"
 )
 
 // The record is proj's memory across reboots: every work session it has seen,
@@ -21,8 +23,8 @@ import (
 // session (kill-server fires session-closed for each), so nothing observed
 // from tmux may ever remove an entry; only an explicit Forget does.
 
-// recordVersion is the only sessions.json format this build reads or writes.
-const recordVersion = 1
+// recordVersion is the current format. Version 1 is upgraded under the write lock.
+const recordVersion = 2
 
 // ErrRecordVersion is returned for a sessions.json written by a newer proj.
 // proj refuses to rewrite a record it does not understand rather than
@@ -32,26 +34,32 @@ var ErrRecordVersion = errors.New("proj: unsupported sessions.json version")
 // Entry is one remembered session. Conversation is the agent's session id
 // (the @harness_session tmux option), empty when no agent announced one.
 type Entry struct {
-	Socket       string    `json:"socket"`
-	Project      string    `json:"project"`
-	Dir          string    `json:"dir"`
-	Agent        string    `json:"agent"`
-	Conversation string    `json:"conversation"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string             `json:"id,omitempty"`
+	GroupID      string             `json:"group_id,omitempty"`
+	Shade        sessiontheme.Shade `json:"shade,omitempty"`
+	Socket       string             `json:"socket"`
+	Project      string             `json:"project"`
+	Dir          string             `json:"dir"`
+	Agent        string             `json:"agent"`
+	Conversation string             `json:"conversation"`
+	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
 // GhosttyLayout is the Ghostty arrangement captured by the operator: windows in
 // order, each an ordered list of session names (one per tab).
 type GhosttyLayout struct {
-	SavedAt time.Time  `json:"saved_at"`
-	Windows [][]string `json:"windows"`
+	GroupIDs []string   `json:"group_ids,omitempty"`
+	SavedAt  time.Time  `json:"saved_at"`
+	Windows  [][]string `json:"windows"`
 }
 
 // Record is the whole sessions.json document, keyed by session name.
 type Record struct {
-	Version  int              `json:"version"`
-	Sessions map[string]Entry `json:"sessions"`
-	Layout   GhosttyLayout    `json:"layout"`
+	Groups       map[string]ThemeGroup `json:"groups,omitempty"`
+	NativeGroups map[string]string     `json:"native_groups,omitempty"`
+	Version      int                   `json:"version"`
+	Sessions     map[string]Entry      `json:"sessions"`
+	Layout       GhosttyLayout         `json:"layout"`
 }
 
 // LiveEntry is a session as observed in tmux right now. Its UpdatedAt is
@@ -68,8 +76,21 @@ func RecordPath() string {
 }
 
 // LoadRecord reads the record. A missing file is an empty record, not an
-// error; a record from a newer proj is ErrRecordVersion.
+// error; a record from a newer proj is ErrRecordVersion. Version 1 is upgraded
+// under the record lock before it is exposed to restore consumers.
 func LoadRecord() (Record, error) {
+	rec, err := readRecord()
+	if err != nil || rec.Version != 1 {
+		return rec, err
+	}
+	if err := UpdateRecord(func(*Record) bool { return false }); err != nil {
+		return rec, err
+	}
+	return readRecord()
+}
+
+// readRecord is also the query path: reads never allocate identities.
+func readRecord() (Record, error) {
 	empty := Record{Version: recordVersion, Sessions: map[string]Entry{}}
 	b, err := os.ReadFile(RecordPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -82,7 +103,7 @@ func LoadRecord() (Record, error) {
 	if err := json.Unmarshal(b, &rec); err != nil {
 		return empty, fmt.Errorf("proj: read %s: %w", RecordPath(), err)
 	}
-	if rec.Version != recordVersion {
+	if rec.Version != 1 && rec.Version != recordVersion {
 		return empty, ErrRecordVersion
 	}
 	if rec.Sessions == nil {
@@ -110,11 +131,14 @@ func UpdateRecord(fn func(*Record) bool) error {
 	}
 	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN) //nolint:errcheck
 
-	rec, err := LoadRecord()
+	rec, err := readRecord()
 	if err != nil {
 		return err
 	}
-	if !fn(&rec) {
+	upgraded := completeThemeRecord(&rec)
+	changed := fn(&rec)
+	completed := completeThemeRecord(&rec)
+	if !upgraded && !changed && !completed {
 		return nil
 	}
 	b, err := json.MarshalIndent(rec, "", "  ")
@@ -137,8 +161,8 @@ func Forget(name string) error {
 
 // mergeLive folds the observed sessions into rec and reports whether anything
 // changed. It never deletes an entry for being absent. The one removal is a
-// rename: an entry that is not live and shares a live session's socket and
-// (non-empty) conversation is that session under its old name.
+// rename: stable IDs match even after the conversation changes. Legacy
+// observations without an ID can still match a non-empty conversation.
 func mergeLive(rec *Record, live []LiveEntry, now time.Time) bool {
 	isLive := make(map[string]bool, len(live))
 	for _, l := range live {
@@ -146,16 +170,33 @@ func mergeLive(rec *Record, live []LiveEntry, now time.Time) bool {
 	}
 	changed := false
 	for _, l := range live {
-		if l.Conversation != "" {
-			for name, e := range rec.Sessions {
-				if name != l.Name && !isLive[name] && e.Socket == l.Socket && e.Conversation == l.Conversation {
-					delete(rec.Sessions, name)
-					changed = true
+		old, had := rec.Sessions[l.Name]
+		for name, e := range rec.Sessions {
+			same := l.ID != "" && e.ID == l.ID
+			legacy := l.ID == "" && l.Conversation != "" && e.Conversation == l.Conversation
+			if name != l.Name && !isLive[name] && e.Socket == l.Socket && (same || legacy) {
+				// Preserve the entry, but the new name still needs writing.
+				old, had = e, false
+				delete(rec.Sessions, name)
+				for i, win := range rec.Layout.Windows {
+					for j, n := range win {
+						if n == name {
+							rec.Layout.Windows[i][j] = l.Name
+						}
+					}
 				}
+				changed = true
+				break
 			}
 		}
 		next := l.Entry
-		old, had := rec.Sessions[l.Name]
+		if next.ID == "" {
+			next.ID = old.ID
+		}
+		if next.ID == "" {
+			next.ID = rand.Text()
+		}
+		next.GroupID, next.Shade = old.GroupID, old.Shade
 		if next.Agent == "" {
 			next.Agent = old.Agent
 		}

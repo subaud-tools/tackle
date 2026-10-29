@@ -27,6 +27,7 @@ type ProjectOverride struct {
 
 // Config is the in-memory representation of config.toml.
 type Config struct {
+	SessionThemes bool                       `toml:"session_themes"`
 	DefaultAgent  string                     `toml:"default_agent"`
 	DefaultModel  string                     `toml:"default_model"`
 	Sidebar       bool                       `toml:"sidebar"`
@@ -87,6 +88,11 @@ func LoadConfig() Config {
 		}
 	}
 	return seeded
+}
+
+// SessionThemesEnabled reports the opt-in from the existing proj configuration.
+func SessionThemesEnabled() bool {
+	return LoadConfig().SessionThemes
 }
 
 // AgentFor returns the effective agent name for the given project.

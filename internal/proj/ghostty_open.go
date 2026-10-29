@@ -67,11 +67,30 @@ func GhosttyOpen(groups [][]SavedSession, out io.Writer) error {
 		var win string
 		for i, s := range g {
 			if i == 0 {
-				id, err := osascript(newWindowScript, attachCommand(s))
+				err := withThemeSyncLock(func() error {
+					id, err := osascript(newWindowScript, attachCommand(s))
+					if err != nil {
+						return err
+					}
+					win = strings.TrimSpace(id)
+					if win == "" {
+						return fmt.Errorf("ghostty returned an empty window ID")
+					}
+					if s.GroupID == "" {
+						return nil
+					}
+					return UpdateRecord(func(r *Record) bool {
+						initThemeMaps(r)
+						if r.NativeGroups[win] == s.GroupID {
+							return false
+						}
+						r.NativeGroups[win] = s.GroupID
+						return true
+					})
+				})
 				if err != nil {
 					return fmt.Errorf("open window for %s: %w", s.Name, err)
 				}
-				win = strings.TrimSpace(id)
 			} else if _, err := osascript(newTabScript, attachCommand(s), win); err != nil {
 				_, _ = fmt.Fprintf(out, "WARN %s: open tab: %v\n", s.Name, err)
 				continue

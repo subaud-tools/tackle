@@ -29,3 +29,4 @@ __pycache__/
 # Design docs never live in this public repo: specs and plans are in private tools-ops (docs/<repo>/).
 docs/specs/
 docs/plans/
+.cull/

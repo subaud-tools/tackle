@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tools "github.com/subaud-tools/tools-common"
@@ -35,7 +36,7 @@ func HookCommand(exe, socket string) string {
 
 // LayoutHookCommand is the tmux command proj installs on each layout event.
 func LayoutHookCommand(exe string) string {
-	return `run-shell -b "` + shellQuote(exe) + ` __save-layout"`
+	return `run-shell -b "` + shellQuote(exe) + ` __theme-sync --force"`
 }
 
 // InstallHooks points socket's snapshot and layout hooks at the running proj binary.
@@ -69,10 +70,8 @@ func installHooksExe(socket, exe string) {
 // layout is read once, after the last tab, rather than once per tab.
 var layoutSettle = 2 * time.Second
 
-// SaveLayoutSettled is the attach hook's save: it marks itself the latest
-// request, waits layoutSettle, and saves only if no later request replaced
-// the mark. The title read also needs the wait: tmux sets the tab title just
-// after the attach that fired the hook.
+// SaveLayoutSettled coalesces older callers' layout requests, then uses the
+// same TTY-based reconciliation as the attach hooks and status refresh.
 func SaveLayoutSettled() error {
 	p := filepath.Join(tools.StateDir("proj"), "layout.pending")
 	if err := tools.EnsureDir(filepath.Dir(p)); err != nil {
@@ -90,8 +89,7 @@ func SaveLayoutSettled() error {
 	if string(b) != tok {
 		return nil // a later attach owns the save
 	}
-	_, _, err = SaveLayout(CurrentLiveState().Running)
-	return err
+	return ReconcileThemes(true)
 }
 
 // PrimeAll installs hooks on, and snapshots, every live proj server. The
@@ -111,7 +109,40 @@ func Snapshot(socket string) error {
 	if len(live) == 0 {
 		return nil
 	}
-	return UpdateRecord(func(r *Record) bool { return mergeLive(r, live, time.Now()) })
+	// Keep ScanServer's single list-panes batch unchanged. Session-level IDs
+	// are read together, not with a per-field command for every pane.
+	ids, err := Run(socket, "list-sessions", "-F", "#{session_name}\x1f#{@proj_session_id}")
+	if err != nil {
+		return err
+	}
+	byName := map[string]string{}
+	for _, line := range splitLines(ids) {
+		f := strings.SplitN(line, "\x1f", 2)
+		if len(f) == 2 {
+			byName[f[0]] = f[1]
+		}
+	}
+	for i := range live {
+		live[i].ID = byName[live[i].Name]
+	}
+	var stampErr error
+	err = UpdateRecord(func(r *Record) bool {
+		changed := mergeLive(r, live, time.Now())
+		for _, l := range live {
+			id := r.Sessions[l.Name].ID
+			if byName[l.Name] != id {
+				if _, e := Run(socket, "set-option", "-t", l.Name, "@proj_session_id", id); e != nil {
+					stampErr = e
+					break
+				}
+			}
+		}
+		return changed
+	})
+	if err != nil {
+		return err
+	}
+	return stampErr
 }
 
 // LiveEntries observes socket's sessions as record entries. The agent comes
