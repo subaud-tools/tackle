@@ -15,7 +15,7 @@ import (
 )
 
 func TestThemeIdentityLifecycle(t *testing.T) {
-	for _, scenario := range []string{"v1 upgrade", "rename changed conversation", "move keeps shade", "shade reuse", "restore binding"} {
+	for _, scenario := range []string{"v1 upgrade", "rename changed conversation", "rename unchanged conversation", "move keeps shade", "shade reuse", "restore binding"} {
 		t.Run(scenario, func(t *testing.T) {
 			recordHome(t)
 			switch scenario {
@@ -48,11 +48,15 @@ func TestThemeIdentityLifecycle(t *testing.T) {
 				if !reflect.DeepEqual(r, again) {
 					t.Fatal("second load allocated identities")
 				}
-			case "rename changed conversation":
+			case "rename changed conversation", "rename unchanged conversation":
+				conversation := "old"
+				if scenario == "rename changed conversation" {
+					conversation = "new"
+				}
 				r := Record{Sessions: map[string]Entry{"a/old": {ID: "stable", GroupID: "group", Shade: "muted", Socket: "proj-a", Dir: "/work", Agent: "pi", Conversation: "old"}}, Layout: GhosttyLayout{Windows: [][]string{{"a/old"}}, GroupIDs: []string{"group"}}}
-				mergeLive(&r, []LiveEntry{{Name: "a/new", Entry: Entry{ID: "stable", Socket: "proj-a", Dir: "/work", Agent: "pi", Conversation: "new"}}}, time.Now())
+				mergeLive(&r, []LiveEntry{{Name: "a/new", Entry: Entry{ID: "stable", Socket: "proj-a", Dir: "/work", Agent: "pi", Conversation: conversation}}}, time.Now())
 				e := r.Sessions["a/new"]
-				if len(r.Sessions) != 1 || e.ID != "stable" || e.GroupID != "group" || e.Shade != "muted" || e.Conversation != "new" || e.Agent != "pi" || e.Dir != "/work" || r.Layout.Windows[0][0] != "a/new" {
+				if len(r.Sessions) != 1 || e.ID != "stable" || e.GroupID != "group" || e.Shade != "muted" || e.Conversation != conversation || e.Agent != "pi" || e.Dir != "/work" || r.Layout.Windows[0][0] != "a/new" {
 					t.Fatalf("rename lost identity: %+v", r)
 				}
 			case "move keeps shade", "shade reuse":

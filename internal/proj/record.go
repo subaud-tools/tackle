@@ -175,7 +175,8 @@ func mergeLive(rec *Record, live []LiveEntry, now time.Time) bool {
 			same := l.ID != "" && e.ID == l.ID
 			legacy := l.ID == "" && l.Conversation != "" && e.Conversation == l.Conversation
 			if name != l.Name && !isLive[name] && e.Socket == l.Socket && (same || legacy) {
-				old, had = e, true
+				// Preserve the entry, but the new name still needs writing.
+				old, had = e, false
 				delete(rec.Sessions, name)
 				for i, win := range rec.Layout.Windows {
 					for j, n := range win {
