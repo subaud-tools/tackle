@@ -2,6 +2,7 @@ package projcli
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,38 @@ func TestSnapshotRoute(t *testing.T) {
 	out, code := captureStdout(t, []string{"__snapshot", "--socket", "proj-restoretest-none"})
 	if code != 0 || out != "" {
 		t.Fatalf("__snapshot: exit %d output %q; want 0 and silence", code, out)
+	}
+}
+
+func TestRunTerminalRequiresSocketAndPane(t *testing.T) {
+	if _, code := captureStdout(t, []string{"terminal", "--json"}); code != 2 {
+		t.Fatalf("proj terminal --json: got exit %d, want 2", code)
+	}
+}
+
+func TestRunTerminalEndedJSON(t *testing.T) {
+	sock := t.TempDir() + "/gone"
+	out, code := captureStdout(t, []string{"terminal", "--socket", sock, "--pane", "%1", "--json"})
+	if code != 0 {
+		t.Fatalf("proj terminal: got exit %d, want 0", code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if len(got) != 2 || got["state"] != "ended" || got["session"] != "" {
+		t.Fatalf("got %v, want state ended and an empty session", got)
+	}
+}
+
+func TestRunTerminalGoEndedExits1(t *testing.T) {
+	sock := t.TempDir() + "/gone"
+	var out, errw bytes.Buffer
+	code := Dispatch([]string{"terminal", "--socket", sock, "--pane", "%1", "--go", "--json"}, &out, &errw)
+	if code != 1 {
+		t.Fatalf("proj terminal --go on an ended session: got exit %d, want 1", code)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout = %q, want nothing", out.String())
 	}
 }

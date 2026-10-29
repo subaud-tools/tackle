@@ -30,10 +30,19 @@ func splitLines(s string) []string {
 func Run(socket string, args ...string) (string, error) {
 	full := args
 	if socket != "" {
-		full = append([]string{"-L", socket}, args...)
+		full = append([]string{socketFlag(socket), socket}, args...)
 	}
 	out, err := execCommand("tmux", full...).Output()
 	return strings.TrimSuffix(string(out), "\n"), err
+}
+
+// socketFlag is the tmux flag that names socket: -S for a full path (as $TMUX
+// gives it), -L for a server name under tmux's socket directory.
+func socketFlag(socket string) string {
+	if strings.Contains(socket, "/") {
+		return "-S"
+	}
+	return "-L"
 }
 
 // execCommand is Run's exec seam, so tests can count tmux calls.

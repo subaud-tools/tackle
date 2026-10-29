@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.13.0] - 2026-10-29
+
+### Added
+- `proj terminal --socket <path> --pane <%id> [--go] --json` says whether a session's tmux session has a terminal attached, has none, or has ended. With `--go` it brings the Ghostty tab showing the session to the front, or opens a new Ghostty window attached to it, and selects the pane. diazo's Show terminal / Open terminal button runs it.
+
 ## [cull 0.7.0] - 2026-10-28
 
 ### Changed

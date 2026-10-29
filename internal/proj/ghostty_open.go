@@ -55,7 +55,7 @@ var tmuxBin = func() string {
 // session on its own server. Every word is quoted for that bash -c;
 // quoteTarget keeps the `=` exact-match prefix inside the quotes.
 func attachCommand(s SavedSession) string {
-	return shellQuote(tmuxBin()) + " -L " + shellQuote(s.Socket) + " attach -t " + quoteTarget(s.Name)
+	return shellQuote(tmuxBin()) + " " + socketFlag(s.Socket) + " " + shellQuote(s.Socket) + " attach -t " + quoteTarget(s.Name)
 }
 
 // GhosttyOpen opens each group as one Ghostty window, its first session in
