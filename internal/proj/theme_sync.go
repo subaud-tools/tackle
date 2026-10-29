@@ -189,6 +189,13 @@ func containsName(names []string, name string) bool {
 // ReconcileThemes coalesces status refreshes across processes. Assignment and
 // successful terminal delivery are separate: a failed write is never cached.
 func ReconcileThemes(force bool) error {
+	if !SessionThemesEnabled() {
+		if force {
+			_, _, err := SaveLayout(nil)
+			return err
+		}
+		return nil
+	}
 	return withThemeSyncLock(func() error {
 		path := filepath.Join(tools.StateDir("proj"), "theme-sync.json")
 		state := themeSyncState{Applied: map[string]string{}}

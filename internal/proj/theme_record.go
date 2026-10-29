@@ -156,6 +156,9 @@ func withThemeSyncLock(fn func() error) error {
 
 // ThemeForAgent is read-only: even a v1 record is not upgraded by a query.
 func ThemeForAgent(agentSessionID string) (sessiontheme.Query, error) {
+	if !SessionThemesEnabled() {
+		return sessiontheme.Query{}, nil
+	}
 	r, err := readRecord()
 	if err != nil {
 		return sessiontheme.Query{}, err
@@ -183,6 +186,9 @@ func ThemeForAgent(agentSessionID string) (sessiontheme.Query, error) {
 
 // SetWindowHue edits a known native binding; it does not observe or allocate.
 func SetWindowHue(nativeWindowID string, hue sessiontheme.Hue) error {
+	if !SessionThemesEnabled() {
+		return fmt.Errorf("proj: session themes are disabled")
+	}
 	if _, err := sessiontheme.Resolve(sessiontheme.Assignment{Hue: hue, Shade: "midnight"}); err != nil {
 		return err
 	}

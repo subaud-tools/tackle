@@ -15,6 +15,7 @@ import (
 func themeFixture(t *testing.T) (*string, *int, *[][]byte, *bool) {
 	t.Helper()
 	recordHome(t)
+	writeConfig(t, "session_themes = true\n")
 	oldScript, oldRunner, oldSockets, oldWrite, oldNow := osascript, runner, themeSockets, writeTerminal, themeNow
 	t.Cleanup(func() {
 		osascript, runner, themeSockets, writeTerminal, themeNow = oldScript, oldRunner, oldSockets, oldWrite, oldNow
@@ -225,6 +226,7 @@ func TestReconcileChangedClientReappliesOnlyItsTerminal(t *testing.T) {
 
 func TestSaveLayoutUsesTTYJoinWithoutTerminalOutput(t *testing.T) {
 	_, _, writes, _ := themeFixture(t)
+	writeConfig(t, "session_themes = false\n")
 	w, tabs, err := SaveLayout(nil)
 	if err != nil || w != 2 || tabs != 3 {
 		t.Fatalf("layout=(%d,%d,%v)", w, tabs, err)
@@ -294,5 +296,70 @@ func TestMultipleTerminalsForSessionWriteTmuxOptionsOnce(t *testing.T) {
 	r, _ := LoadRecord()
 	if len(r.Groups) != 2 {
 		t.Fatalf("unmanaged terminal consumed a group: %+v", r.Groups)
+	}
+}
+
+func TestDisabledRefreshLeavesDesktopAndRecordUntouched(t *testing.T) {
+	for _, config := range []string{"missing", "session_themes = false\n"} {
+		t.Run(config, func(t *testing.T) {
+			_, reads, writes, _ := themeFixture(t)
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			if config != "missing" {
+				writeConfig(t, config)
+			}
+			if err := UpdateRecord(func(r *Record) bool {
+				r.Groups = map[string]ThemeGroup{"saved": {Hue: "rose"}}
+				r.Sessions["a"] = Entry{ID: "stable-a", GroupID: "saved", Shade: "deep", Conversation: "agent-a"}
+				return true
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(RecordPath())
+			oldRunner := runner
+			runner = func(string, ...string) (string, error) {
+				t.Error("disabled refresh accessed tmux")
+				return "", errors.New("unexpected tmux access")
+			}
+			t.Cleanup(func() { runner = oldRunner })
+			if err := ReconcileThemes(false); err != nil {
+				t.Error(err)
+			}
+			if *reads != 0 || len(*writes) != 0 {
+				t.Errorf("disabled refresh observed %d times, wrote %d palettes", *reads, len(*writes))
+			}
+			q, err := ThemeForAgent("agent-a")
+			if err != nil || q.Assigned || q.Theme != nil {
+				t.Errorf("disabled query=%+v err=%v", q, err)
+			}
+			if err := SetWindowHue("native", "green"); err == nil || !strings.Contains(err.Error(), "disabled") {
+				t.Fatalf("disabled hue setter: %v", err)
+			}
+			after, _ := os.ReadFile(RecordPath())
+			if !bytes.Equal(before, after) {
+				t.Fatal("disabled entrypoints changed saved assignments")
+			}
+		})
+	}
+}
+
+func TestDisabledForcedRefreshStillSavesLayoutWithoutAppearanceWrites(t *testing.T) {
+	_, _, writes, _ := themeFixture(t)
+	writeConfig(t, "session_themes = false\n")
+	external := runner
+	runner = func(socket string, args ...string) (string, error) {
+		if args[0] == "set-option" || args[0] == "set-window-option" {
+			t.Fatal("disabled forced refresh wrote appearance options")
+		}
+		return external(socket, args...)
+	}
+	if err := ReconcileThemes(true); err != nil {
+		t.Fatal(err)
+	}
+	r, err := LoadRecord()
+	if err != nil || !reflect.DeepEqual(r.Layout.Windows, [][]string{{"a", "b"}, {"c"}}) {
+		t.Fatalf("disabled forced layout=%+v err=%v", r.Layout, err)
+	}
+	if len(*writes) != 0 {
+		t.Fatal("disabled forced refresh wrote terminal colors")
 	}
 }

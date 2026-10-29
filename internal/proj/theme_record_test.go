@@ -128,6 +128,7 @@ func TestThemeIdentityLifecycle(t *testing.T) {
 
 func TestThemeQueryReadOnlyAndHueChange(t *testing.T) {
 	recordHome(t)
+	writeConfig(t, "session_themes = true\n")
 	if err := UpdateRecord(func(r *Record) bool {
 		r.Sessions["a/one"] = Entry{ID: "stable", Conversation: "agent", GroupID: "group", Shade: "deep"}
 		r.Groups = map[string]ThemeGroup{"group": {Hue: "blue"}}

@@ -19,6 +19,8 @@ func isolateThemeDesktop(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("PROJ_HOME", home)
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	bin := filepath.Join(home, "bin")
 	if err := os.MkdirAll(bin, 0700); err != nil {
 		t.Fatal(err)
@@ -56,6 +58,7 @@ func TestThemeDispatch(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolateThemeDesktop(t)
+			enableSessionThemes(t)
 			if tt.record != "" {
 				if err := os.MkdirAll(filepath.Dir(proj.RecordPath()), 0700); err != nil {
 					t.Fatal(err)
@@ -131,6 +134,7 @@ func TestThemeSyncHiddenDispatch(t *testing.T) {
 
 func TestHueMutationForcedReconciliationOrder(t *testing.T) {
 	isolateThemeDesktop(t)
+	enableSessionThemes(t)
 	old := reconcileThemes
 	t.Cleanup(func() { reconcileThemes = old })
 	calls := 0
@@ -161,5 +165,63 @@ func TestHueMutationForcedReconciliationOrder(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("forced reconciliation calls=%d", calls)
+	}
+}
+
+func TestThemeEnabledQueryAndDisabledMutation(t *testing.T) {
+	for _, tt := range []struct {
+		name, config string
+		args         []string
+		want         int
+		output       string
+	}{
+		{"missing", "", []string{"--enabled", "--json"}, 0, `{"enabled":false}`},
+		{"off", "session_themes = false\n", []string{"--enabled", "--json"}, 0, `{"enabled":false}`},
+		{"on", "session_themes = true\n", []string{"--enabled", "--json"}, 0, `{"enabled":true}`},
+		{"exclusive session", "", []string{"--enabled", "--session", "agent", "--json"}, 2, ""},
+		{"exclusive setter", "", []string{"--enabled", "--window", "w", "--hue", "green", "--json"}, 2, ""},
+		{"json required", "", []string{"--enabled"}, 2, ""},
+		{"disabled setter", "", []string{"--window", "w", "--hue", "green", "--json"}, 1, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			isolateThemeDesktop(t)
+			configDir := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", configDir)
+			if tt.config != "" {
+				if err := os.MkdirAll(filepath.Join(configDir, "proj"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(configDir, "proj", "config.toml"), []byte(tt.config), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := reconcileThemes
+			reconcileThemes = func(bool) error {
+				t.Error("enabled query or disabled setter invoked reconcile")
+				return errors.New("unexpected reconciliation")
+			}
+			t.Cleanup(func() { reconcileThemes = old })
+			var out, errw bytes.Buffer
+			code := Dispatch(append([]string{"theme"}, tt.args...), &out, &errw)
+			var compact bytes.Buffer
+			_ = json.Compact(&compact, out.Bytes())
+			if code != tt.want || (tt.output != "" && compact.String() != tt.output) {
+				t.Fatalf("exit=%d out=%s err=%s", code, &out, &errw)
+			}
+			if tt.name == "disabled setter" && !strings.Contains(errw.String(), "disabled") {
+				t.Fatalf("missing disabled diagnostic: %s", &errw)
+			}
+		})
+	}
+}
+
+func enableSessionThemes(t *testing.T) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "proj")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("session_themes = true\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
