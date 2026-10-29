@@ -15,6 +15,9 @@ import (
 	"github.com/subaud-tools/tools-common"
 )
 
+// reconcileThemes is the external desktop boundary; CLI tests replace it.
+var reconcileThemes = proj.ReconcileThemes
+
 // Dispatch parses args and runs the proj CLI, writing top-level output to
 // out/errw and returning the process exit code.
 func Dispatch(args []string, out, errw io.Writer) int {
@@ -99,9 +102,10 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		return cmdAutojoinProject()
 	case "__snapshot":
 		return cmdSnapshot(args[1:])
+	case "__theme-sync":
+		return cmdThemeSync(args[1:], false, errw)
 	case "__save-layout":
-		_ = proj.SaveLayoutSettled() // silent for the same reason as __snapshot
-		return 0
+		return cmdThemeSync(args[1:], true, errw)
 	// list/current/new/sidebar/reap/terminal/theme flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
@@ -225,6 +229,25 @@ func cmdAutojoinProject() int {
 		return 1
 	}
 	fmt.Println(name)
+	return 0
+}
+
+// cmdThemeSync is silent on success, but reports observation/output failures.
+func cmdThemeSync(args []string, force bool, errw io.Writer) int {
+	fs := flag.NewFlagSet("__theme-sync", flag.ContinueOnError)
+	fs.SetOutput(errw)
+	forced := fs.Bool("force", force, "bypass the refresh throttle")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		_, _ = fmt.Fprintln(errw, "proj: unexpected theme-sync arguments")
+		return 2
+	}
+	if err := reconcileThemes(*forced); err != nil {
+		_, _ = fmt.Fprintln(errw, "proj:", err)
+		return 1
+	}
 	return 0
 }
 

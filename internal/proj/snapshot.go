@@ -36,7 +36,7 @@ func HookCommand(exe, socket string) string {
 
 // LayoutHookCommand is the tmux command proj installs on each layout event.
 func LayoutHookCommand(exe string) string {
-	return `run-shell -b "` + shellQuote(exe) + ` __save-layout"`
+	return `run-shell -b "` + shellQuote(exe) + ` __theme-sync --force"`
 }
 
 // InstallHooks points socket's snapshot and layout hooks at the running proj binary.
@@ -70,10 +70,8 @@ func installHooksExe(socket, exe string) {
 // layout is read once, after the last tab, rather than once per tab.
 var layoutSettle = 2 * time.Second
 
-// SaveLayoutSettled is the attach hook's save: it marks itself the latest
-// request, waits layoutSettle, and saves only if no later request replaced
-// the mark. The title read also needs the wait: tmux sets the tab title just
-// after the attach that fired the hook.
+// SaveLayoutSettled coalesces older callers' layout requests, then uses the
+// same TTY-based reconciliation as the attach hooks and status refresh.
 func SaveLayoutSettled() error {
 	p := filepath.Join(tools.StateDir("proj"), "layout.pending")
 	if err := tools.EnsureDir(filepath.Dir(p)); err != nil {
@@ -91,10 +89,7 @@ func SaveLayoutSettled() error {
 	if string(b) != tok {
 		return nil // a later attach owns the save
 	}
-	return withThemeSyncLock(func() error {
-		_, _, err := SaveLayout(CurrentLiveState().Running)
-		return err
-	})
+	return ReconcileThemes(true)
 }
 
 // PrimeAll installs hooks on, and snapshots, every live proj server. The

@@ -96,14 +96,14 @@ func TestInstallHooksIdempotent(t *testing.T) {
 }
 
 func TestLayoutHookCommand(t *testing.T) {
-	want := `run-shell -b "'/a b/proj' __save-layout"`
+	want := `run-shell -b "'/a b/proj' __theme-sync --force"`
 	if got := LayoutHookCommand("/a b/proj"); got != want {
 		t.Fatalf("LayoutHookCommand = %s\nwant                %s", got, want)
 	}
 }
 
 func TestSaveLayoutSettledLatestWins(t *testing.T) {
-	recordHome(t)
+	themeFixture(t)
 	orig := layoutSettle
 	layoutSettle = 300 * time.Millisecond
 	t.Cleanup(func() { layoutSettle = orig })

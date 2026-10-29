@@ -39,7 +39,13 @@ func cmdTheme(args []string, out, errw io.Writer) error {
 		}
 		return writeJSON(out, q)
 	}
+	if err := reconcileThemes(true); err != nil {
+		return err
+	}
 	if err := proj.SetWindowHue(*f.window, sessiontheme.Hue(*f.hue)); err != nil {
+		return err
+	}
+	if err := reconcileThemes(true); err != nil {
 		return err
 	}
 	return writeJSON(out, struct {
