@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tools "github.com/subaud-tools/tools-common"
@@ -90,8 +91,10 @@ func SaveLayoutSettled() error {
 	if string(b) != tok {
 		return nil // a later attach owns the save
 	}
-	_, _, err = SaveLayout(CurrentLiveState().Running)
-	return err
+	return withThemeSyncLock(func() error {
+		_, _, err := SaveLayout(CurrentLiveState().Running)
+		return err
+	})
 }
 
 // PrimeAll installs hooks on, and snapshots, every live proj server. The
@@ -111,7 +114,40 @@ func Snapshot(socket string) error {
 	if len(live) == 0 {
 		return nil
 	}
-	return UpdateRecord(func(r *Record) bool { return mergeLive(r, live, time.Now()) })
+	// Keep ScanServer's single list-panes batch unchanged. Session-level IDs
+	// are read together, not with a per-field command for every pane.
+	ids, err := Run(socket, "list-sessions", "-F", "#{session_name}\x1f#{@proj_session_id}")
+	if err != nil {
+		return err
+	}
+	byName := map[string]string{}
+	for _, line := range splitLines(ids) {
+		f := strings.SplitN(line, "\x1f", 2)
+		if len(f) == 2 {
+			byName[f[0]] = f[1]
+		}
+	}
+	for i := range live {
+		live[i].ID = byName[live[i].Name]
+	}
+	var stampErr error
+	err = UpdateRecord(func(r *Record) bool {
+		changed := mergeLive(r, live, time.Now())
+		for _, l := range live {
+			id := r.Sessions[l.Name].ID
+			if byName[l.Name] != id {
+				if _, e := Run(socket, "set-option", "-t", l.Name, "@proj_session_id", id); e != nil {
+					stampErr = e
+					break
+				}
+			}
+		}
+		return changed
+	})
+	if err != nil {
+		return err
+	}
+	return stampErr
 }
 
 // LiveEntries observes socket's sessions as record entries. The agent comes

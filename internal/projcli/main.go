@@ -80,6 +80,15 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		Run:      cmdTerminal,
 	})
 
+	app.Register(tools.Command{
+		Name:     "theme",
+		Summary:  "query a session theme or set a window hue",
+		Synopsis: "theme --session <agent-id> --json | --window <native-window-id> --hue <hue> --json",
+		Help:     "Reads remembered session colors without allocating, or changes a known window group's hue.",
+		NewFlags: func() *flag.FlagSet { fs, _ := newThemeFlags(); return fs },
+		Run:      cmdTheme,
+	})
+
 	// PRESERVE the special routes BEFORE delegating to Dispatch.
 	// No args → the Bubble Tea picker.
 	if len(args) == 0 {
@@ -93,7 +102,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 	case "__save-layout":
 		_ = proj.SaveLayoutSettled() // silent for the same reason as __snapshot
 		return 0
-	// list/current/new/sidebar/reap/terminal now flow through Dispatch (which parses their
+	// list/current/new/sidebar/reap/terminal/theme flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
@@ -104,7 +113,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			return startPicker("", "", true)
 		}
 		return app.Dispatch(args, out, errw)
-	case "list", "current", "new", "sidebar", "terminal",
+	case "list", "current", "new", "sidebar", "terminal", "theme",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}
