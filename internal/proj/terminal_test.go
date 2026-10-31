@@ -97,6 +97,32 @@ func TestTerminalAttached(t *testing.T) {
 	}
 }
 
+func TestTerminalChromeOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	for tabs, want := range map[string]bool{
+		term + "https://example.com/\n": true,
+		"":                              false,
+		strings.ReplaceAll(term, "terminal-test", "someone-else"): false,
+	} {
+		fakeChrome(t, tabs, nil)
+		if got := Terminal(socket, pane); got.Chrome != want {
+			t.Errorf("tabs %q: chrome = %v, want %v", tabs, got.Chrome, want)
+		}
+	}
+}
+
+func TestTerminalChromeAsksChromeNothingWithoutAStoredWindow(t *testing.T) {
+	socket, _, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	if got := Terminal(socket, pane); got.Chrome {
+		t.Fatalf("Terminal = %+v", got)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("ran %q", scripts(*calls))
+	}
+}
+
 func TestTerminalGoEnded(t *testing.T) {
 	requireTmux(t)
 	calls := fakeGhostty(t, true)
@@ -140,6 +166,46 @@ func TestTerminalGoAttachedNoGhosttyTab(t *testing.T) {
 	if _, err := TerminalGo(socket, pane); err == nil {
 		t.Fatal("no Ghostty terminal has the client's tty: want an error")
 	}
+}
+
+// The Chrome window's client is the only terminal: no Ghostty terminal has a
+// client's tty, so the window comes forward.
+func TestTerminalGoRaisesTheChromeWindowWhenNoGhosttyShowsIt(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, term, nil)
+	fakeClients(t, &[]string{"/dev/ttys042"})
+	got, err := TerminalGo(socket, pane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (TerminalState{State: "attached", Session: name, Chrome: true}) {
+		t.Fatalf("state = %+v", got)
+	}
+	sameScripts(t, *calls, focusTTYScript, chromeHasWindowScript, chromeRaiseScript, chromeHasWindowScript)
+	if a := (*calls)[2].args; a[0] != "55" {
+		t.Fatalf("raised %q", a)
+	}
+}
+
+// The Chrome window's client may come first: a Ghostty terminal on a later
+// client is still the one shown.
+func TestTerminalGoFocusesGhosttyOnALaterClient(t *testing.T) {
+	socket, _, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	fakeClients(t, &[]string{"/dev/ttys042", "/dev/ttys043"})
+	fake := osascript
+	osascript = func(script string, args ...string) (string, error) {
+		out, err := fake(script, args...)
+		if script == focusTTYScript && args[0] == "/dev/ttys043" {
+			return "focused\n", nil
+		}
+		return out, err
+	}
+	if _, err := TerminalGo(socket, pane); err != nil {
+		t.Fatal(err)
+	}
+	sameScripts(t, *calls, focusTTYScript, focusTTYScript)
 }
 
 func TestTerminalGoDetachedOpensWindow(t *testing.T) {

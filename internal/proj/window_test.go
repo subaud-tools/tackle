@@ -32,6 +32,12 @@ func fakeChrome(t *testing.T, tabs string, fail map[string]error) *[]chromeCall 
 			return tabs, nil
 		case chromeOpenScript:
 			return "77\n", nil
+		case chromeSplitScript:
+			return "88\n", nil
+		case chromeShowTabScript:
+			return "shown\n", nil
+		case chromeNewTabScript:
+			return "99\n", nil
 		}
 		return "", nil
 	}
@@ -77,15 +83,21 @@ func TestWindowOpensAndSplitsWithNoStoredID(t *testing.T) {
 	if got := Query(socket, "="+name+":", "#{@chrome_window}"); got != "77" {
 		t.Fatalf("@chrome_window = %q", got)
 	}
+	if got := Query(socket, "="+name+":", "#{@chrome_right}"); got != "88" {
+		t.Fatalf("@chrome_right = %q", got)
+	}
 }
 
 func TestWindowLeavesTheRightHalfEmptyWithoutRight(t *testing.T) {
-	socket, _, pane := terminalServer(t)
+	socket, name, pane := terminalServer(t)
 	calls := fakeChrome(t, "", nil)
 	if _, err := Window(socket, pane, ""); err != nil {
 		t.Fatal(err)
 	}
 	sameScripts(t, *calls, chromeOpenScript, chromeSplitScript, chromeRaiseScript)
+	if got := Query(socket, "="+name+":", "#{@chrome_right}"); got != "88" {
+		t.Fatalf("@chrome_right = %q", got)
+	}
 }
 
 func TestWindowRaisesAStoredWindowChromeStillHas(t *testing.T) {
@@ -94,7 +106,7 @@ func TestWindowRaisesAStoredWindowChromeStillHas(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := fakeChrome(t, "http://127.0.0.1:9/term?"+url.Values{"session": {name}, "socket": {socket}}.Encode()+"\nhttps://example.com/\n", nil)
-	got, err := Window(socket, pane, "http://right.example/")
+	got, err := Window(socket, pane, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +116,89 @@ func TestWindowRaisesAStoredWindowChromeStillHas(t *testing.T) {
 	sameScripts(t, *calls, chromeHasWindowScript, chromeRaiseScript)
 	if a := (*calls)[1].args; a[0] != "55" {
 		t.Fatalf("raised %q", a)
+	}
+}
+
+// storedWindow gives the session the stored window 55 and returns its
+// terminal page's URL as Chrome shows it.
+func storedWindow(t *testing.T, socket, name string) string {
+	t.Helper()
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_window", "55"); err != nil {
+		t.Fatal(err)
+	}
+	return "http://127.0.0.1:9/term?" + url.Values{"session": {name}, "socket": {socket}}.Encode() + "\n"
+}
+
+// A Playwright tab beside the terminal is not the right half: only the tab
+// stored as the right half is navigated, and it is selected.
+func TestWindowRaisePointsTheStoredRightTabAtRight(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_right", "88"); err != nil {
+		t.Fatal(err)
+	}
+	calls := fakeChrome(t, term+"https://playwright.example/\nchrome://newtab/\n", nil)
+	got, err := Window(socket, pane, "http://right.example/?t=tok&f=a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (WindowResult{Window: "raised", ID: "55"}) {
+		t.Fatalf("got %+v", got)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeShowTabScript, chromeRaiseScript)
+	if a := (*calls)[1].args; strings.Join(a, " ") != "55 88 http://right.example/?t=tok&f=a" {
+		t.Fatalf("show tab with %q", a)
+	}
+}
+
+// With the right half closed, or never recorded, a new tab takes the URL and
+// becomes the right half; no tab that is there changes.
+func TestWindowRaiseOpensANewTabWhenTheRightTabIsGone(t *testing.T) {
+	for name, stored := range map[string]string{"closed": "88", "never stored": ""} {
+		t.Run(name, func(t *testing.T) {
+			socket, session, pane := terminalServer(t)
+			term := storedWindow(t, socket, session)
+			if stored != "" {
+				if _, err := Run(socket, "set-option", "-t", "="+session+":", "@chrome_right", stored); err != nil {
+					t.Fatal(err)
+				}
+			}
+			calls := fakeChrome(t, "https://first.example/\n"+term, nil)
+			fake := osascript
+			osascript = func(script string, args ...string) (string, error) {
+				out, err := fake(script, args...)
+				if script == chromeShowTabScript {
+					return "", err // the tab is gone
+				}
+				return out, err
+			}
+			if _, err := Window(socket, pane, "http://right.example/"); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{chromeHasWindowScript}
+			if stored != "" {
+				want = append(want, chromeShowTabScript)
+			}
+			sameScripts(t, *calls, append(want, chromeNewTabScript, chromeRaiseScript)...)
+			if got := Query(socket, "="+session+":", "#{@chrome_right}"); got != "99" {
+				t.Fatalf("@chrome_right = %q", got)
+			}
+		})
+	}
+}
+
+// A page that took its token shows its address without it, and may add a
+// section; that is still the page asked for.
+func TestWindowRaiseSelectsATabAlreadyShowingRight(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, term+"chrome://newtab/\nhttp://right.example/?f=a#decisions\n", nil)
+	if _, err := Window(socket, pane, "http://right.example/?t=tok&f=a"); err != nil {
+		t.Fatal(err)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeSelectTabScript, chromeRaiseScript)
+	if a := (*calls)[1].args; strings.Join(a, " ") != "55 3" {
+		t.Fatalf("selected %q", a)
 	}
 }
 

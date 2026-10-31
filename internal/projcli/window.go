@@ -23,7 +23,7 @@ func newWindowFlags() (*flag.FlagSet, *windowFlags) {
 	f := &windowFlags{
 		socket: fs.String("socket", "", "the tmux server's socket path (the part of $TMUX before the first comma)"),
 		pane:   fs.String("pane", "", "a pane of the session ($TMUX_PANE)"),
-		right:  fs.String("right", "", "the URL for the split's right half when a window is opened"),
+		right:  fs.String("right", "", "the URL for the split's right half"),
 		json:   fs.Bool("json", false, "emit JSON"),
 	}
 	tools.SetUsage(fs, "proj window --socket <path> --pane <%id> [--right <url>] [--json]", windowHelp)
@@ -32,7 +32,8 @@ func newWindowFlags() (*flag.FlagSet, *windowFlags) {
 
 const windowHelp = "Brings the session's Chrome window to the front, or opens a new one with the session's " +
 	"terminal on the left of a split and --right (or an empty tab) on the right, and prints " +
-	"{window,id}: window is opened or raised. A failure names the step and exits 1; the split " +
+	"{window,id}: window is opened or raised. On a raised window, --right selects a tab already " +
+	"showing it, else goes in the window's right-half tab, else in a new tab. A failure names the step and exits 1; the split " +
 	"needs macOS Accessibility permission for the app running proj."
 
 // cmdWindow implements `proj window`.
