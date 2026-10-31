@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.17.1] - 2026-10-31
+
+### Fixed
+- Publish the setup archive once through tools-actions 0.13.1, with one aggregate checksum entry and one download-page asset/sidecar copy.
+
 ## [proj 0.17.0] - 2026-10-31
 
 ### Added
