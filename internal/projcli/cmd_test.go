@@ -108,3 +108,21 @@ func TestRunTerminalGoEndedExits1(t *testing.T) {
 		t.Fatalf("stdout = %q, want nothing", out.String())
 	}
 }
+
+func TestRunWindowRequiresSocketAndPane(t *testing.T) {
+	if _, code := captureStdout(t, []string{"window", "--json"}); code != 2 {
+		t.Fatalf("proj window --json: got exit %d, want 2", code)
+	}
+}
+
+func TestRunWindowEndedExits1(t *testing.T) {
+	sock := t.TempDir() + "/gone"
+	var out, errw bytes.Buffer
+	code := Dispatch([]string{"window", "--socket", sock, "--pane", "%1", "--json"}, &out, &errw)
+	if code != 1 {
+		t.Fatalf("proj window on an ended session: got exit %d, want 1", code)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout = %q, want nothing", out.String())
+	}
+}

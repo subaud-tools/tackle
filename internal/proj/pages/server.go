@@ -82,15 +82,15 @@ func Address() (addr, token string, ok bool) {
 	return addr, token, resp.StatusCode == http.StatusOK
 }
 
-// TermPath is the terminal page's path and query for a session, as the browser
-// shows it once the token is exchanged for the cookie.
-func TermPath(socket, session string) string {
-	return "/term?" + url.Values{"socket": {socket}, "session": {session}}.Encode()
+// TermURL is the address to open for a session's terminal page, with the token.
+func TermURL(addr, token, socket, session string) string {
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}}.Encode()
 }
 
-// TermURL is the address to open: TermPath on addr, with the token.
-func TermURL(addr, token, socket, session string) string {
-	return "http://" + addr + TermPath(socket, session) + "&t=" + token
+// TermMatch is the part of the URL the browser shows for session's terminal
+// page after the token exchange, which rewrites the query in sorted order.
+func TermMatch(session string) string {
+	return "/term?" + url.Values{"session": {session}}.Encode() + "&"
 }
 
 func tokenPath() string { return filepath.Join(tools.StateDir(tool), "pages-token") }
