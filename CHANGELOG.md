@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.20.0] - 2026-10-31
+
+### Added
+- The picker's `^o` sets where the next open goes, shown as `open:terminal` or `open:chrome` in the footer while browsing and while naming new work. With `chrome`, enter opens the session's Chrome window as `proj window` does, detaching any terminal view. Switching to `chrome` turns the new-work sidebar off, since the window is half a screen wide; `^s` still turns it on, and switching back to `terminal` restores your earlier choice. Existing sessions keep their layout. The choice is saved as `open_in` in `config.toml` (`terminal` by default). Restoring saved sessions stays terminal-only, so the saved tab has no toggle.
+
 ## [proj 0.19.0] - 2026-10-31
 
 ### Changed

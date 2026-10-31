@@ -594,7 +594,7 @@ func (m Model) footerView(width int) string {
 		if len(m.modelChoices) > 0 {
 			left = append(left, bind("S-tab", "model:"+m.modelChoice()))
 		}
-		left = append(left, bind("^s", "sidebar:"+onOff(m.sidebarChoice)), bind("esc", "cancel"))
+		left = append(left, bind("^s", "sidebar:"+onOff(m.sidebarChoice)), m.openBinding(), bind("esc", "cancel"))
 	case inputSelectModel:
 		left = []key.Binding{bind("↑↓", "move"), bind("enter", "select"), bind("^d", "set default"), bind("esc", "cancel")}
 	default:
@@ -623,7 +623,7 @@ func bind(k, desc string) key.Binding {
 
 // shortHelp is the current view's own keys, shown on the footer's left.
 // Agent/sidebar are new-session settings and appear only in the new-work input,
-// never while browsing or jumping to an existing session.
+// never while browsing or jumping to an existing session; ^o applies to both.
 func (m Model) shortHelp() []key.Binding {
 	if m.reapOnly {
 		return m.reapHelp()
@@ -638,9 +638,14 @@ func (m Model) shortHelp() []key.Binding {
 		}
 	}
 	if m.view == viewEntrance {
-		return []key.Binding{bind("↵", "open"), bind("^x", "reap")}
+		return []key.Binding{bind("↵", "open"), m.openBinding(), bind("^x", "reap")}
 	}
-	return []key.Binding{bind("↵", "open"), bind("esc", "back"), bind("^x", "reap")}
+	return []key.Binding{bind("↵", "open"), m.openBinding(), bind("esc", "back"), bind("^x", "reap")}
+}
+
+// openBinding is the ^o toggle, showing where the next open goes.
+func (m Model) openBinding() key.Binding {
+	return bind("^o", "open:"+m.openIn())
 }
 
 // reapHelp is reap mode's own keys: ^x reaps a live session or forgets a
@@ -669,7 +674,7 @@ func (m Model) fullHelp() [][]key.Binding {
 	saved := m.view == viewEntrance && m.scope == scopeSaved
 	nav := []key.Binding{bind("↑↓", "move")}
 	if !saved {
-		nav = append(nav, bind("↵", "open"))
+		nav = append(nav, bind("↵", "open"), m.openBinding())
 	}
 	nav = append(nav, bind("esc", "back"))
 	if m.view == viewEntrance {

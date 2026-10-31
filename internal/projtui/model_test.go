@@ -66,6 +66,8 @@ func press(m Model, key string) Model {
 		msg = tea.KeyMsg{Type: tea.KeyBackspace}
 	case "ctrl+s":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlS}
+	case "ctrl+o":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlO}
 	case "ctrl+a":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlA}
 	case "ctrl+x":

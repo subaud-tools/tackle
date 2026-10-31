@@ -127,6 +127,8 @@ type Row struct {
 //   - jump: Socket+Name identify the session to attach/switch to.
 //   - new:  Project+Work (Work=="" means the home session, name==project) plus
 //     the chosen Agent and Sidebar; the caller runs EnsureSession then Goto.
+//
+// Chrome on jump or new opens the session's Chrome window instead of Goto.
 type Result struct {
 	Kind    string
 	Names   []string // restore: the saved sessions to bring back, in saved order
@@ -137,6 +139,7 @@ type Result struct {
 	Sidebar bool
 	Socket  string
 	Name    string
+	Chrome  bool // open in the session's Chrome window, not the terminal
 }
 
 // Model is the Bubble Tea model for the picker. It follows scratch's
@@ -167,6 +170,14 @@ type Model struct {
 	modelCursor   int
 	sidebarChoice bool
 	scope         entranceScope
+
+	// openChrome is the ^o toggle: where the next open goes. sidebarBefore is
+	// the sidebar choice switching to Chrome turned off, which switching back
+	// restores. saveOpenIn persists the toggle; newModel leaves it inert and
+	// New/NewFor wire proj.SaveOpenIn (see withOpenIn).
+	openChrome    bool
+	sidebarBefore bool
+	saveOpenIn    func(where string) error
 
 	// models resolves an agent to its model menu (index 0 = default). It
 	// defaults to proj.ModelsForAgent closed over the loaded config; tests
@@ -251,6 +262,7 @@ func newModel(sessions, projects []Row, defaultAgent string, sidebar bool, model
 		refresh:        defaultRefresh,
 		kill:           proj.KillSession,
 		saveDefault:    proj.SaveDefaultModel,
+		saveOpenIn:     func(string) error { return nil },
 		checked:        map[string]bool{},
 		sessionsLoaded: true,
 		forget:         func(string) error { return nil },
@@ -323,7 +335,7 @@ func New() (Model, error) {
 	// once; the tmux scan (about a second across many servers) runs in the
 	// background from Init and fills in the sessions.
 	sessions, projects := buildRows(roots, nil)
-	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord()
+	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord().withOpenIn(cfg.OpenIn)
 	m.sessionsLoaded = false
 	m.defaultModel = cfg.DefaultModel
 	if cfg.DefaultModel != "" {
@@ -379,7 +391,7 @@ func NewFor(project, agent string) (Model, error) {
 	// once; the tmux scan (about a second across many servers) runs in the
 	// background from Init and fills in the sessions.
 	sessions, projects := buildRows(roots, nil)
-	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord()
+	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord().withOpenIn(cfg.OpenIn)
 	m.sessionsLoaded = false
 	m.defaultModel = cfg.DefaultModel
 	if agent != "" {
@@ -719,6 +731,11 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sidebarChoice = !m.sidebarChoice
 		}
 		return m, nil
+	case "ctrl+o":
+		if m.inputKind == inputNewWork {
+			m = m.toggleOpen()
+		}
+		return m, nil
 	case "enter":
 		if m.inputKind == inputAddRoot {
 			return m.submitAddRoot()
@@ -737,6 +754,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Sidebar: m.sidebarChoice,
 			Socket:  proj.SocketFor(m.project),
 			Name:    proj.SessionName(m.project, work),
+			Chrome:  m.openChrome,
 		}
 		return m, tea.Quit
 	}
@@ -853,6 +871,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputKind = inputAddRoot
 		m.footerHint = ""
 		return m, textinput.Blink
+	case "ctrl+o":
+		if m.offersOpenIn() {
+			m = m.toggleOpen()
+		}
+		return m, nil
 	case "ctrl+x":
 		return m.reap()
 	case "?":
@@ -906,7 +929,7 @@ func (m Model) activate() (tea.Model, tea.Cmd) {
 	row := vis[m.cursor]
 	switch row.Kind {
 	case RowSession:
-		m.Result = Result{Kind: "jump", Socket: row.Socket, Name: row.Name}
+		m.Result = Result{Kind: "jump", Socket: row.Socket, Name: row.Name, Chrome: m.openChrome}
 		return m, tea.Quit
 	case RowProject:
 		return m.drillInto(row.Label), nil
@@ -1173,4 +1196,50 @@ func baseName(dir string) string {
 		return dir[i+1:]
 	}
 	return dir
+}
+
+// withOpenIn starts the ^o toggle on the configured choice and has it persist.
+func (m Model) withOpenIn(where string) Model {
+	if where == proj.OpenChrome {
+		m = m.setOpenChrome(true)
+	}
+	m.saveOpenIn = proj.SaveOpenIn
+	return m
+}
+
+// setOpenChrome sets where the next open goes. Chrome turns the sidebar off, as
+// its half-width window would only squeeze the agent, and terminal restores the
+// choice Chrome turned off.
+func (m Model) setOpenChrome(chrome bool) Model {
+	m.openChrome = chrome
+	if chrome {
+		m.sidebarBefore = m.sidebarChoice
+		m.sidebarChoice = false
+	} else {
+		m.sidebarChoice = m.sidebarBefore
+	}
+	return m
+}
+
+// toggleOpen is ^o: it flips where the next open goes and remembers it.
+func (m Model) toggleOpen() Model {
+	m = m.setOpenChrome(!m.openChrome)
+	if err := m.saveOpenIn(m.openIn()); err != nil {
+		m.footerHint = "could not save open_in: " + err.Error()
+	}
+	return m
+}
+
+// openIn is the toggle as its config value.
+func (m Model) openIn() string {
+	if m.openChrome {
+		return proj.OpenChrome
+	}
+	return proj.OpenTerminal
+}
+
+// offersOpenIn says whether the browse view has the ^o toggle: restore stays
+// terminal-only, and the cleanup-only picker opens nothing.
+func (m Model) offersOpenIn() bool {
+	return !m.reapOnly && (m.view != viewEntrance || m.scope != scopeSaved)
 }

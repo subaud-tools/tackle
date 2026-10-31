@@ -282,11 +282,17 @@ func cmdSnapshot(args []string) int {
 	return 0
 }
 
+// The picker's actions, seams so tests see which one a Result takes.
+var (
+	ensureSession = proj.EnsureSession
+	showWindow    = proj.Window
+)
+
 // startPicker is runPicker, a seam so tests can see which picker a route opens.
 var startPicker = runPicker
 
 // runPicker builds the Bubble Tea model, runs it, and executes the user's
-// Result: "new" → EnsureSession then Goto; "jump" → Goto. With reap it runs
+// Result: "new" → EnsureSession then open; "jump" → open. With reap it runs
 // the cleanup-only picker and acts on no Result.
 func runPicker(project, agent string, reap bool) int {
 	// The picker primes the record (hooks + a snapshot of every live server)
@@ -315,8 +321,11 @@ func runPicker(project, agent string, reap bool) int {
 	if reap {
 		return 0
 	}
-	res := final.(projtui.Model).Result
+	return actOnResult(final.(projtui.Model).Result)
+}
 
+// actOnResult executes the picker's Result.
+func actOnResult(res projtui.Result) int {
 	switch res.Kind {
 	case "new":
 		dir, ok := projectDir(res.Project)
@@ -324,24 +333,38 @@ func runPicker(project, agent string, reap bool) int {
 			fmt.Fprintf(os.Stderr, "proj: unknown project %q\n", res.Project)
 			return 1
 		}
-		if _, err := proj.EnsureSession(res.Socket, res.Name, dir, res.Agent, res.Model, nil); err != nil {
+		if _, err := ensureSession(res.Socket, res.Name, dir, res.Agent, res.Model, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "proj: %v\n", err)
 			return 1
 		}
 		if res.Sidebar {
-			SpawnSidebarDetached(res.Socket, res.Name, dir)
+			spawnSidebar(res.Socket, res.Name, dir)
 		}
-		if err := proj.Goto(res.Socket, res.Name); err != nil {
-			fmt.Fprintf(os.Stderr, "proj: %v\n", err)
-			return 1
-		}
+		return openSession(res)
 	case "jump":
-		if err := proj.Goto(res.Socket, res.Name); err != nil {
-			fmt.Fprintf(os.Stderr, "proj: %v\n", err)
-			return 1
-		}
+		return openSession(res)
 	case "restore":
 		return runRestore(res.Names, res.Name, os.Stdout)
+	}
+	return 0
+}
+
+// openSession shows the Result's session where the picker's toggle says.
+// Chrome goes through `proj window`'s code, with the socket as a path: the
+// window is found again by the socket in its page's address, so the picker has
+// to name it as every other caller does, from $TMUX.
+func openSession(res projtui.Result) int {
+	var err error
+	if res.Chrome {
+		target := "=" + res.Name + ":"
+		socket := proj.Query(res.Socket, target, "#{socket_path}")
+		_, err = showWindow(socket, proj.Query(res.Socket, target, "#{pane_id}"), "")
+	} else {
+		err = gotoSession(res.Socket, res.Name)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "proj: %v\n", err)
+		return 1
 	}
 	return 0
 }
