@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.20.1] - 2026-10-31
+
+### Fixed
+- Repeated layout saves retain the group identity of unchanged saved windows whose sessions are absent, instead of allocating new groups on every refresh.
+
 ## [proj 0.20.0] - 2026-10-31
 
 ### Added
