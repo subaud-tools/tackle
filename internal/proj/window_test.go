@@ -3,8 +3,15 @@ package proj
 import (
 	"errors"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/subaud-tools/tackle/internal/proj/pages"
 )
 
 // chromeCall is one AppleScript the fake Chrome ran.
@@ -18,8 +25,9 @@ type chromeCall struct {
 // stored window's URLs. A new window gets the id 77.
 func fakeChrome(t *testing.T, tabs string, fail map[string]error) *[]chromeCall {
 	t.Helper()
-	origScript, origPages := osascript, ensurePages
-	t.Cleanup(func() { osascript, ensurePages = origScript, origPages })
+	origScript, origPages, origPoll := osascript, ensurePages, attachPoll
+	t.Cleanup(func() { osascript, ensurePages, attachPoll = origScript, origPages, origPoll })
+	attachPoll = 0
 	ensurePages = func() (string, string, error) { return "127.0.0.1:9", "tok", nil }
 	var calls []chromeCall
 	osascript = func(script string, args ...string) (string, error) {
@@ -102,6 +110,7 @@ func TestWindowLeavesTheRightHalfEmptyWithoutRight(t *testing.T) {
 
 func TestWindowRaisesAStoredWindowChromeStillHas(t *testing.T) {
 	socket, name, pane := terminalServer(t)
+	pageShows(t, socket, name)
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_window", "55"); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +128,55 @@ func TestWindowRaisesAStoredWindowChromeStillHas(t *testing.T) {
 	}
 }
 
+// Open in Chrome on a window whose page Ghostty detached: the page loads again,
+// which attaches it and so detaches Ghostty.
+func TestWindowRaiseReloadsThePageWhenItIsNotAttached(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, "https://example.com/\n"+term, nil)
+	got, err := Window(socket, pane, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (WindowResult{Window: "raised", ID: "55"}) {
+		t.Fatalf("got %+v", got)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
+	a := (*calls)[1].args
+	if a[0] != "55" || a[1] != "2" || !pages.TermMatches(a[2], socket, name) || !strings.Contains(a[2], "t=tok") {
+		t.Fatalf("set tab %q", a)
+	}
+}
+
+// diazo reads the state as soon as the press returns, so Window waits for the
+// page to attach before it does.
+func TestWindowWaitsForThePageToAttach(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_client", "7"); err != nil {
+		t.Fatal(err)
+	}
+	fakeChrome(t, term, nil)
+	lists := 0
+	orig := execCommand
+	t.Cleanup(func() { execCommand = orig })
+	execCommand = func(name string, arg ...string) *exec.Cmd {
+		if slices.Contains(arg, "list-clients") {
+			if lists++; lists >= 3 {
+				return orig("printf", "7")
+			}
+			return orig("printf", "")
+		}
+		return orig(name, arg...)
+	}
+	if _, err := Window(socket, pane, ""); err != nil {
+		t.Fatal(err)
+	}
+	if lists != 3 {
+		t.Fatalf("looked at the clients %d times, want 3", lists)
+	}
+}
+
 // storedWindow gives the session the stored window 55 and returns its
 // terminal page's URL as Chrome shows it.
 func storedWindow(t *testing.T, socket, name string) string {
@@ -133,6 +191,7 @@ func storedWindow(t *testing.T, socket, name string) string {
 // stored as the right half is navigated, and it is selected.
 func TestWindowRaisePointsTheStoredRightTabAtRight(t *testing.T) {
 	socket, name, pane := terminalServer(t)
+	pageShows(t, socket, name)
 	term := storedWindow(t, socket, name)
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_right", "88"); err != nil {
 		t.Fatal(err)
@@ -157,6 +216,7 @@ func TestWindowRaiseOpensANewTabWhenTheRightTabIsGone(t *testing.T) {
 	for name, stored := range map[string]string{"closed": "88", "never stored": ""} {
 		t.Run(name, func(t *testing.T) {
 			socket, session, pane := terminalServer(t)
+			pageShows(t, socket, session)
 			term := storedWindow(t, socket, session)
 			if stored != "" {
 				if _, err := Run(socket, "set-option", "-t", "="+session+":", "@chrome_right", stored); err != nil {
@@ -191,6 +251,7 @@ func TestWindowRaiseOpensANewTabWhenTheRightTabIsGone(t *testing.T) {
 // section; that is still the page asked for.
 func TestWindowRaiseSelectsATabAlreadyShowingRight(t *testing.T) {
 	socket, name, pane := terminalServer(t)
+	pageShows(t, socket, name)
 	term := storedWindow(t, socket, name)
 	calls := fakeChrome(t, term+"chrome://newtab/\nhttp://right.example/?f=a#decisions\n", nil)
 	if _, err := Window(socket, pane, "http://right.example/?t=tok&f=a"); err != nil {
@@ -263,5 +324,103 @@ func TestSplitScriptActsOnlyOnTheTargetWindow(t *testing.T) {
 	}
 	if !strings.Contains(chromeSplitScript, "(id of front window as text) is not (item 1 of argv)") {
 		t.Error("the split does not confirm the target is in front before the click")
+	}
+}
+
+// osascriptOnPath puts a stand-in for osascript on PATH that logs each call as
+// ping or real, and answers -600 to the first failPing pings and failReal real
+// scripts. It returns the log's path.
+func osascriptOnPath(t *testing.T, failPing, failReal int) string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	body := "#!/bin/sh\n" +
+		"case \"$*\" in *\"count windows\"*) kind=ping; limit=" + strconv.Itoa(failPing) + ";; *) kind=real; limit=" + strconv.Itoa(failReal) + ";; esac\n" +
+		"echo $kind >> '" + log + "'\n" +
+		"[ \"$(grep -c \"^$kind$\" '" + log + "')\" -le $limit ] && { echo 'execution error: Application isn\u2019t running. (-600)' >&2; exit 1; }\n" +
+		"echo ok\n"
+	if err := os.WriteFile(filepath.Join(dir, "osascript"), []byte(body), 0o755); err != nil { //nolint:gosec // G306: the stand-in must run
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+func osascriptLog(t *testing.T, log string) string {
+	t.Helper()
+	b, err := os.ReadFile(log) //nolint:gosec // G304: the test's own temp file
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(strings.Fields(string(b)), " ")
+}
+
+func TestPingFailingOnceStillRunsTheScriptOnce(t *testing.T) {
+	log := osascriptOnPath(t, 1, 0)
+	if out, err := osascript(chromeOpenScript, "http://x/"); err != nil || strings.TrimSpace(out) != "ok" {
+		t.Fatalf("out %q, err %v", out, err)
+	}
+	if got := osascriptLog(t, log); got != "ping ping real" {
+		t.Fatalf("calls = %q", got)
+	}
+}
+
+func TestPingFailingTwiceRunsNoScript(t *testing.T) {
+	log := osascriptOnPath(t, 2, 0)
+	if _, err := osascript(chromeOpenScript, "http://x/"); err == nil || !strings.Contains(failureText(err), "-600") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := osascriptLog(t, log); got != "ping ping" {
+		t.Fatalf("calls = %q", got)
+	}
+}
+
+// A script that failed may have done its work: a second window, a second tab.
+func TestAScriptFailingWith600IsNotRunAgain(t *testing.T) {
+	for name, script := range map[string]string{"Chrome": chromeOpenScript, "Ghostty": newWindowScript} {
+		t.Run(name, func(t *testing.T) {
+			log := osascriptOnPath(t, 0, 1)
+			if _, err := osascript(script, "x"); err == nil {
+				t.Fatal("want the error")
+			}
+			if got := osascriptLog(t, log); got != "ping real" {
+				t.Fatalf("calls = %q", got)
+			}
+		})
+	}
+}
+
+// Reading a session's state must not launch an app that isn't running.
+func TestPingsLaunchNothing(t *testing.T) {
+	for _, script := range []string{chromeHasWindowScript, focusTTYScript} {
+		if ping := pingFor(script); !strings.HasPrefix(ping, "if application ") || !strings.Contains(ping, " is running then") {
+			t.Errorf("ping = %q", ping)
+		}
+	}
+}
+
+// diazo_open places the plan's page without taking the session from Ghostty.
+func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, term, nil)
+	got, err := WindowKeepingView(socket, pane, "http://right.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (WindowResult{Window: "raised", ID: "55"}) {
+		t.Fatalf("got %+v", got)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeNewTabScript, chromeRaiseScript)
+}
+
+func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	if _, err := Window(socket, pane, ""); err != nil {
+		t.Fatal(err)
+	}
+	if a := (*calls)[0].args[0]; !strings.Contains(a, "take=1") || !pages.TermMatches(a, socket, name) {
+		t.Fatalf("opened %q", a)
 	}
 }

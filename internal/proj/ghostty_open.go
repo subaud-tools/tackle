@@ -52,10 +52,11 @@ var tmuxBin = func() string {
 }
 
 // attachCommand is what each Ghostty surface runs: attach to exactly this
-// session on its own server. Every word is quoted for that bash -c;
+// session on its own server, detaching any other view of it, since tmux sizes a
+// session to one terminal. Every word is quoted for that bash -c;
 // quoteTarget keeps the `=` exact-match prefix inside the quotes.
 func attachCommand(s SavedSession) string {
-	return shellQuote(tmuxBin()) + " " + socketFlag(s.Socket) + " " + shellQuote(s.Socket) + " attach -t " + quoteTarget(s.Name)
+	return shellQuote(tmuxBin()) + " " + socketFlag(s.Socket) + " " + shellQuote(s.Socket) + " attach -d -t " + quoteTarget(s.Name)
 }
 
 // GhosttyOpen opens each group as one Ghostty window, its first session in

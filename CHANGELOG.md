@@ -6,6 +6,20 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.18.0] - 2026-10-31
+
+### Added
+- A Chrome terminal page that another terminal took over says "Shown in another terminal" and offers Use here, which attaches it there again.
+
+### Changed
+- A session shows in one terminal at a time, so neither view is left with dots or cut off. Every Ghostty window proj opens attaches with `-d`, restored ones included. A Chrome terminal page takes the session only when `proj window` loaded it or you pressed Use here; a tab Chrome restored or reloaded shows Use here while another terminal has the session.
+- `proj terminal --go` always goes to Ghostty and no longer raises the Chrome window. It focuses a Ghostty terminal showing the session and detaches the session's other clients, or opens a new Ghostty window. Other sessions' clients are never touched.
+- `proj window` on a window whose terminal page was detached loads the page again, which moves the session back to Chrome; `--keep-view` leaves it detached.
+- `proj terminal --json` says `"window": true` while the session's Chrome window holds its terminal page, and `"chrome": true` only while that page is the client showing the session.
+
+### Fixed
+- Before each Chrome or Ghostty AppleScript call, proj pings the app, and retries the ping once after 300 ms on "Application isn't running" (-600). The call itself runs once.
+
 ## [proj 0.17.1] - 2026-10-31
 
 ### Fixed

@@ -14,6 +14,7 @@ type windowFlags struct {
 	socket *string
 	pane   *string
 	right  *string
+	keep   *bool
 	json   *bool
 }
 
@@ -24,16 +25,19 @@ func newWindowFlags() (*flag.FlagSet, *windowFlags) {
 		socket: fs.String("socket", "", "the tmux server's socket path (the part of $TMUX before the first comma)"),
 		pane:   fs.String("pane", "", "a pane of the session ($TMUX_PANE)"),
 		right:  fs.String("right", "", "the URL for the split's right half"),
+		keep:   fs.Bool("keep-view", false, "leave a terminal page another terminal detached as it is"),
 		json:   fs.Bool("json", false, "emit JSON"),
 	}
-	tools.SetUsage(fs, "proj window --socket <path> --pane <%id> [--right <url>] [--json]", windowHelp)
+	tools.SetUsage(fs, "proj window --socket <path> --pane <%id> [--right <url>] [--keep-view] [--json]", windowHelp)
 	return fs, f
 }
 
-const windowHelp = "Brings the session's Chrome window to the front, or opens a new one with the session's " +
+const windowHelp = "Moves the session to its Chrome window, detaching any other terminal, and brings the window " +
+	"to the front, or opens a new one with the session's " +
 	"terminal on the left of a split and --right (or an empty tab) on the right, and prints " +
 	"{window,id}: window is opened or raised. On a raised window, --right selects a tab already " +
-	"showing it, else goes in the window's right-half tab, else in a new tab. A failure names the step and exits 1; the split " +
+	"showing it, else goes in the window's right-half tab, else in a new tab. With --keep-view a page " +
+	"another terminal detached stays detached. A failure names the step and exits 1; the split " +
 	"needs macOS Accessibility permission for the app running proj."
 
 // cmdWindow implements `proj window`.
@@ -45,7 +49,11 @@ func cmdWindow(args []string, out, errw io.Writer) error {
 	if *f.socket == "" || *f.pane == "" {
 		return tools.UsageError{Msg: "--socket and --pane are required"}
 	}
-	res, err := proj.Window(*f.socket, *f.pane, *f.right)
+	show := proj.Window
+	if *f.keep {
+		show = proj.WindowKeepingView
+	}
+	res, err := show(*f.socket, *f.pane, *f.right)
 	if err != nil {
 		return tools.Exitf(1, "%v", err)
 	}

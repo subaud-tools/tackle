@@ -145,6 +145,20 @@ end tell
 error "Chrome has no window " & (item 1 of argv)
 end run`
 
+// chromeSetTabScript points tab number argv[2] of window argv[1] at the URL
+// argv[3], leaving which tab is active alone.
+const chromeSetTabScript = `on run argv
+tell application "Google Chrome"
+repeat with w in windows
+if (id of w as text) is (item 1 of argv) then
+set URL of tab ((item 2 of argv) as integer) of w to (item 3 of argv)
+return
+end if
+end repeat
+end tell
+error "Chrome has no window " & (item 1 of argv)
+end run`
+
 // chromeNewTabScript opens a new tab on the URL argv[2] at the end of window
 // argv[1], makes it the active tab and prints its id.
 const chromeNewTabScript = `on run argv
@@ -199,11 +213,25 @@ var ensurePages = func() (addr, token string, err error) {
 	return "", "", errors.New("proj pages did not answer; see tmux session pages on socket proj-pages")
 }
 
-// Window brings pane's session's Chrome window to the front, or opens and
-// splits a new one with its right half on right (empty when right is ""). On a
-// window that exists, right comes into view (see pointRight). It never closes
-// or moves a tab it did not open, and navigates none but the right half's.
+// Window moves pane's session to its Chrome window and brings that to the
+// front; see window. It has the page take the session.
 func Window(socket, pane, right string) (WindowResult, error) {
+	return window(socket, pane, right, true)
+}
+
+// WindowKeepingView is Window for a page that only goes in the window: a terminal
+// page another terminal detached stays detached.
+func WindowKeepingView(socket, pane, right string) (WindowResult, error) {
+	return window(socket, pane, right, false)
+}
+
+// window brings pane's session's Chrome window to the front, or opens and splits a new one with its right half on right (empty when
+// right is ""). On a window that exists, right comes into view (see pointRight),
+// and with move a terminal page another terminal detached loads again to take
+// the session.
+// It never closes or moves a tab it did not open, and navigates none but those
+// two.
+func window(socket, pane, right string, move bool) (WindowResult, error) {
 	name := Query(socket, pane, "#{session_name}")
 	if name == "" {
 		return WindowResult{}, errors.New("the session has ended")
@@ -214,7 +242,16 @@ func Window(socket, pane, right string) (WindowResult, error) {
 			return WindowResult{}, stepError("find the window", err)
 		}
 		tabs := tabURLs(out)
-		if terminalTab(tabs, socket, name) >= 0 {
+		if tab := terminalTab(tabs, socket, name); tab >= 0 {
+			if move && !pageAttached(socket, pane, name) {
+				addr, token, err := ensurePages()
+				if err != nil {
+					return WindowResult{}, stepError("start the page server", err)
+				}
+				if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.TermURL(addr, token, socket, name)); err != nil {
+					return WindowResult{}, stepError("attach the terminal page", err)
+				}
+			}
 			if right != "" {
 				if err := pointRight(socket, pane, name, id, tabs, right); err != nil {
 					return WindowResult{}, stepError("set the right half", err)
@@ -222,6 +259,9 @@ func Window(socket, pane, right string) (WindowResult, error) {
 			}
 			if _, err := osascript(chromeRaiseScript, id); err != nil {
 				return WindowResult{}, stepError("raise the window", err)
+			}
+			if move {
+				waitPageAttached(socket, pane, name)
 			}
 			return WindowResult{Window: "raised", ID: id}, nil
 		}
@@ -257,6 +297,7 @@ func Window(socket, pane, right string) (WindowResult, error) {
 	if _, err := osascript(chromeRaiseScript, id); err != nil {
 		return WindowResult{}, stepError("raise the window", err)
 	}
+	waitPageAttached(socket, pane, name)
 	return WindowResult{Window: "opened", ID: id}, nil
 }
 
@@ -321,6 +362,28 @@ func terminalTab(urls []string, socket, name string) int {
 	return slices.IndexFunc(urls, func(u string) bool { return pages.TermMatches(u, socket, name) })
 }
 
+// pageAttached says whether the terminal page's latest client is still attached
+// to the session; a client the page lost is a detached page, or no page at all.
+func pageAttached(socket, pane, name string) bool {
+	pid := Query(socket, pane, "#{"+pages.ClientOption+"}")
+	if pid == "" {
+		return false
+	}
+	out, _ := Run(socket, "list-clients", "-t", "="+name, "-F", "#{client_pid}")
+	return slices.Contains(splitLines(out), pid)
+}
+
+// waitPageAttached gives a loading page time to attach, so the state read after
+// Window says where the session is; what that state says is the verdict.
+func waitPageAttached(socket, pane, name string) {
+	for range 10 {
+		if pageAttached(socket, pane, name) {
+			return
+		}
+		time.Sleep(attachPoll)
+	}
+}
+
 // shownWindow is the id of pane's session's stored Chrome window when it still
 // holds the session's terminal page, else "". A failed look says no.
 func shownWindow(socket, pane, name string) string {
@@ -333,6 +396,38 @@ func shownWindow(socket, pane, name string) string {
 		return ""
 	}
 	return id
+}
+
+// osascriptPingDelay is the wait before the one retry of a ping an app answered
+// with "Application isn't running".
+const osascriptPingDelay = 300 * time.Millisecond
+
+// pingFor is the read-only script that asks script's app whether it is
+// answering, "" for a script that talks to neither. It launches nothing: reading
+// a session's state must not start Chrome.
+func pingFor(script string) string {
+	app := ""
+	switch {
+	case strings.Contains(script, `"Google Chrome"`):
+		app = `application id "com.google.Chrome"`
+	case strings.Contains(script, `"Ghostty"`):
+		app = `application "Ghostty"`
+	default:
+		return ""
+	}
+	return "if " + app + " is running then\ntell " + app + " to count windows\nend if"
+}
+
+// ping runs a ping, once more when it fails with AppleScript's -600, which Chrome
+// answers now and then while running: a retry right away works. Only a ping is
+// retried: a script that failed may already have opened a window.
+func ping(script string) error {
+	_, err := runOsascript(script)
+	if err != nil && strings.Contains(failureText(err), "(-600)") {
+		time.Sleep(osascriptPingDelay)
+		_, err = runOsascript(script)
+	}
+	return err
 }
 
 // stepError names the step that failed and carries Chrome's or macOS's message,

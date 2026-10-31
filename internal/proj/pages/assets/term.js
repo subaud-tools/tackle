@@ -13770,6 +13770,28 @@ var Dl = class extends D2 {
   }
 };
 
+// closed.ts
+var closeDetached = 4409;
+function closedView(code, reason) {
+  if (code === closeDetached) {
+    return { useHere: true, text: "Shown in another terminal" };
+  }
+  return {
+    useHere: false,
+    text: `${reason || "connection lost"}: reload to reconnect`
+  };
+}
+function takeFrom(search) {
+  const q2 = new URLSearchParams(search);
+  q2.delete("take");
+  return { socket: search, page: `?${q2.toString()}` };
+}
+function withTake(search) {
+  const q2 = new URLSearchParams(search);
+  q2.set("take", "1");
+  return `?${q2.toString()}`;
+}
+
 // keys.ts
 function handleKey(ev, send) {
   if (ev.key !== "Enter" || !ev.shiftKey && !ev.ctrlKey) return true;
@@ -13803,8 +13825,10 @@ async function main() {
   }
   fit.fit();
   term.focus();
+  const address = takeFrom(location.search);
+  history.replaceState(null, "", location.pathname + address.page);
   const ws3 = new WebSocket(
-    `ws://${location.host}/api/term/ws${location.search}`
+    `ws://${location.host}/api/term/ws${address.socket}`
   );
   ws3.binaryType = "arraybuffer";
   const send = (data) => {
@@ -13852,10 +13876,21 @@ async function main() {
   ws3.onopen = sendSize;
   ws3.onmessage = (ev) => term.write(new Uint8Array(ev.data));
   ws3.onclose = (ev) => {
-    const why = ev.reason || "connection lost";
-    term.write(`\r
-[${why}: reload to reconnect]\r
+    const view = closedView(ev.code, ev.reason);
+    if (!view.useHere) {
+      term.write(`\r
+[${view.text}]\r
 `);
+      return;
+    }
+    const button = document.createElement("button");
+    button.textContent = "Use here";
+    button.onclick = () => location.replace(withTake(location.search));
+    const note = document.createElement("div");
+    note.id = "detached";
+    note.append(view.text, button);
+    document.body.append(note);
+    button.focus();
   };
 }
 void main();

@@ -5,8 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/creack/pty"
 )
 
 // terminalServer starts a tmux server on a socket given by full path (as
@@ -54,6 +58,37 @@ func fakeClients(t *testing.T, ttys *[]string) *[][]string {
 	return &calls
 }
 
+// pageShows makes the page the session's one client: list-clients answers 7,
+// whatever the format, and 7 is the stored page client.
+func pageShows(t *testing.T, socket, name string) {
+	t.Helper()
+	fakeClients(t, &[]string{"7"})
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_client", "7"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// realClient attaches a real tmux client to name in its own pty.
+func realClient(t *testing.T, socket, name string) {
+	t.Helper()
+	cmd := exec.Command("tmux", socketFlag(socket), socket, "attach", "-t", "="+name) //nolint:gosec // G204: a test's own socket
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "TMUX") }), "TERM=xterm-256color")
+	tty, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = tty.Close()
+	})
+}
+
+func clientTTYs(socket string, args ...string) []string {
+	out, _ := Run(socket, append([]string{"list-clients", "-F", "#{client_tty}"}, args...)...)
+	return splitLines(out)
+}
+
 func selected(calls [][]string, pane string) bool {
 	var win, p bool
 	for _, c := range calls {
@@ -97,18 +132,42 @@ func TestTerminalAttached(t *testing.T) {
 	}
 }
 
-func TestTerminalChromeOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
+func TestTerminalWindowOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	term := storedWindow(t, socket, name)
+	pageShows(t, socket, name)
 	for tabs, want := range map[string]bool{
 		term + "https://example.com/\n": true,
 		"":                              false,
 		strings.ReplaceAll(term, "terminal-test", "someone-else"): false,
 	} {
 		fakeChrome(t, tabs, nil)
-		if got := Terminal(socket, pane); got.Chrome != want {
-			t.Errorf("tabs %q: chrome = %v, want %v", tabs, got.Chrome, want)
+		if got := Terminal(socket, pane); got.Window != want || got.Chrome != want {
+			t.Errorf("tabs %q: %+v, want window and chrome %v", tabs, got, want)
 		}
+	}
+}
+
+// The window still holds the page, but the page was detached: Ghostty shows it.
+func TestTerminalWindowWithoutChromeWhenAnotherClientShowsTheSession(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	pageShows(t, socket, name)
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_client", "8"); err != nil {
+		t.Fatal(err)
+	}
+	fakeChrome(t, term, nil)
+	if got := Terminal(socket, pane); !got.Window || got.Chrome {
+		t.Fatalf("Terminal = %+v", got)
+	}
+}
+
+func TestTerminalWindowWithNoClientAtAll(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	fakeChrome(t, storedWindow(t, socket, name), nil)
+	got := Terminal(socket, pane)
+	if got != (TerminalState{State: "detached", Session: name, Window: true}) {
+		t.Fatalf("Terminal = %+v", got)
 	}
 }
 
@@ -158,33 +217,79 @@ func TestTerminalGoAttachedFocuses(t *testing.T) {
 	}
 }
 
-func TestTerminalGoAttachedNoGhosttyTab(t *testing.T) {
-	socket, _, pane := terminalServer(t)
-	fakeGhostty(t, true)
-	fakeClients(t, &[]string{"/dev/ttys042"})
-	osascript = func(script string, args ...string) (string, error) { return "\n", nil }
-	if _, err := TerminalGo(socket, pane); err == nil {
-		t.Fatal("no Ghostty terminal has the client's tty: want an error")
-	}
-}
-
-// The Chrome window's client is the only terminal: no Ghostty terminal has a
-// client's tty, so the window comes forward.
-func TestTerminalGoRaisesTheChromeWindowWhenNoGhosttyShowsIt(t *testing.T) {
+// A client Ghostty doesn't hold, the Chrome page's: --go opens Ghostty, whose
+// attach -d detaches that client, and leaves Chrome alone.
+func TestTerminalGoOpensGhosttyWhenOnlyChromeShowsIt(t *testing.T) {
 	socket, name, pane := terminalServer(t)
-	term := storedWindow(t, socket, name)
-	calls := fakeChrome(t, term, nil)
-	fakeClients(t, &[]string{"/dev/ttys042"})
+	storedWindow(t, socket, name)
+	calls := fakeGhostty(t, true)
+	ttys := []string{"/dev/ttys042"}
+	fakeClients(t, &ttys)
+	osascript = func(script string, args ...string) (string, error) {
+		*calls = append(*calls, scriptCall{script, args})
+		if script == newWindowScript {
+			ttys = []string{"/dev/ttys077"} // the new window took the session
+		}
+		return "", nil
+	}
 	got, err := TerminalGo(socket, pane)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != (TerminalState{State: "attached", Session: name, Chrome: true}) {
+	if got != (TerminalState{State: "attached", Session: name}) {
 		t.Fatalf("state = %+v", got)
 	}
-	sameScripts(t, *calls, focusTTYScript, chromeHasWindowScript, chromeRaiseScript, chromeHasWindowScript)
-	if a := (*calls)[2].args; a[0] != "55" {
-		t.Fatalf("raised %q", a)
+	// The last is the read of the state after; nothing raises Chrome.
+	if len(*calls) != 3 || (*calls)[0].script != focusTTYScript || (*calls)[1].script != newWindowScript || (*calls)[2].script != chromeHasWindowScript {
+		t.Fatalf("scripts = %+v", *calls)
+	}
+	if want := "attach -d -t '=" + name + "'"; !strings.Contains((*calls)[1].args[0], want) {
+		t.Fatalf("command = %q, want %q", (*calls)[1].args[0], want)
+	}
+}
+
+// Focusing a Ghostty tab detaches this session's other clients, and no one
+// else's: tmux's detach-client -a would take every other session's on the
+// server too.
+func TestTerminalGoFocusingGhosttyDetachesOnlyThisSessionsOtherClients(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	other := "terminal-test/other"
+	if _, err := Run(socket, "new-session", "-d", "-s", other); err != nil {
+		t.Fatal(err)
+	}
+	realClient(t, socket, name)
+	realClient(t, socket, name)
+	realClient(t, socket, other)
+	var mine, theirs []string
+	for i := 0; i < 200 && (len(mine) < 2 || len(theirs) < 1); i++ {
+		time.Sleep(25 * time.Millisecond)
+		mine, theirs = clientTTYs(socket, "-t", "="+name), clientTTYs(socket, "-t", "="+other)
+	}
+	if len(mine) != 2 || len(theirs) != 1 {
+		t.Fatalf("clients: mine %q, theirs %q", mine, theirs)
+	}
+	fakeGhostty(t, true)
+	osascript = func(script string, args ...string) (string, error) {
+		if script == focusTTYScript && args[0] == mine[1] {
+			return "focused\n", nil
+		}
+		return "", nil
+	}
+	if _, err := TerminalGo(socket, pane); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for i := 0; i < 200; i++ {
+		if left = clientTTYs(socket); len(left) == 2 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	slices.Sort(left)
+	want := []string{mine[1], theirs[0]}
+	slices.Sort(want)
+	if !slices.Equal(left, want) {
+		t.Fatalf("clients left = %q, want %q", left, want)
 	}
 }
 
@@ -226,7 +331,7 @@ func TestTerminalGoDetachedOpensWindow(t *testing.T) {
 	if got != (TerminalState{State: "attached", Session: name}) {
 		t.Fatalf("state = %+v", got)
 	}
-	want := "'/opt/homebrew/bin/tmux' -S '" + socket + "' attach -t '=" + name + "'"
+	want := "'/opt/homebrew/bin/tmux' -S '" + socket + "' attach -d -t '=" + name + "'"
 	if len(*scripts) != 1 || !strings.Contains((*scripts)[0].script, "new window") || (*scripts)[0].args[0] != want {
 		t.Fatalf("want one new window running %q, got %+v", want, *scripts)
 	}
