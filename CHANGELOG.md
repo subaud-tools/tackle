@@ -6,15 +6,9 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
-## [proj 0.17.1] - 2026-10-31
-
-### Fixed
-- Publish the setup archive once through tools-actions 0.13.1, with one aggregate checksum entry and one download-page asset/sidecar copy.
-
-## [proj 0.17.0] - 2026-10-31
+## [proj 0.18.0] - 2026-10-31
 
 ### Added
-- Release-owned setup bundle with the canonical zsh wrapper and one portable `.zshrc` include, built by `proj setup-bundle` without starting proj or configuring the machine.
 - A Chrome terminal page that another terminal took over says "Shown in another terminal" and offers Use here, which attaches it there again.
 
 ### Changed
@@ -25,6 +19,16 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 
 ### Fixed
 - Before each Chrome or Ghostty AppleScript call, proj pings the app, and retries the ping once after 300 ms on "Application isn't running" (-600). The call itself runs once.
+
+## [proj 0.17.1] - 2026-10-31
+
+### Fixed
+- Publish the setup archive once through tools-actions 0.13.1, with one aggregate checksum entry and one download-page asset/sidecar copy.
+
+## [proj 0.17.0] - 2026-10-31
+
+### Added
+- Release-owned setup bundle with the canonical zsh wrapper and one portable `.zshrc` include, built by `proj setup-bundle` without starting proj or configuring the machine.
 
 ## [proj 0.16.0] - 2026-10-31
 
