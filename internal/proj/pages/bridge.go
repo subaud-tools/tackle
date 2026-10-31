@@ -3,12 +3,16 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
@@ -31,9 +35,80 @@ const maxInput = 16 << 20
 type bridge struct {
 	mu     sync.Mutex
 	synced map[string]bool // sockets told the page supports synchronized output
+
+	// Seams, so tests never drive the real Ghostty.
+	closeTerminal func(tty string) error
+	ttyBusy       func(tty string) (bool, error)
+	closeWait     time.Duration // how long a pushed-out tty gets to empty
 }
 
-func newBridge() *bridge { return &bridge{synced: map[string]bool{}} }
+func newBridge() *bridge {
+	return &bridge{synced: map[string]bool{}, closeTerminal: CloseTerminal, ttyBusy: ttyHasProcess, closeWait: 2 * time.Second}
+}
+
+// CloseTerminal closes the Ghostty terminal with the given tty, if there is one.
+// proj sets it: it holds the Ghostty scripts, and it imports this package.
+var CloseTerminal = func(string) error { return nil }
+
+// pushedOut lists the ttys a take of target will detach, leaving out the page's
+// own client: its pty goes back to the system, and a new terminal may get it.
+func (b *bridge) pushedOut(socket, target string) []string {
+	out, err := tmuxCmd(socket, "list-clients", "-t", target, "-F", "#{client_pid} #{client_tty}").Output()
+	if err != nil {
+		return nil
+	}
+	page, _ := tmuxCmd(socket, "show-options", "-v", "-q", "-t", target+":", ClientOption).Output()
+	var ttys []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		pid, tty, ok := strings.Cut(line, " ")
+		if ok && pid != strings.TrimSpace(string(page)) {
+			ttys = append(ttys, tty)
+		}
+	}
+	return ttys
+}
+
+// closePushedOut closes the Ghostty terminal of a tty a take detached, once
+// nothing runs on the tty. A tty still running something after closeWait keeps
+// its terminal: that is a shell the client dropped back to, not an empty window.
+// A failure is only logged: the take has already happened.
+func (b *bridge) closePushedOut(tty string) {
+	deadline := time.Now().Add(b.closeWait)
+	for {
+		busy, err := b.ttyBusy(tty)
+		if err != nil {
+			log.Printf("proj pages: read %s: %v", tty, err)
+			return
+		}
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := b.closeTerminal(tty); err != nil {
+		log.Printf("proj pages: close the terminal on %s: %v", tty, err)
+	}
+}
+
+// ttyHasProcess says whether a process other than a zombie is on tty. ps exits 1
+// with no processes, and also on a tty it can't read, which only the latter
+// explains on stderr.
+func ttyHasProcess(tty string) (bool, error) {
+	out, err := exec.Command("ps", "-t", tty, "-o", "stat=").Output() //nolint:gosec // G204: ps argv, no shell; the tty comes from tmux
+	var ee *exec.ExitError
+	if err != nil && (!errors.As(err, &ee) || len(ee.Stderr) > 0) {
+		return false, fmt.Errorf("ps: %w", err)
+	}
+	for _, stat := range strings.Fields(string(out)) {
+		if !strings.HasPrefix(stat, "Z") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 func (b *bridge) handler() http.Handler {
 	mux := http.NewServeMux()
@@ -64,8 +139,10 @@ func (b *bridge) serveTerm(w http.ResponseWriter, r *http.Request) {
 	// Only take=1 takes the session: a page Chrome restored or reloaded must leave
 	// another terminal's view alone.
 	attach := []string{"-u", "attach", "-t", target}
+	var pushedOut []string
 	if r.URL.Query().Get("take") == "1" {
 		attach = []string{"-u", "attach", "-d", "-t", target}
+		pushedOut = b.pushedOut(socket, target)
 	} else if out, err := tmuxCmd(socket, "list-clients", "-t", target).Output(); err == nil && len(out) > 0 {
 		_ = c.Close(closeDetached, "shown elsewhere")
 		return
@@ -78,6 +155,9 @@ func (b *bridge) serveTerm(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = c.Close(websocket.StatusInternalError, "attach: "+err.Error())
 		return
+	}
+	for _, t := range pushedOut {
+		go b.closePushedOut(t)
 	}
 	// A failure only leaves proj unable to say the page shows the session.
 	_ = tmuxCmd(socket, "set-option", "-t", target+":", ClientOption, strconv.Itoa(cmd.Process.Pid)).Run()
