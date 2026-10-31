@@ -82,6 +82,22 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		NewFlags: func() *flag.FlagSet { fs, _ := newTerminalFlags(); return fs },
 		Run:      cmdTerminal,
 	})
+	app.Register(tools.Command{
+		Name:     "window",
+		Summary:  "open or raise a session's Chrome window (--json)",
+		Synopsis: "window --socket <path> --pane <%id> [--right <url>] [--json]",
+		Help:     windowHelp,
+		NewFlags: func() *flag.FlagSet { fs, _ := newWindowFlags(); return fs },
+		Run:      cmdWindow,
+	})
+	app.Register(tools.Command{
+		Name:     "pages",
+		Summary:  "serve the terminal pages of Chrome session windows",
+		Synopsis: "pages",
+		Help:     "Serves the local page that shows any session's terminal, until killed. proj window starts it in tmux session `pages` on socket proj-pages when it is not running.",
+		NewFlags: newPagesFlags,
+		Run:      cmdPages,
+	})
 
 	app.Register(tools.Command{
 		Name:     "theme",
@@ -106,7 +122,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		return cmdThemeSync(args[1:], false, errw)
 	case "__save-layout":
 		return cmdThemeSync(args[1:], true, errw)
-	// list/current/new/sidebar/reap/terminal/theme flow through Dispatch (which parses their
+	// list/current/new/sidebar/reap/terminal/window/pages/theme flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
@@ -117,7 +133,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			return startPicker("", "", true)
 		}
 		return app.Dispatch(args, out, errw)
-	case "list", "current", "new", "sidebar", "terminal", "theme",
+	case "list", "current", "new", "sidebar", "terminal", "window", "pages", "theme",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}

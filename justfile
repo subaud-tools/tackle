@@ -40,7 +40,7 @@ hooks:
 
 # ---- tackle -----------------------------------------------------------------
 # Files the gate needs that are not committed (built before the gate, locally
-# and in CI). tackle has none: the cull and sift page bundles are
+# and in CI). tackle has none: the cull, sift and proj page bundles are
 # committed and embedded.
 prepare:
 
@@ -48,10 +48,10 @@ prepare:
 # cull and sift pages' browser probes (CI job `probe`).
 verify-slow: cull-probe sift-probe
 
-# Tool-specific checks beyond the gate (CI runs this too): the cull and sift
-# pages' TypeScript gates and their committed bundles matching web/. The
+# Tool-specific checks beyond the gate (CI runs this too): the cull, sift and
+# proj pages' TypeScript gates and their committed bundles matching web/. The
 # Claude Code plugins live in subaud-tools/plugins, which validates them.
-verify-extra: cull-web cull-bundle-fresh sift-web sift-bundle-fresh
+verify-extra: cull-web cull-bundle-fresh sift-web sift-bundle-fresh pages-web pages-bundle-fresh
 
 # cull's page (internal/cull/web) is TypeScript built by esbuild into
 # internal/cull/serve/assets, which is COMMITTED and embedded, so node is
@@ -141,6 +141,32 @@ sift-bundle-fresh: sift-assets
 # `cd internal/sift/web && node node_modules/playwright-core/cli.js install chromium chromium-headless-shell`.
 sift-probe: _sift-web-deps
     cd {{ sift_web }} && KIT_BROWSER=required npm run --silent probe
+
+# proj's terminal page (internal/proj/pages/web) is TypeScript built by esbuild
+# into internal/proj/pages/assets, which is COMMITTED and embedded, so node is
+# dev-time only.
+pages_web := "internal/proj/pages/web"
+
+_pages-web-deps:
+    cd {{ pages_web }} && { [ -d node_modules ] || npm ci; } && npm run --silent kit-types
+
+# The page's TypeScript gate: unit tests, tsc, eslint, prettier.
+pages-web: _pages-web-deps
+    cd {{ pages_web }} && npm test
+    cd {{ pages_web }} && npm run --silent typecheck
+    cd {{ pages_web }} && npm run --silent lint
+    cd {{ pages_web }} && npm run --silent fmt:check
+
+# Rebuild the committed bundle.
+pages-assets: _pages-web-deps
+    cd {{ pages_web }} && npm run --silent build
+
+# The committed bundle matches web/, and the files copied from tools-common
+# match the version go.mod pins.
+pages-bundle-fresh: pages-assets
+    git diff --exit-code -- internal/proj/pages/assets/term.js internal/proj/pages/assets/term.css \
+      || { echo "the committed terminal page bundle does not match web/: run 'just pages-assets' and commit the result"; exit 1; }
+    just _copies-fresh {{ pages_web }}
 
 # Each file a page's build copies from tools-common is byte for byte the one
 # in the version go.mod pins: kit.d.ts (npm run kit-types) and build/'s

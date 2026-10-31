@@ -6,6 +6,12 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.15.0] - 2026-10-30
+
+### Added
+- `proj window --socket <path> --pane <%id> [--right <url>] [--json]` opens a session's own Chrome window: the session's terminal on the left of a native split, and `--right` (such as the session's diazo page) on the right. When the session already has a window, it brings that window to the front instead. Making the split needs macOS Accessibility permission for whatever runs proj; without it, proj says so and stops.
+- `proj pages` serves the terminal page those windows show, on the family's locked local page: loopback only, a new token each time it starts. `proj window` starts it in tmux session `pages` on socket `proj-pages` when it isn't running. In the page, Shift+Enter and Ctrl+Enter send a newline, left Option is Alt, prompt icons use FiraCode Nerd Font, and selecting text copies it.
+
 ## [proj 0.14.0] - 2026-10-29
 
 ### Added
