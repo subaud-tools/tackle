@@ -2,6 +2,7 @@ package proj
 
 import (
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -13,9 +14,9 @@ type chromeCall struct {
 }
 
 // fakeChrome swaps the osascript seam and the page server's start: scripts in
-// fail return their error, and the has-window script answers hasWindow. A new
-// window gets the id 77.
-func fakeChrome(t *testing.T, hasWindow bool, fail map[string]error) *[]chromeCall {
+// fail return their error, and the has-window script answers with tabs, the
+// stored window's URLs. A new window gets the id 77.
+func fakeChrome(t *testing.T, tabs string, fail map[string]error) *[]chromeCall {
 	t.Helper()
 	origScript, origPages := osascript, ensurePages
 	t.Cleanup(func() { osascript, ensurePages = origScript, origPages })
@@ -28,9 +29,7 @@ func fakeChrome(t *testing.T, hasWindow bool, fail map[string]error) *[]chromeCa
 		}
 		switch script {
 		case chromeHasWindowScript:
-			if hasWindow {
-				return "yes\n", nil
-			}
+			return tabs, nil
 		case chromeOpenScript:
 			return "77\n", nil
 		}
@@ -57,7 +56,7 @@ func sameScripts(t *testing.T, calls []chromeCall, want ...string) {
 
 func TestWindowOpensAndSplitsWithNoStoredID(t *testing.T) {
 	socket, name, pane := terminalServer(t)
-	calls := fakeChrome(t, false, nil)
+	calls := fakeChrome(t, "", nil)
 	got, err := Window(socket, pane, "http://right.example/")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +81,7 @@ func TestWindowOpensAndSplitsWithNoStoredID(t *testing.T) {
 
 func TestWindowLeavesTheRightHalfEmptyWithoutRight(t *testing.T) {
 	socket, _, pane := terminalServer(t)
-	calls := fakeChrome(t, false, nil)
+	calls := fakeChrome(t, "", nil)
 	if _, err := Window(socket, pane, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +93,7 @@ func TestWindowRaisesAStoredWindowChromeStillHas(t *testing.T) {
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_window", "55"); err != nil {
 		t.Fatal(err)
 	}
-	calls := fakeChrome(t, true, nil)
+	calls := fakeChrome(t, "http://127.0.0.1:9/term?"+url.Values{"session": {name}, "socket": {socket}}.Encode()+"\nhttps://example.com/\n", nil)
 	got, err := Window(socket, pane, "http://right.example/")
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +112,7 @@ func TestWindowReplacesAStoredWindowChromeNoLongerHas(t *testing.T) {
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_window", "55"); err != nil {
 		t.Fatal(err)
 	}
-	calls := fakeChrome(t, false, nil)
+	calls := fakeChrome(t, "", nil)
 	got, err := Window(socket, pane, "")
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +129,8 @@ func TestWindowReplacesAStoredWindowChromeNoLongerHas(t *testing.T) {
 func TestWindowSplitFailureNamesTheStepAndAccessibility(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	macos := errors.New("System Events got an error: osascript is not allowed assistive access. (-1719)")
-	calls := fakeChrome(t, false, map[string]error{chromeSplitScript: macos})
-	_, err := Window(socket, pane, "")
+	calls := fakeChrome(t, "", map[string]error{chromeSplitScript: macos})
+	_, err := Window(socket, pane, "http://right.example/")
 	if err == nil {
 		t.Fatal("no error")
 	}
@@ -143,5 +142,31 @@ func TestWindowSplitFailureNamesTheStepAndAccessibility(t *testing.T) {
 	sameScripts(t, *calls, chromeOpenScript, chromeSplitScript)
 	if got := Query(socket, "="+name+":", "#{@chrome_window}"); got != "" {
 		t.Fatalf("@chrome_window = %q, want nothing stored", got)
+	}
+}
+
+func TestWindowOpensANewOneWhenTheStoredWindowShowsTheSameNameOnAnotherSocket(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_window", "55"); err != nil {
+		t.Fatal(err)
+	}
+	other := "http://127.0.0.1:9/term?" + url.Values{"session": {name}, "socket": {socket + "-other"}}.Encode() + "\n"
+	calls := fakeChrome(t, other, nil)
+	got, err := Window(socket, pane, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Window != "opened" {
+		t.Fatalf("got %+v; ran %q", got, scripts(*calls))
+	}
+}
+
+// The AppleScript itself is checked live; this holds the two guards in place.
+func TestSplitScriptActsOnlyOnTheTargetWindow(t *testing.T) {
+	if strings.Contains(chromeSplitScript, "of tabs of front window") {
+		t.Error("the split waits on the front window, which may not be the target")
+	}
+	if !strings.Contains(chromeSplitScript, "(id of front window as text) is not (item 1 of argv)") {
+		t.Error("the split does not confirm the target is in front before the click")
 	}
 }

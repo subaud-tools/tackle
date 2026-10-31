@@ -5,10 +5,11 @@ package pages
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -29,18 +30,30 @@ const tool = "proj"
 //go:embed assets
 var assets embed.FS
 
-// Start serves the page until ctx ends. The token is kept in StateDir, so
-// `proj window` can read it and a restarted server keeps open tabs working.
+// Start serves the page until ctx ends, on a new token each launch, which it
+// leaves in StateDir for `proj window` once the server listens.
 func Start(ctx context.Context) (*localweb.Server, error) {
-	token, err := loadToken()
-	if err != nil {
+	tok := make([]byte, 32)
+	if _, err := rand.Read(tok); err != nil {
 		return nil, err
 	}
+	token := hex.EncodeToString(tok)
 	sub, err := fs.Sub(assets, "assets")
 	if err != nil {
 		return nil, err
 	}
-	return localweb.Start(ctx, localweb.Config{Tool: tool, Assets: sub, API: newBridge().handler(), Token: token})
+	ctx, stop := context.WithCancel(ctx)
+	srv, err := localweb.Start(ctx, localweb.Config{Tool: tool, Assets: healthFS{FS: sub, token: token}, API: newBridge().handler(), Token: token})
+	if err != nil {
+		stop()
+		return nil, err
+	}
+	context.AfterFunc(ctx, stop)
+	if err := tools.WriteFileAtomic(tokenPath(), []byte(token+"\n"), 0o600); err != nil {
+		stop()
+		return nil, err
+	}
+	return srv, nil
 }
 
 // Run serves until ctx ends, printing the address once it listens.
@@ -54,10 +67,10 @@ func Run(ctx context.Context, out io.Writer) error {
 }
 
 // Address says where a running server is: its host:port and token. ok is false
-// when nothing that holds our token answers on the remembered port.
+// when nothing on the remembered port proves it holds our token. The probe
+// never sends the token: whatever listens there may be another program.
 func Address() (addr, token string, ok bool) {
-	dir := tools.StateDir(tool)
-	port, err := os.ReadFile(filepath.Join(dir, "port"))
+	port, err := os.ReadFile(filepath.Join(tools.StateDir(tool), "port"))
 	if err != nil {
 		return "", "", false
 	}
@@ -69,44 +82,87 @@ func Address() (addr, token string, ok bool) {
 		return "", "", false
 	}
 	addr, token = "127.0.0.1:"+strings.TrimSpace(string(port)), strings.TrimSpace(string(tok))
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/api/health", http.NoBody)
+	n := make([]byte, 32)
+	if _, err := rand.Read(n); err != nil {
+		return "", "", false
+	}
+	nonce := hex.EncodeToString(n)
+	client := &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get("http://" + addr + "/" + healthDir + "/" + nonce)
 	if err != nil {
 		return "", "", false
 	}
-	req.Header.Set(localweb.TokenHeader, token)
-	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
-	if err != nil {
+	defer func() { _ = resp.Body.Close() }()
+	proof, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil || resp.StatusCode != http.StatusOK {
 		return "", "", false
 	}
-	_ = resp.Body.Close()
-	return addr, token, resp.StatusCode == http.StatusOK
+	return addr, token, hmac.Equal(proof, []byte(healthProof(token, nonce)))
 }
+
+// healthDir is where the server answers health challenges. It is an asset path
+// because localweb asks for the token on everything under /api/.
+const healthDir = "health"
+
+// healthProof shows the token is held without revealing it.
+func healthProof(token, nonce string) string {
+	m := hmac.New(sha256.New, []byte(token))
+	m.Write([]byte(nonce))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// healthFS is the page's assets, plus health/<nonce>, a file whose content is
+// the proof for that nonce. A nonce is 64 hex characters.
+type healthFS struct {
+	fs.FS
+	token string
+}
+
+func (h healthFS) Open(name string) (fs.File, error) {
+	nonce, ok := strings.CutPrefix(name, healthDir+"/")
+	if !ok {
+		return h.FS.Open(name)
+	}
+	if b, err := hex.DecodeString(nonce); err != nil || len(b) != 32 {
+		return nil, fs.ErrNotExist
+	}
+	proof := healthProof(h.token, nonce)
+	return proofFile{Reader: strings.NewReader(proof), size: int64(len(proof))}, nil
+}
+
+// proofFile is an in-memory file, seekable as http.FileServer needs.
+type proofFile struct {
+	*strings.Reader
+	size int64
+}
+
+func (f proofFile) Close() error               { return nil }
+func (f proofFile) Stat() (fs.FileInfo, error) { return f, nil }
+func (f proofFile) Name() string               { return "proof" }
+func (f proofFile) Size() int64                { return f.size }
+func (f proofFile) Mode() fs.FileMode          { return 0o444 }
+func (f proofFile) ModTime() time.Time         { return time.Time{} }
+func (f proofFile) IsDir() bool                { return false }
+func (f proofFile) Sys() any                   { return nil }
 
 // TermURL is the address to open for a session's terminal page, with the token.
 func TermURL(addr, token, socket, session string) string {
 	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}}.Encode()
 }
 
-// TermMatch is the part of the URL the browser shows for session's terminal
-// page after the token exchange, which rewrites the query in sorted order.
-func TermMatch(session string) string {
-	return "/term?" + url.Values{"session": {session}}.Encode() + "&"
+// TermMatches says whether pageURL is the terminal page of session on socket:
+// a loopback /term page with exactly those two values. The port is left out,
+// since a restarted server may land on another.
+func TermMatches(pageURL, socket, session string) bool {
+	u, err := url.Parse(pageURL)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Path != "/term" {
+		return false
+	}
+	q := u.Query()
+	return q.Get("socket") == socket && q.Get("session") == session
 }
 
 func tokenPath() string { return filepath.Join(tools.StateDir(tool), "pages-token") }
-
-func loadToken() (string, error) {
-	b, err := os.ReadFile(tokenPath())
-	if err == nil {
-		return strings.TrimSpace(string(b)), nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	tok := make([]byte, 32)
-	if _, err := rand.Read(tok); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(tok)
-	return token, tools.WriteFileAtomic(tokenPath(), []byte(token+"\n"), 0o600)
-}

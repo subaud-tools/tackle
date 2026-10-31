@@ -27,22 +27,23 @@ const (
 	pagesSession = "pages"
 )
 
-// chromeHasWindowScript prints "yes" when Chrome is running and its window
-// argv[1] holds a tab whose URL contains argv[2]. The URL check matters
-// because Chrome reuses window ids after a restart; a window that only has the
-// old id is not the session's.
+// chromeHasWindowScript prints the URL of each tab of window argv[1], one a
+// line, and nothing when Chrome is not running or has no such window. Chrome
+// reuses window ids after a restart, so an id alone does not make a window the
+// session's; the caller looks for the session's terminal page among the URLs.
 const chromeHasWindowScript = `on run argv
 if application "Google Chrome" is not running then return ""
+set out to ""
 tell application "Google Chrome"
 repeat with w in windows
 if (id of w as text) is (item 1 of argv) then
 repeat with t in tabs of w
-if (URL of t) contains (item 2 of argv) then return "yes"
+set out to out & (URL of t) & linefeed
 end repeat
 end if
 end repeat
 end tell
-return ""
+return out
 end run`
 
 // chromeOpenScript opens a new window on the URL argv[1] and prints its id.
@@ -54,30 +55,37 @@ return id of w as text
 end tell
 end run`
 
-// chromeSplitScript brings window argv[1] to the front, clicks Tab > Add Tab to
-// New Split View, and waits for the new tab, since a disabled or absent item
-// raises no error of its own.
+// chromeSplitScript brings window argv[1] to the front, confirms it got there,
+// clicks Tab > Add Tab to New Split View, and waits for that window to gain a
+// tab: a disabled or absent item raises no error of its own, and the click
+// acts on whichever window is in front, so another window's tabs prove nothing.
 const chromeSplitScript = `on run argv
+set target to item 1 of argv
 tell application "Google Chrome"
 activate
 repeat with w in windows
-if (id of w as text) is (item 1 of argv) then
+if (id of w as text) is target then
 set index of w to 1
 exit repeat
 end if
 end repeat
 end tell
 delay 0.3
+tell application "Google Chrome"
+if (id of front window as text) is not (item 1 of argv) then error "window " & target & " is not the front window"
+end tell
 tell application "System Events" to tell process "Google Chrome"
 click menu item "Add Tab to New Split View" of menu "Tab" of menu bar 1
 end tell
 tell application "Google Chrome"
 repeat 20 times
-if (count of tabs of front window) > 1 then return
+repeat with w in windows
+if (id of w as text) is target and (count of tabs of w) > 1 then return
+end repeat
 delay 0.1
 end repeat
 end tell
-error "Tab > Add Tab to New Split View made no new tab"
+error "Tab > Add Tab to New Split View made no new tab in window " & target
 end run`
 
 // chromeSetRightScript points window argv[1]'s active tab, the split's new
@@ -143,11 +151,11 @@ func Window(socket, pane, right string) (WindowResult, error) {
 		return WindowResult{}, errors.New("the session has ended")
 	}
 	if id := Query(socket, pane, "#{"+windowOption+"}"); id != "" {
-		out, err := osascript(chromeHasWindowScript, id, pages.TermMatch(name))
+		out, err := osascript(chromeHasWindowScript, id)
 		if err != nil {
 			return WindowResult{}, stepError("find the window", err)
 		}
-		if strings.TrimSpace(out) == "yes" {
+		if showsSession(out, socket, name) {
 			if _, err := osascript(chromeRaiseScript, id); err != nil {
 				return WindowResult{}, stepError("raise the window", err)
 			}
@@ -182,6 +190,17 @@ func Window(socket, pane, right string) (WindowResult, error) {
 		return WindowResult{}, stepError("raise the window", err)
 	}
 	return WindowResult{Window: "opened", ID: id}, nil
+}
+
+// showsSession says whether any of the URLs, one a line, is the session's
+// terminal page.
+func showsSession(urls, socket, name string) bool {
+	for _, u := range splitLines(strings.TrimSpace(urls)) {
+		if pages.TermMatches(strings.TrimSpace(u), socket, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // stepError names the step that failed and carries Chrome's or macOS's message,

@@ -29,7 +29,6 @@ func newBridge() *bridge { return &bridge{synced: map[string]bool{}} }
 
 func (b *bridge) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /api/term/ws", b.serveTerm)
 	return mux
 }
