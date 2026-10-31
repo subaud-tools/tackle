@@ -6,6 +6,14 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.16.0] - 2026-10-31
+
+### Added
+- `proj terminal --json` says `"chrome": true` when a session's Chrome window still holds its terminal page.
+
+### Changed
+- `proj window --right <url>` on a session whose window already exists now shows the URL there instead of only raising the window. It selects a tab already showing the URL, or points the tab beside the terminal at it. If the terminal is alone in its window, the split is made again.
+
 ## [proj 0.15.0] - 2026-10-30
 
 ### Added

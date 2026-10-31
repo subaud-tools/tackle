@@ -9,10 +9,12 @@ import (
 // TerminalState is what `proj terminal --json` prints, and what diazo decodes:
 // State is "attached" (a client shows the session), "detached" (the session
 // runs with no client) or "ended" (the socket or pane is gone; Session is
-// then empty).
+// then empty). Chrome is true when the session's stored Chrome window still
+// holds its terminal page.
 type TerminalState struct {
 	State   string `json:"state"`
 	Session string `json:"session"`
+	Chrome  bool   `json:"chrome,omitempty"`
 }
 
 // focusTTYScript focuses the Ghostty terminal whose tty is argv[1], which
@@ -36,6 +38,7 @@ end run`
 // at socket (a path or a server name).
 func Terminal(socket, pane string) TerminalState {
 	st, _ := terminalState(socket, pane)
+	st.Chrome = st.State != "ended" && windowShows(socket, pane, st.Session)
 	return st
 }
 

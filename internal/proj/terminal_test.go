@@ -97,6 +97,32 @@ func TestTerminalAttached(t *testing.T) {
 	}
 }
 
+func TestTerminalChromeOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	for tabs, want := range map[string]bool{
+		term + "https://example.com/\n": true,
+		"":                              false,
+		strings.ReplaceAll(term, "terminal-test", "someone-else"): false,
+	} {
+		fakeChrome(t, tabs, nil)
+		if got := Terminal(socket, pane); got.Chrome != want {
+			t.Errorf("tabs %q: chrome = %v, want %v", tabs, got.Chrome, want)
+		}
+	}
+}
+
+func TestTerminalChromeAsksChromeNothingWithoutAStoredWindow(t *testing.T) {
+	socket, _, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	if got := Terminal(socket, pane); got.Chrome {
+		t.Fatalf("Terminal = %+v", got)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("ran %q", scripts(*calls))
+	}
+}
+
 func TestTerminalGoEnded(t *testing.T) {
 	requireTmux(t)
 	calls := fakeGhostty(t, true)
