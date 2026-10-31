@@ -51,7 +51,7 @@ func TestGhosttyOpenScript(t *testing.T) {
 	}
 	// Ghostty runs the command in a bare `bash --noprofile --norc`, so tmux
 	// must be named by absolute path: Homebrew's bin is not on that PATH.
-	if got[0].args[0] != "'/opt/homebrew/bin/tmux' -L 'proj-a' attach -t '=a/1'" {
+	if got[0].args[0] != "'/opt/homebrew/bin/tmux' -L 'proj-a' attach -d -t '=a/1'" {
 		t.Fatalf("attach command = %q", got[0].args[0])
 	}
 	if got[1].args[1] != "win-1" {

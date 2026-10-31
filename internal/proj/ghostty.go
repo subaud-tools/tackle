@@ -13,8 +13,10 @@ var osascript = func(script string, args ...string) (string, error) {
 	for _, line := range strings.Split(script, "\n") {
 		argv = append(argv, "-e", line)
 	}
-	out, err := exec.Command("osascript", append(argv, args...)...).Output()
-	return string(out), err
+	return retryNotRunning(func() (string, error) {
+		out, err := exec.Command("osascript", append(argv, args...)...).Output()
+		return string(out), err
+	})
 }
 
 // GhosttyTerminal identifies a native surface without depending on its title.

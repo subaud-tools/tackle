@@ -30,7 +30,8 @@ func newWindowFlags() (*flag.FlagSet, *windowFlags) {
 	return fs, f
 }
 
-const windowHelp = "Brings the session's Chrome window to the front, or opens a new one with the session's " +
+const windowHelp = "Moves the session to its Chrome window, detaching any other terminal, and brings the window " +
+	"to the front, or opens a new one with the session's " +
 	"terminal on the left of a split and --right (or an empty tab) on the right, and prints " +
 	"{window,id}: window is opened or raised. On a raised window, --right selects a tab already " +
 	"showing it, else goes in the window's right-half tab, else in a new tab. A failure names the step and exits 1; the split " +

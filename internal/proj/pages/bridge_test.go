@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/creack/pty"
 	"github.com/subaud-tools/tools-common/localweb"
 )
 
@@ -193,4 +195,85 @@ func TestAttachTellsTmuxThePageSupportsSync(t *testing.T) {
 	if got := tmuxOut(t, socket, "show", "-s", "terminal-features"); !strings.Contains(got, "xterm-256color:Sync") {
 		t.Fatalf("terminal-features = %q", got)
 	}
+}
+
+// ghosttyClient attaches a client as a Ghostty surface does: in its own pty,
+// not through the page server. It returns the client's tmux pid.
+func ghosttyClient(t *testing.T, socket string) string {
+	t.Helper()
+	cmd := tmuxCmd(socket, "-u", "attach", "-t", "="+testSession)
+	cmd.Env = attachEnv()
+	tty, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = tty.Close()
+	})
+	waitFor(t, "the Ghostty client", func() bool { return tmuxOut(t, socket, "list-clients") != "" })
+	return strconv.Itoa(cmd.Process.Pid)
+}
+
+func clientPIDs(t *testing.T, socket string) string {
+	t.Helper()
+	return strings.TrimSpace(tmuxOut(t, socket, "list-clients", "-F", "#{client_pid}"))
+}
+
+// closeCode dials and reads until the server closes the socket, returning the
+// close code; after, if set, runs once the page's client is attached.
+func closeCode(t *testing.T, srv *localweb.Server, socket string, after func()) websocket.StatusCode {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, wsURL(srv, socket, testSession), withToken(srv)) //nolint:bodyclose // a 101 has no body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.CloseNow() }()
+	waitFor(t, "the page's client", func() bool { return tmuxOut(t, socket, "list-clients") != "" })
+	after()
+	for {
+		if _, _, err := c.Read(ctx); err != nil {
+			return websocket.CloseStatus(err)
+		}
+	}
+}
+
+func TestPageConnectionLeavesOnlyItsOwnClient(t *testing.T) {
+	socket := tmuxServer(t)
+	ghostty := ghosttyClient(t, socket)
+	dial(t, startServer(t), socket)
+	waitFor(t, "the Ghostty client to go", func() bool {
+		pids := clientPIDs(t, socket)
+		return pids != "" && pids != ghostty && !strings.Contains(pids, "\n")
+	})
+}
+
+func TestSecondPageConnectionClosesTheFirstAsDetached(t *testing.T) {
+	socket := tmuxServer(t)
+	srv := startServer(t)
+	code := closeCode(t, srv, socket, func() { dial(t, srv, socket) })
+	if code != closeDetached {
+		t.Fatalf("close code = %d, want %d", code, closeDetached)
+	}
+}
+
+func TestSessionEndingIsNotADetach(t *testing.T) {
+	socket := tmuxServer(t)
+	code := closeCode(t, startServer(t), socket, func() { tmuxOut(t, socket, "kill-session", "-t", "="+testSession) })
+	if code != websocket.StatusNormalClosure {
+		t.Fatalf("close code = %d, want a normal closure", code)
+	}
+}
+
+// proj reads this option to tell the page's client from a Ghostty one.
+func TestPageRecordsItsClient(t *testing.T) {
+	socket := tmuxServer(t)
+	dial(t, startServer(t), socket)
+	waitFor(t, "the page's client recorded", func() bool {
+		got := strings.TrimSpace(tmuxOut(t, socket, "show-options", "-v", "-t", "="+testSession+":", "-q", ClientOption))
+		return got != "" && got == clientPIDs(t, socket)
+	})
 }

@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
+import { closedView } from './closed.ts';
 import { handleKey } from './keys.ts';
 
 const fontFamily =
@@ -89,8 +90,20 @@ async function main(): Promise<void> {
   ws.onopen = sendSize;
   ws.onmessage = (ev) => term.write(new Uint8Array(ev.data as ArrayBuffer));
   ws.onclose = (ev) => {
-    const why = ev.reason || 'connection lost';
-    term.write(`\r\n[${why}: reload to reconnect]\r\n`);
+    const view = closedView(ev.code, ev.reason);
+    if (!view.useHere) {
+      term.write(`\r\n[${view.text}]\r\n`);
+      return;
+    }
+    // Loading the page again attaches, which detaches the other terminal.
+    const button = document.createElement('button');
+    button.textContent = 'Use here';
+    button.onclick = () => location.reload();
+    const note = document.createElement('div');
+    note.id = 'detached';
+    note.append(view.text, button);
+    document.body.append(note);
+    button.focus();
   };
 }
 

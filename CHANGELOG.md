@@ -15,6 +15,16 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 
 ### Added
 - Release-owned setup bundle with the canonical zsh wrapper and one portable `.zshrc` include, built by `proj setup-bundle` without starting proj or configuring the machine.
+- A Chrome terminal page that another terminal took over says "Shown in another terminal" and offers Use here, which attaches it there again.
+
+### Changed
+- A session shows in one terminal at a time, so neither view is left with dots or cut off. The Chrome terminal page attaches with `-d`, and so does every Ghostty window proj opens, restored ones included.
+- `proj terminal --go` always goes to Ghostty and no longer raises the Chrome window. It focuses a Ghostty terminal showing the session and detaches the session's other clients, or opens a new Ghostty window. Other sessions' clients are never touched.
+- `proj window` on a window whose terminal page was detached loads the page again, which moves the session back to Chrome.
+- `proj terminal --json` says `"chrome": true` only while the Chrome page is the client showing the session, not just while its window holds the page.
+
+### Fixed
+- An AppleScript call that fails with "Application isn't running" (-600) is retried once after 300 ms.
 
 ## [proj 0.16.0] - 2026-10-31
 

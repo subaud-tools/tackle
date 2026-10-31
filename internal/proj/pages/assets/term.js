@@ -13770,6 +13770,18 @@ var Dl = class extends D2 {
   }
 };
 
+// closed.ts
+var closeDetached = 4409;
+function closedView(code, reason) {
+  if (code === closeDetached) {
+    return { useHere: true, text: "Shown in another terminal" };
+  }
+  return {
+    useHere: false,
+    text: `${reason || "connection lost"}: reload to reconnect`
+  };
+}
+
 // keys.ts
 function handleKey(ev, send) {
   if (ev.key !== "Enter" || !ev.shiftKey && !ev.ctrlKey) return true;
@@ -13852,10 +13864,21 @@ async function main() {
   ws3.onopen = sendSize;
   ws3.onmessage = (ev) => term.write(new Uint8Array(ev.data));
   ws3.onclose = (ev) => {
-    const why = ev.reason || "connection lost";
-    term.write(`\r
-[${why}: reload to reconnect]\r
+    const view = closedView(ev.code, ev.reason);
+    if (!view.useHere) {
+      term.write(`\r
+[${view.text}]\r
 `);
+      return;
+    }
+    const button = document.createElement("button");
+    button.textContent = "Use here";
+    button.onclick = () => location.reload();
+    const note = document.createElement("div");
+    note.id = "detached";
+    note.append(view.text, button);
+    document.body.append(note);
+    button.focus();
   };
 }
 void main();

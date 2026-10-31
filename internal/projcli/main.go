@@ -79,7 +79,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		Name:     "terminal",
 		Summary:  "show or open the Ghostty terminal of a session (--json)",
 		Synopsis: "terminal --socket <path> --pane <%id> [--go] --json",
-		Help:     "Prints the state of the tmux session that owns --pane on the server at --socket (a path, as in $TMUX) as {state,session}: attached, detached or ended. With --go it focuses the Ghostty terminal attached to the session, or opens a new Ghostty window attached to it, selects the pane, and prints the state after; --go on an ended session exits 1.",
+		Help:     "Prints the state of the tmux session that owns --pane on the server at --socket (a path, as in $TMUX) as {state,session}: attached, detached or ended. With --go it moves the session to Ghostty: it focuses a Ghostty terminal attached to the session and detaches the session's other clients, or opens a new Ghostty window attached with -d, then selects the pane and prints the state after; --go on an ended session exits 1.",
 		NewFlags: func() *flag.FlagSet { fs, _ := newTerminalFlags(); return fs },
 		Run:      cmdTerminal,
 	})
@@ -172,9 +172,9 @@ func newTerminalFlags() (*flag.FlagSet, *terminalFlags) {
 	}
 	tools.SetUsage(fs, "proj terminal --socket <path> --pane <%id> [--go] --json",
 		"Prints the state of the session that owns the pane as {state,session}: attached, "+
-			"detached or ended. With --go it focuses the Ghostty terminal attached to it, or "+
-			"opens a new Ghostty window attached to it, selects the pane and prints the state "+
-			"after; --go on an ended session exits 1.")
+			"detached or ended. With --go it moves the session to Ghostty: it focuses a Ghostty "+
+			"terminal attached to it and detaches the session's other clients, or opens a new "+
+			"Ghostty window attached with -d, then selects the pane and prints the state after; --go on an ended session exits 1.")
 	return fs, f
 }
 
