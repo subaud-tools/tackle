@@ -13781,6 +13781,16 @@ function closedView(code, reason) {
     text: `${reason || "connection lost"}: reload to reconnect`
   };
 }
+function takeFrom(search) {
+  const q2 = new URLSearchParams(search);
+  q2.delete("take");
+  return { socket: search, page: `?${q2.toString()}` };
+}
+function withTake(search) {
+  const q2 = new URLSearchParams(search);
+  q2.set("take", "1");
+  return `?${q2.toString()}`;
+}
 
 // keys.ts
 function handleKey(ev, send) {
@@ -13815,8 +13825,10 @@ async function main() {
   }
   fit.fit();
   term.focus();
+  const address = takeFrom(location.search);
+  history.replaceState(null, "", location.pathname + address.page);
   const ws3 = new WebSocket(
-    `ws://${location.host}/api/term/ws${location.search}`
+    `ws://${location.host}/api/term/ws${address.socket}`
   );
   ws3.binaryType = "arraybuffer";
   const send = (data) => {
@@ -13873,7 +13885,7 @@ async function main() {
     }
     const button = document.createElement("button");
     button.textContent = "Use here";
-    button.onclick = () => location.reload();
+    button.onclick = () => location.replace(withTake(location.search));
     const note = document.createElement("div");
     note.id = "detached";
     note.append(view.text, button);

@@ -327,61 +327,100 @@ func TestSplitScriptActsOnlyOnTheTargetWindow(t *testing.T) {
 	}
 }
 
-// osascriptOnPath puts a stand-in for osascript on PATH that prints stderr and
-// exits 1 on each call until n calls have failed, and returns the file counting
-// its calls.
-func osascriptOnPath(t *testing.T, n int, stderr string) string {
+// osascriptOnPath puts a stand-in for osascript on PATH that logs each call as
+// ping or real, and answers -600 to the first failPing pings and failReal real
+// scripts. It returns the log's path.
+func osascriptOnPath(t *testing.T, failPing, failReal int) string {
 	t.Helper()
 	dir := t.TempDir()
-	count := filepath.Join(dir, "count")
-	body := "#!/bin/sh\necho x >> '" + count + "'\n" +
-		"[ \"$(wc -l < '" + count + "')\" -le " + strconv.Itoa(n) + " ] && { echo '" + stderr + "' >&2; exit 1; }\necho ok\n"
+	log := filepath.Join(dir, "log")
+	body := "#!/bin/sh\n" +
+		"case \"$*\" in *\"count windows\"*) kind=ping; limit=" + strconv.Itoa(failPing) + ";; *) kind=real; limit=" + strconv.Itoa(failReal) + ";; esac\n" +
+		"echo $kind >> '" + log + "'\n" +
+		"[ \"$(grep -c \"^$kind$\" '" + log + "')\" -le $limit ] && { echo 'execution error: Application isn\u2019t running. (-600)' >&2; exit 1; }\n" +
+		"echo ok\n"
 	if err := os.WriteFile(filepath.Join(dir, "osascript"), []byte(body), 0o755); err != nil { //nolint:gosec // G306: the stand-in must run
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return count
+	return log
 }
 
-func callCount(t *testing.T, count string) int {
+func osascriptLog(t *testing.T, log string) string {
 	t.Helper()
-	b, err := os.ReadFile(count) //nolint:gosec // G304: the test's own temp file
+	b, err := os.ReadFile(log) //nolint:gosec // G304: the test's own temp file
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Count(string(b), "\n")
+	return strings.Join(strings.Fields(string(b)), " ")
 }
 
-const notRunning = "execution error: Application isn\u2019t running. (-600)"
-
-func TestOsascriptRetriesOnceWhenTheAppIsNotRunning(t *testing.T) {
-	count := osascriptOnPath(t, 1, notRunning)
-	out, err := osascript("return 1")
-	if err != nil || strings.TrimSpace(out) != "ok" {
+func TestPingFailingOnceStillRunsTheScriptOnce(t *testing.T) {
+	log := osascriptOnPath(t, 1, 0)
+	if out, err := osascript(chromeOpenScript, "http://x/"); err != nil || strings.TrimSpace(out) != "ok" {
 		t.Fatalf("out %q, err %v", out, err)
 	}
-	if got := callCount(t, count); got != 2 {
-		t.Fatalf("calls = %d, want 2", got)
+	if got := osascriptLog(t, log); got != "ping ping real" {
+		t.Fatalf("calls = %q", got)
 	}
 }
 
-func TestOsascriptReturnsTheErrorWhenTheRetryFailsToo(t *testing.T) {
-	count := osascriptOnPath(t, 2, notRunning)
-	_, err := osascript("return 1")
-	if err == nil || !strings.Contains(failureText(err), "-600") {
+func TestPingFailingTwiceRunsNoScript(t *testing.T) {
+	log := osascriptOnPath(t, 2, 0)
+	if _, err := osascript(chromeOpenScript, "http://x/"); err == nil || !strings.Contains(failureText(err), "-600") {
 		t.Fatalf("err = %v", err)
 	}
-	if got := callCount(t, count); got != 2 {
-		t.Fatalf("calls = %d, want 2", got)
+	if got := osascriptLog(t, log); got != "ping ping" {
+		t.Fatalf("calls = %q", got)
 	}
 }
 
-func TestOsascriptDoesNotRetryOtherErrors(t *testing.T) {
-	count := osascriptOnPath(t, 2, "execution error: nope (-1728)")
-	if _, err := osascript("return 1"); err == nil {
-		t.Fatal("want the error")
+// A script that failed may have done its work: a second window, a second tab.
+func TestAScriptFailingWith600IsNotRunAgain(t *testing.T) {
+	for name, script := range map[string]string{"Chrome": chromeOpenScript, "Ghostty": newWindowScript} {
+		t.Run(name, func(t *testing.T) {
+			log := osascriptOnPath(t, 0, 1)
+			if _, err := osascript(script, "x"); err == nil {
+				t.Fatal("want the error")
+			}
+			if got := osascriptLog(t, log); got != "ping real" {
+				t.Fatalf("calls = %q", got)
+			}
+		})
 	}
-	if got := callCount(t, count); got != 1 {
-		t.Fatalf("calls = %d, want 1", got)
+}
+
+// Reading a session's state must not launch an app that isn't running.
+func TestPingsLaunchNothing(t *testing.T) {
+	for _, script := range []string{chromeHasWindowScript, focusTTYScript} {
+		if ping := pingFor(script); !strings.HasPrefix(ping, "if application ") || !strings.Contains(ping, " is running then") {
+			t.Errorf("ping = %q", ping)
+		}
+	}
+}
+
+// diazo_open places the plan's page without taking the session from Ghostty.
+func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, term, nil)
+	got, err := WindowKeepingView(socket, pane, "http://right.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (WindowResult{Window: "raised", ID: "55"}) {
+		t.Fatalf("got %+v", got)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeNewTabScript, chromeRaiseScript)
+}
+
+func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	if _, err := Window(socket, pane, ""); err != nil {
+		t.Fatal(err)
+	}
+	if a := (*calls)[0].args[0]; !strings.Contains(a, "take=1") || !pages.TermMatches(a, socket, name) {
+		t.Fatalf("opened %q", a)
 	}
 }

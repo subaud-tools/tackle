@@ -5,7 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
-import { closedView } from './closed.ts';
+import { closedView, takeFrom, withTake } from './closed.ts';
 import { handleKey } from './keys.ts';
 
 const fontFamily =
@@ -38,8 +38,10 @@ async function main(): Promise<void> {
   fit.fit();
   term.focus();
 
+  const address = takeFrom(location.search);
+  history.replaceState(null, '', location.pathname + address.page);
   const ws = new WebSocket(
-    `ws://${location.host}/api/term/ws${location.search}`,
+    `ws://${location.host}/api/term/ws${address.socket}`,
   );
   ws.binaryType = 'arraybuffer';
   const send = (data: string): void => {
@@ -95,10 +97,9 @@ async function main(): Promise<void> {
       term.write(`\r\n[${view.text}]\r\n`);
       return;
     }
-    // Loading the page again attaches, which detaches the other terminal.
     const button = document.createElement('button');
     button.textContent = 'Use here';
-    button.onclick = () => location.reload();
+    button.onclick = () => location.replace(withTake(location.search));
     const note = document.createElement('div');
     note.id = 'detached';
     note.append(view.text, button);

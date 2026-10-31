@@ -82,9 +82,20 @@ func withToken(srv *localweb.Server) *websocket.DialOptions {
 
 func dial(t *testing.T, srv *localweb.Server, socket string) *websocket.Conn {
 	t.Helper()
+	return dialURL(t, srv, wsURL(srv, socket, testSession))
+}
+
+// dialTaking connects as proj window or Use here does.
+func dialTaking(t *testing.T, srv *localweb.Server, socket string) *websocket.Conn {
+	t.Helper()
+	return dialURL(t, srv, wsURL(srv, socket, testSession)+"&take=1")
+}
+
+func dialURL(t *testing.T, srv *localweb.Server, u string) *websocket.Conn {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL(srv, socket, testSession), withToken(srv)) //nolint:bodyclose // a 101 has no body; the conn is closed on cleanup
+	c, _, err := websocket.Dial(ctx, u, withToken(srv)) //nolint:bodyclose // a 101 has no body; the conn is closed on cleanup
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -244,17 +255,45 @@ func closeCode(t *testing.T, srv *localweb.Server, socket string, after func()) 
 func TestPageConnectionLeavesOnlyItsOwnClient(t *testing.T) {
 	socket := tmuxServer(t)
 	ghostty := ghosttyClient(t, socket)
-	dial(t, startServer(t), socket)
+	dialTaking(t, startServer(t), socket)
 	waitFor(t, "the Ghostty client to go", func() bool {
 		pids := clientPIDs(t, socket)
 		return pids != "" && pids != ghostty && !strings.Contains(pids, "\n")
 	})
 }
 
+// A restored or reloaded tab connects without take: it must leave Ghostty's view
+// alone and say the session is shown elsewhere.
+func TestPageWithoutTakeDoesNotAttachOverAnotherClient(t *testing.T) {
+	socket := tmuxServer(t)
+	ghostty := ghosttyClient(t, socket)
+	srv := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, wsURL(srv, socket, testSession), withToken(srv)) //nolint:bodyclose // a 101 has no body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.CloseNow() }()
+	_, _, err = c.Read(ctx)
+	if code := websocket.CloseStatus(err); code != closeDetached {
+		t.Fatalf("read = %v, want close code %d", err, closeDetached)
+	}
+	if got := clientPIDs(t, socket); got != ghostty {
+		t.Fatalf("clients = %q, want only %s", got, ghostty)
+	}
+}
+
+func TestPageWithoutTakeAttachesWhenNothingShowsTheSession(t *testing.T) {
+	socket := tmuxServer(t)
+	dial(t, startServer(t), socket)
+	waitFor(t, "the client to attach", func() bool { return clientPIDs(t, socket) != "" })
+}
+
 func TestSecondPageConnectionClosesTheFirstAsDetached(t *testing.T) {
 	socket := tmuxServer(t)
 	srv := startServer(t)
-	code := closeCode(t, srv, socket, func() { dial(t, srv, socket) })
+	code := closeCode(t, srv, socket, func() { dialTaking(t, srv, socket) })
 	if code != closeDetached {
 		t.Fatalf("close code = %d, want %d", code, closeDetached)
 	}

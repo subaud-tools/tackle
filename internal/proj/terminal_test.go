@@ -132,7 +132,7 @@ func TestTerminalAttached(t *testing.T) {
 	}
 }
 
-func TestTerminalChromeOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
+func TestTerminalWindowOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	term := storedWindow(t, socket, name)
 	pageShows(t, socket, name)
@@ -142,26 +142,32 @@ func TestTerminalChromeOnlyWhenTheStoredWindowHoldsThisSession(t *testing.T) {
 		strings.ReplaceAll(term, "terminal-test", "someone-else"): false,
 	} {
 		fakeChrome(t, tabs, nil)
-		if got := Terminal(socket, pane); got.Chrome != want {
-			t.Errorf("tabs %q: chrome = %v, want %v", tabs, got.Chrome, want)
+		if got := Terminal(socket, pane); got.Window != want || got.Chrome != want {
+			t.Errorf("tabs %q: %+v, want window and chrome %v", tabs, got, want)
 		}
 	}
 }
 
 // The window still holds the page, but the page was detached: Ghostty shows it.
-func TestTerminalChromeIsFalseWhenAnotherClientShowsTheSession(t *testing.T) {
+func TestTerminalWindowWithoutChromeWhenAnotherClientShowsTheSession(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	term := storedWindow(t, socket, name)
 	pageShows(t, socket, name)
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_client", "8"); err != nil {
 		t.Fatal(err)
 	}
-	calls := fakeChrome(t, term, nil)
-	if got := Terminal(socket, pane); got.Chrome {
+	fakeChrome(t, term, nil)
+	if got := Terminal(socket, pane); !got.Window || got.Chrome {
 		t.Fatalf("Terminal = %+v", got)
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("ran %q", scripts(*calls))
+}
+
+func TestTerminalWindowWithNoClientAtAll(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	fakeChrome(t, storedWindow(t, socket, name), nil)
+	got := Terminal(socket, pane)
+	if got != (TerminalState{State: "detached", Session: name, Window: true}) {
+		t.Fatalf("Terminal = %+v", got)
 	}
 }
 
@@ -233,7 +239,8 @@ func TestTerminalGoOpensGhosttyWhenOnlyChromeShowsIt(t *testing.T) {
 	if got != (TerminalState{State: "attached", Session: name}) {
 		t.Fatalf("state = %+v", got)
 	}
-	if len(*calls) != 2 || (*calls)[0].script != focusTTYScript || (*calls)[1].script != newWindowScript {
+	// The last is the read of the state after; nothing raises Chrome.
+	if len(*calls) != 3 || (*calls)[0].script != focusTTYScript || (*calls)[1].script != newWindowScript || (*calls)[2].script != chromeHasWindowScript {
 		t.Fatalf("scripts = %+v", *calls)
 	}
 	if want := "attach -d -t '=" + name + "'"; !strings.Contains((*calls)[1].args[0], want) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { closedView } from './closed.ts';
+import { closedView, takeFrom, withTake } from './closed.ts';
 
 test('a client detached by another terminal offers Use here', () => {
   assert.deepEqual(closedView(4409, 'detached'), {
@@ -18,4 +18,22 @@ test('any other close says why and to reload, with no Use here', () => {
     useHere: false,
     text: 'connection lost: reload to reconnect',
   });
+});
+
+test('take goes to the socket but comes off the page address', () => {
+  assert.deepEqual(takeFrom('?session=s&socket=a&take=1'), {
+    socket: '?session=s&socket=a&take=1',
+    page: '?session=s&socket=a',
+  });
+});
+
+test('an address without take connects without it', () => {
+  assert.deepEqual(takeFrom('?session=s&socket=a'), {
+    socket: '?session=s&socket=a',
+    page: '?session=s&socket=a',
+  });
+});
+
+test('Use here adds take to the address', () => {
+  assert.equal(withTake('?session=s&socket=a'), '?session=s&socket=a&take=1');
 });

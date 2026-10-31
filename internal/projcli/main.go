@@ -79,14 +79,14 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		Name:     "terminal",
 		Summary:  "show or open the Ghostty terminal of a session (--json)",
 		Synopsis: "terminal --socket <path> --pane <%id> [--go] --json",
-		Help:     "Prints the state of the tmux session that owns --pane on the server at --socket (a path, as in $TMUX) as {state,session}: attached, detached or ended. With --go it moves the session to Ghostty: it focuses a Ghostty terminal attached to the session and detaches the session's other clients, or opens a new Ghostty window attached with -d, then selects the pane and prints the state after; --go on an ended session exits 1.",
+		Help:     "Prints the state of the tmux session that owns --pane on the server at --socket (a path, as in $TMUX) as {state,session,window,chrome}: state is attached, detached or ended; window says its Chrome window holds its terminal page; chrome says that page shows it. With --go it moves the session to Ghostty: it focuses a Ghostty terminal attached to the session and detaches the session's other clients, or opens a new Ghostty window attached with -d, then selects the pane and prints the state after; --go on an ended session exits 1.",
 		NewFlags: func() *flag.FlagSet { fs, _ := newTerminalFlags(); return fs },
 		Run:      cmdTerminal,
 	})
 	app.Register(tools.Command{
 		Name:     "window",
 		Summary:  "open or raise a session's Chrome window (--json)",
-		Synopsis: "window --socket <path> --pane <%id> [--right <url>] [--json]",
+		Synopsis: "window --socket <path> --pane <%id> [--right <url>] [--keep-view] [--json]",
 		Help:     windowHelp,
 		NewFlags: func() *flag.FlagSet { fs, _ := newWindowFlags(); return fs },
 		Run:      cmdWindow,

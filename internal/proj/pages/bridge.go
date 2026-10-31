@@ -17,7 +17,7 @@ import (
 // closeNoSession is the close code when the session does not exist.
 const closeNoSession websocket.StatusCode = 4404
 
-// closeDetached is the close code when another terminal took the session.
+// closeDetached is the close code when another terminal has the session.
 const closeDetached websocket.StatusCode = 4409
 
 // ClientOption is the tmux session option holding the pid of the page's latest
@@ -61,9 +61,18 @@ func (b *bridge) serveTerm(w http.ResponseWriter, r *http.Request) {
 		_ = c.Close(closeNoSession, "no session "+session)
 		return
 	}
+	// Only take=1 takes the session: a page Chrome restored or reloaded must leave
+	// another terminal's view alone.
+	attach := []string{"-u", "attach", "-t", target}
+	if r.URL.Query().Get("take") == "1" {
+		attach = []string{"-u", "attach", "-d", "-t", target}
+	} else if out, err := tmuxCmd(socket, "list-clients", "-t", target).Output(); err == nil && len(out) > 0 {
+		_ = c.Close(closeDetached, "shown elsewhere")
+		return
+	}
 	b.syncOnce(socket)
 
-	cmd := tmuxCmd(socket, "-u", "attach", "-d", "-t", target)
+	cmd := tmuxCmd(socket, attach...)
 	cmd.Env = attachEnv()
 	tty, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
 	if err != nil {

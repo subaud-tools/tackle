@@ -6,17 +6,26 @@ import (
 	"strings"
 )
 
-// osascript runs an AppleScript, one -e per script line, with args passed to
-// its `on run argv` handler. A seam so tests never drive the real Ghostty.
+// osascript runs an AppleScript exactly once, after a ping of its app, with args
+// passed to its `on run argv` handler. A seam so tests never drive the real
+// Ghostty.
 var osascript = func(script string, args ...string) (string, error) {
+	if p := pingFor(script); p != "" {
+		if err := ping(p); err != nil {
+			return "", err
+		}
+	}
+	return runOsascript(script, args...)
+}
+
+// runOsascript runs an AppleScript, one -e per script line.
+func runOsascript(script string, args ...string) (string, error) {
 	var argv []string
 	for _, line := range strings.Split(script, "\n") {
 		argv = append(argv, "-e", line)
 	}
-	return retryNotRunning(func() (string, error) {
-		out, err := exec.Command("osascript", append(argv, args...)...).Output()
-		return string(out), err
-	})
+	out, err := exec.Command("osascript", append(argv, args...)...).Output()
+	return string(out), err
 }
 
 // GhosttyTerminal identifies a native surface without depending on its title.

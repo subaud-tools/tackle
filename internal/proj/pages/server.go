@@ -148,9 +148,10 @@ func (f proofFile) ModTime() time.Time         { return time.Time{} }
 func (f proofFile) IsDir() bool                { return false }
 func (f proofFile) Sys() any                   { return nil }
 
-// TermURL is the address to open for a session's terminal page, with the token.
+// TermURL is the address to open for a session's terminal page, with the token,
+// to take the session from any other client; the page drops both on load.
 func TermURL(addr, token, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}}.Encode()
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}, "take": {"1"}}.Encode()
 }
 
 // TermMatches says whether pageURL is the terminal page of session on socket:

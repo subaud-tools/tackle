@@ -214,12 +214,24 @@ var ensurePages = func() (addr, token string, err error) {
 }
 
 // Window moves pane's session to its Chrome window and brings that to the
-// front, or opens and splits a new one with its right half on right (empty when
+// front; see window. It has the page take the session.
+func Window(socket, pane, right string) (WindowResult, error) {
+	return window(socket, pane, right, true)
+}
+
+// WindowKeepingView is Window for a page that only goes in the window: a terminal
+// page another terminal detached stays detached.
+func WindowKeepingView(socket, pane, right string) (WindowResult, error) {
+	return window(socket, pane, right, false)
+}
+
+// window brings pane's session's Chrome window to the front, or opens and splits a new one with its right half on right (empty when
 // right is ""). On a window that exists, right comes into view (see pointRight),
-// and a terminal page another terminal detached loads again, which attaches it.
+// and with move a terminal page another terminal detached loads again to take
+// the session.
 // It never closes or moves a tab it did not open, and navigates none but those
 // two.
-func Window(socket, pane, right string) (WindowResult, error) {
+func window(socket, pane, right string, move bool) (WindowResult, error) {
 	name := Query(socket, pane, "#{session_name}")
 	if name == "" {
 		return WindowResult{}, errors.New("the session has ended")
@@ -231,7 +243,7 @@ func Window(socket, pane, right string) (WindowResult, error) {
 		}
 		tabs := tabURLs(out)
 		if tab := terminalTab(tabs, socket, name); tab >= 0 {
-			if !pageAttached(socket, pane, name) {
+			if move && !pageAttached(socket, pane, name) {
 				addr, token, err := ensurePages()
 				if err != nil {
 					return WindowResult{}, stepError("start the page server", err)
@@ -248,7 +260,9 @@ func Window(socket, pane, right string) (WindowResult, error) {
 			if _, err := osascript(chromeRaiseScript, id); err != nil {
 				return WindowResult{}, stepError("raise the window", err)
 			}
-			waitPageAttached(socket, pane, name)
+			if move {
+				waitPageAttached(socket, pane, name)
+			}
 			return WindowResult{Window: "raised", ID: id}, nil
 		}
 	}
@@ -384,19 +398,36 @@ func shownWindow(socket, pane, name string) string {
 	return id
 }
 
-// osascriptRetryDelay is the wait before the one retry of an osascript call
-// Chrome answered with "Application isn't running".
-const osascriptRetryDelay = 300 * time.Millisecond
+// osascriptPingDelay is the wait before the one retry of a ping an app answered
+// with "Application isn't running".
+const osascriptPingDelay = 300 * time.Millisecond
 
-// retryNotRunning runs call again once when it fails with AppleScript's -600,
-// which Chrome answers now and then while running: a retry right away works.
-func retryNotRunning(call func() (string, error)) (string, error) {
-	out, err := call()
-	if err != nil && strings.Contains(failureText(err), "(-600)") {
-		time.Sleep(osascriptRetryDelay)
-		return call()
+// pingFor is the read-only script that asks script's app whether it is
+// answering, "" for a script that talks to neither. It launches nothing: reading
+// a session's state must not start Chrome.
+func pingFor(script string) string {
+	app := ""
+	switch {
+	case strings.Contains(script, `"Google Chrome"`):
+		app = `application id "com.google.Chrome"`
+	case strings.Contains(script, `"Ghostty"`):
+		app = `application "Ghostty"`
+	default:
+		return ""
 	}
-	return out, err
+	return "if " + app + " is running then\ntell " + app + " to count windows\nend if"
+}
+
+// ping runs a ping, once more when it fails with AppleScript's -600, which Chrome
+// answers now and then while running: a retry right away works. Only a ping is
+// retried: a script that failed may already have opened a window.
+func ping(script string) error {
+	_, err := runOsascript(script)
+	if err != nil && strings.Contains(failureText(err), "(-600)") {
+		time.Sleep(osascriptPingDelay)
+		_, err = runOsascript(script)
+	}
+	return err
 }
 
 // stepError names the step that failed and carries Chrome's or macOS's message,
