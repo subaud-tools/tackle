@@ -12,7 +12,8 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 - `proj terminal --json` says `"chrome": true` when a session's Chrome window still holds its terminal page.
 
 ### Changed
-- `proj window --right <url>` on a session whose window already exists now shows the URL there instead of only raising the window. It selects a tab already showing the URL, or points the tab beside the terminal at it. If the terminal is alone in its window, the split is made again.
+- `proj window --right <url>` on a session whose window already exists now shows the URL there instead of only raising the window. It selects a tab already showing the URL, or else points the window's right-half tab at it and selects that tab. If that tab is gone, the URL opens in a new tab, which becomes the right half. No other tab is navigated.
+- `proj terminal --go` on a session attached only through its Chrome window brings that window forward instead of failing, and focuses a Ghostty terminal on any of the session's clients, not only the first. It no longer launches Ghostty just to look.
 
 ## [proj 0.15.0] - 2026-10-30
 

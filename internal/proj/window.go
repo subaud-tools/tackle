@@ -21,8 +21,12 @@ type WindowResult struct {
 	ID     string `json:"id"`
 }
 
-// windowOption is the tmux session option holding the session's Chrome window.
-const windowOption = "@chrome_window"
+// windowOption and rightOption are the tmux session options holding the
+// session's Chrome window and the id of the tab that is its right half.
+const (
+	windowOption = "@chrome_window"
+	rightOption  = "@chrome_right"
+)
 
 // pagesSocket and pagesSession are where proj window runs the page server.
 const (
@@ -59,8 +63,8 @@ end tell
 end run`
 
 // chromeSplitScript brings window argv[1] to the front, confirms it got there,
-// clicks Tab > Add Tab to New Split View, and waits for that window to gain a
-// tab: a disabled or absent item raises no error of its own, and the click
+// clicks Tab > Add Tab to New Split View, waits for that window to gain a tab,
+// and prints the id of the new half, its active tab: a disabled or absent item raises no error of its own, and the click
 // acts on whichever window is in front, so another window's tabs prove nothing.
 const chromeSplitScript = `on run argv
 set target to item 1 of argv
@@ -83,7 +87,7 @@ end tell
 tell application "Google Chrome"
 repeat 20 times
 repeat with w in windows
-if (id of w as text) is target and (count of tabs of w) > 1 then return
+if (id of w as text) is target and (count of tabs of w) > 1 then return id of active tab of w as text
 end repeat
 delay 0.1
 end repeat
@@ -120,14 +124,36 @@ end tell
 error "Chrome has no window " & (item 1 of argv)
 end run`
 
-// chromeSetTabScript points tab number argv[2] of window argv[1] at the URL
-// argv[3].
-const chromeSetTabScript = `on run argv
+// chromeShowTabScript points the tab whose id is argv[2] in window argv[1] at
+// the URL argv[3], makes it the active tab and prints "shown"; it prints nothing
+// when the window has no such tab.
+const chromeShowTabScript = `on run argv
 tell application "Google Chrome"
 repeat with w in windows
 if (id of w as text) is (item 1 of argv) then
-set URL of tab ((item 2 of argv) as integer) of w to (item 3 of argv)
-return
+repeat with i from 1 to count of tabs of w
+if (id of tab i of w as text) is (item 2 of argv) then
+set URL of tab i of w to (item 3 of argv)
+set active tab index of w to i
+return "shown"
+end if
+end repeat
+return ""
+end if
+end repeat
+end tell
+error "Chrome has no window " & (item 1 of argv)
+end run`
+
+// chromeNewTabScript opens a new tab on the URL argv[2] at the end of window
+// argv[1], makes it the active tab and prints its id.
+const chromeNewTabScript = `on run argv
+tell application "Google Chrome"
+repeat with w in windows
+if (id of w as text) is (item 1 of argv) then
+set t to make new tab at end of tabs of w with properties {URL:(item 2 of argv)}
+set active tab index of w to (count of tabs of w)
+return id of t as text
 end if
 end repeat
 end tell
@@ -175,8 +201,8 @@ var ensurePages = func() (addr, token string, err error) {
 
 // Window brings pane's session's Chrome window to the front, or opens and
 // splits a new one with its right half on right (empty when right is ""). On a
-// window that exists, a right no tab shows goes in the tab beside the terminal
-// (see pointRight). It never closes or moves a tab it did not open.
+// window that exists, right comes into view (see pointRight). It never closes
+// or moves a tab it did not open, and navigates none but the right half's.
 func Window(socket, pane, right string) (WindowResult, error) {
 	name := Query(socket, pane, "#{session_name}")
 	if name == "" {
@@ -188,9 +214,9 @@ func Window(socket, pane, right string) (WindowResult, error) {
 			return WindowResult{}, stepError("find the window", err)
 		}
 		tabs := tabURLs(out)
-		if term := terminalTab(tabs, socket, name); term >= 0 {
+		if terminalTab(tabs, socket, name) >= 0 {
 			if right != "" {
-				if err := pointRight(id, tabs, term, right); err != nil {
+				if err := pointRight(socket, pane, name, id, tabs, right); err != nil {
 					return WindowResult{}, stepError("set the right half", err)
 				}
 			}
@@ -213,7 +239,8 @@ func Window(socket, pane, right string) (WindowResult, error) {
 	if id == "" {
 		return WindowResult{}, stepError("open the window", errors.New("no window id from Chrome"))
 	}
-	if _, err := osascript(chromeSplitScript, id); err != nil {
+	half, err := osascript(chromeSplitScript, id)
+	if err != nil {
 		return WindowResult{}, stepError("split the window", err)
 	}
 	if right != "" {
@@ -224,37 +251,41 @@ func Window(socket, pane, right string) (WindowResult, error) {
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", windowOption, id); err != nil {
 		return WindowResult{}, stepError("store the window id", err)
 	}
+	if _, err := Run(socket, "set-option", "-t", "="+name+":", rightOption, strings.TrimSpace(half)); err != nil {
+		return WindowResult{}, stepError("store the right half's id", err)
+	}
 	if _, err := osascript(chromeRaiseScript, id); err != nil {
 		return WindowResult{}, stepError("raise the window", err)
 	}
 	return WindowResult{Window: "opened", ID: id}, nil
 }
 
-// pointRight shows right in window id, whose tab URLs are tabs with the
-// session's terminal at index term: it selects a tab already showing right,
-// else points the tab after the terminal's at it. A terminal alone in its
-// window gets its split back; one that is last after other tabs has no tab
-// that is the split's, so nothing changes.
-func pointRight(id string, tabs []string, term int, right string) error {
+// pointRight brings right into view in window id, whose tab URLs are tabs: it
+// selects a tab already showing right, else points the session's right-half
+// tab at it and selects that, else opens a new tab on it, which becomes the
+// right half.
+func pointRight(socket, pane, name, id string, tabs []string, right string) error {
 	for i, u := range tabs {
 		if samePage(u, right) {
 			_, err := osascript(chromeSelectTabScript, id, strconv.Itoa(i+1))
 			return err
 		}
 	}
-	switch {
-	case term+1 < len(tabs):
-		// AppleScript counts tabs from 1: the tab after index term is term+2.
-		_, err := osascript(chromeSetTabScript, id, strconv.Itoa(term+2), right)
-		return err
-	case len(tabs) == 1:
-		if _, err := osascript(chromeSplitScript, id); err != nil {
+	if half := Query(socket, pane, "#{"+rightOption+"}"); half != "" {
+		out, err := osascript(chromeShowTabScript, id, half, right)
+		if err != nil {
 			return err
 		}
-		_, err := osascript(chromeSetRightScript, id, right)
+		if strings.TrimSpace(out) == "shown" {
+			return nil
+		}
+	}
+	out, err := osascript(chromeNewTabScript, id, right)
+	if err != nil {
 		return err
 	}
-	return nil
+	_, err = Run(socket, "set-option", "-t", "="+name+":", rightOption, strings.TrimSpace(out))
+	return err
 }
 
 // samePage says whether a tab's URL is the page asked for: a page takes its
@@ -290,15 +321,18 @@ func terminalTab(urls []string, socket, name string) int {
 	return slices.IndexFunc(urls, func(u string) bool { return pages.TermMatches(u, socket, name) })
 }
 
-// windowShows says whether pane's session's stored Chrome window still holds
-// its terminal page. A failed look says no.
-func windowShows(socket, pane, name string) bool {
+// shownWindow is the id of pane's session's stored Chrome window when it still
+// holds the session's terminal page, else "". A failed look says no.
+func shownWindow(socket, pane, name string) string {
 	id := Query(socket, pane, "#{"+windowOption+"}")
 	if id == "" {
-		return false
+		return ""
 	}
 	out, err := osascript(chromeHasWindowScript, id)
-	return err == nil && terminalTab(tabURLs(out), socket, name) >= 0
+	if err != nil || terminalTab(tabURLs(out), socket, name) < 0 {
+		return ""
+	}
+	return id
 }
 
 // stepError names the step that failed and carries Chrome's or macOS's message,
