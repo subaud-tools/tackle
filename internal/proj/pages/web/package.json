@@ -1,0 +1,34 @@
+{
+  "name": "proj-pages",
+  "private": true,
+  "version": "0.0.0",
+  "description": "proj's terminal page. DEV-TIME ONLY: the built output lives in internal/proj/pages/assets and is committed; `npm run build` rebuilds it. Nothing at runtime needs node.",
+  "type": "module",
+  "scripts": {
+    "postinstall": "npm run kit-types",
+    "kit-types": "go mod download github.com/subaud-tools/tools-common && KIT_DIR=$(go list -m -f '{{.Dir}}' github.com/subaud-tools/tools-common) && test -n \"$KIT_DIR\" && cp -f \"$KIT_DIR/localweb/page/assets/kit.d.ts\" . && chmod 644 kit.d.ts",
+    "page-build": "go mod download github.com/subaud-tools/tools-common && KIT_DIR=$(go list -m -f '{{.Dir}}' github.com/subaud-tools/tools-common) && test -n \"$KIT_DIR\" && mkdir -p build && cp -f \"$KIT_DIR/localweb/page/build/eslint.base.mjs\" \"$KIT_DIR/localweb/page/build/probe.mjs\" build/ && chmod 644 build/eslint.base.mjs build/probe.mjs",
+    "typecheck": "tsc",
+    "fmt": "prettier --write \"*.mjs\" \"*.ts\"",
+    "fmt:check": "prettier --check \"*.mjs\" \"*.ts\"",
+    "lint": "eslint \"*.mjs\" \"*.ts\" --max-warnings 0",
+    "build:js": "esbuild entry.ts --bundle --format=esm --charset=utf8 --outfile=../assets/term.js",
+    "build:css": "esbuild term.css --bundle --charset=utf8 --outfile=../assets/term.css",
+    "test": "node --test *.test.ts",
+    "build": "npm run --silent build:js && npm run --silent build:css"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/addon-webgl": "0.19.0",
+    "@xterm/xterm": "6.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "eslint": "9.39.5",
+    "globals": "17.11.0",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0"
+  }
+}

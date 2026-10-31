@@ -1,0 +1,19 @@
+@import '@xterm/xterm/css/xterm.css';
+
+/* FiraCode Nerd Font draws only the icon ranges Ghostty maps to it. */
+@font-face {
+  font-family: 'Session Icons';
+  src:
+    local('FiraCode Nerd Font Regular'), local('FiraCodeNF-Reg'),
+    local('FiraCode Nerd Font');
+  unicode-range: U+E000-F8FF, U+F0000-FFFFF;
+}
+
+html,
+body,
+#term {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  overflow: hidden;
+}

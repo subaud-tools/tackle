@@ -19,7 +19,7 @@ func TestCommandsJSONCoversEveryCommand(t *testing.T) {
 	for _, c := range got {
 		names[c["name"].(string)] = true
 	}
-	for _, want := range []string{"list", "current", "new", "sidebar", "reap", "terminal", "help", "man", "commands", "version"} {
+	for _, want := range []string{"list", "current", "new", "sidebar", "reap", "terminal", "pages", "help", "man", "commands", "version"} {
 		if !names[want] {
 			t.Fatalf("commands --json missing %q; got %v", want, names)
 		}
