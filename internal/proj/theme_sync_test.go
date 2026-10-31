@@ -175,6 +175,44 @@ func TestReconcileTTYMovesKeepStableIdentityAndAbsentLayout(t *testing.T) {
 	}
 }
 
+func TestRepeatedSaveRetainsAbsentWindowGroup(t *testing.T) {
+	recordHome(t)
+	if err := UpdateRecord(func(r *Record) bool {
+		r.Groups = map[string]ThemeGroup{"saved": {Hue: "blue"}}
+		r.Layout = GhosttyLayout{
+			Windows:  [][]string{{"absent"}},
+			GroupIDs: []string{"saved"},
+			SavedAt:  time.Unix(100, 0),
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(RecordPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := (themeObservation{}).save(); err != nil {
+			t.Fatal(err)
+		}
+		r, err := LoadRecord()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(r.Layout.GroupIDs, []string{"saved"}) || len(r.Groups) != 1 {
+			t.Errorf("save %d changed saved identity: bindings=%v groups=%d", i, r.Layout.GroupIDs, len(r.Groups))
+		}
+		after, err := os.ReadFile(RecordPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(before, after) {
+			t.Errorf("save %d changed record bytes", i)
+		}
+	}
+}
+
 func TestReconcileThrottleUnchangedAndRetry(t *testing.T) {
 	_, reads, writes, fail := themeFixture(t)
 	*fail = true

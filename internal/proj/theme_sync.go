@@ -154,7 +154,8 @@ func (o themeObservation) save() (Record, error) {
 			assignWindowGroup(r, id, names)
 			cur = append(cur, names)
 		}
-		wins := mergeLayout(r.Layout.Windows, cur)
+		oldWindows, oldGroupIDs := r.Layout.Windows, r.Layout.GroupIDs
+		wins := mergeLayout(oldWindows, cur)
 		if !reflect.DeepEqual(r.Layout.Windows, wins) || r.Layout.SavedAt.IsZero() {
 			r.Layout.Windows = wins
 			r.Layout.GroupIDs = nil
@@ -167,6 +168,16 @@ func (o themeObservation) save() (Record, error) {
 				if id := r.Sessions[name].GroupID; id != "" {
 					r.Layout.GroupIDs[i] = id
 					break
+				}
+			}
+			// Absent windows may have no session entry left to carry their
+			// identity. Match the saved window, not its pre-merge index.
+			if r.Layout.GroupIDs[i] == "" {
+				for j, old := range oldWindows {
+					if j < len(oldGroupIDs) && reflect.DeepEqual(w, old) {
+						r.Layout.GroupIDs[i] = oldGroupIDs[j]
+						break
+					}
 				}
 			}
 		}
