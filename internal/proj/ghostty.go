@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/subaud-tools/tackle/internal/proj/pages"
 )
+
+func init() { pages.CloseTerminal = closeGhosttyTerminal }
 
 // osascript runs an AppleScript exactly once, after a ping of its app, with args
 // passed to its `on run argv` handler. A seam so tests never drive the real
@@ -65,6 +69,26 @@ func ObserveGhostty() ([]GhosttyTerminal, error) {
 		terminals = append(terminals, GhosttyTerminal{WindowID: fields[0], TabID: fields[1], TTY: fields[2]})
 	}
 	return terminals, nil
+}
+
+// closeTTYScript closes the Ghostty terminal whose tty is argv[1]; it does
+// nothing when no terminal has that tty.
+const closeTTYScript = `on run argv
+if application "Ghostty" is not running then return ""
+tell application "Ghostty"
+repeat with t in terminals
+if (tty of t) is (item 1 of argv) then
+close t
+return "closed"
+end if
+end repeat
+end tell
+return ""
+end run`
+
+func closeGhosttyTerminal(tty string) error {
+	_, err := osascript(closeTTYScript, tty)
+	return err
 }
 
 // mergeLayout folds the current Ghostty arrangement (cur) into the saved one

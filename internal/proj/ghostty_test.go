@@ -1,8 +1,12 @@
 package proj
 
 import (
+	"errors"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/subaud-tools/tackle/internal/proj/pages"
 )
 
 // fakeOsascript swaps the osascript seam for one returning out/err, and
@@ -47,5 +51,29 @@ func TestMergeLayout(t *testing.T) {
 		if !slices.EqualFunc(got, c.out, slices.Equal[[]string]) {
 			t.Errorf("%s: mergeLayout = %q want %q", c.name, got, c.out)
 		}
+	}
+}
+
+func TestPagesCloseTerminalRunsTheCloseScriptForThatTTY(t *testing.T) {
+	var script string
+	var args []string
+	orig := osascript
+	t.Cleanup(func() { osascript = orig })
+	failure := errors.New("Ghostty said no")
+	osascript = func(s string, a ...string) (string, error) {
+		script, args = s, a
+		return "", failure
+	}
+	if err := pages.CloseTerminal("/dev/ttys042"); !errors.Is(err, failure) {
+		t.Fatalf("err = %v, want the script's", err)
+	}
+	if !slices.Equal(args, []string{"/dev/ttys042"}) {
+		t.Fatalf("args = %q", args)
+	}
+	if !strings.Contains(script, "(tty of t) is (item 1 of argv)") || !strings.Contains(script, "close t") {
+		t.Fatalf("script does not close the matching terminal: %s", script)
+	}
+	if pingFor(script) == "" {
+		t.Fatal("the close script gets no ping")
 	}
 }

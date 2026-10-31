@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -315,4 +316,125 @@ func TestPageRecordsItsClient(t *testing.T) {
 		got := strings.TrimSpace(tmuxOut(t, socket, "show-options", "-v", "-t", "="+testSession+":", "-q", ClientOption))
 		return got != "" && got == clientPIDs(t, socket)
 	})
+}
+
+// closeBridge serves a bridge whose close script only reports the tty it was
+// handed, with closeErr as its result.
+func closeBridge(t *testing.T, closeErr error) (*bridge, *httptest.Server, chan string) {
+	t.Helper()
+	closed := make(chan string, 4)
+	b := newBridge()
+	b.closeTerminal = func(tty string) error {
+		closed <- tty
+		return closeErr
+	}
+	srv := httptest.NewServer(b.handler())
+	t.Cleanup(srv.Close)
+	return b, srv, closed
+}
+
+// takeOn connects to the bridge as proj window or Use here does.
+func takeOn(t *testing.T, srv *httptest.Server, socket string) *websocket.Conn {
+	t.Helper()
+	q := url.Values{"socket": {socket}, "session": {testSession}, "take": {"1"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/api/term/ws?"+q.Encode(), nil) //nolint:bodyclose // a 101 has no body
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.CloseNow() })
+	go func() {
+		for {
+			if _, _, err := c.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+	return c
+}
+
+func clientTTY(t *testing.T, socket string) string {
+	t.Helper()
+	return strings.TrimSpace(tmuxOut(t, socket, "list-clients", "-F", "#{client_tty}"))
+}
+
+func TestTakeClosesTheTerminalItPushedOut(t *testing.T) {
+	socket := tmuxServer(t)
+	ghosttyClient(t, socket)
+	tty := clientTTY(t, socket)
+	_, srv, closed := closeBridge(t, nil)
+	takeOn(t, srv, socket)
+	select {
+	case got := <-closed:
+		if got != tty {
+			t.Fatalf("closed %q, want %q", got, tty)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no close script ran")
+	}
+}
+
+func TestTTYStillRunningSomethingIsNotClosed(t *testing.T) {
+	b, _, closed := closeBridge(t, nil)
+	polled := false
+	b.ttyBusy = func(string) (bool, error) {
+		polled = true
+		return true, nil
+	}
+	b.closeWait = 50 * time.Millisecond
+	b.closePushedOut("/dev/ttys999")
+	if !polled {
+		t.Fatal("the tty was never checked")
+	}
+	if len(closed) != 0 {
+		t.Fatalf("closed %q", <-closed)
+	}
+}
+
+func TestTakeWithNoOtherClientHasNothingToClose(t *testing.T) {
+	socket := tmuxServer(t)
+	b, srv, _ := closeBridge(t, nil)
+	if got := b.pushedOut(socket, "="+testSession); len(got) != 0 {
+		t.Fatalf("with no client, pushedOut = %q", got)
+	}
+	// The page's own client is not a Ghostty terminal: a second take leaves its
+	// tty alone, and that tty may soon be a new terminal's.
+	takeOn(t, srv, socket)
+	waitFor(t, "the page's client recorded", func() bool {
+		got := strings.TrimSpace(tmuxOut(t, socket, "show-options", "-v", "-t", "="+testSession+":", "-q", ClientOption))
+		return got != "" && got == clientPIDs(t, socket)
+	})
+	if got := b.pushedOut(socket, "="+testSession); len(got) != 0 {
+		t.Fatalf("with only the page, pushedOut = %q", got)
+	}
+}
+
+func TestCloseFailingDoesNotFailTheTake(t *testing.T) {
+	socket := tmuxServer(t)
+	ghosttyClient(t, socket)
+	_, srv, closed := closeBridge(t, errors.New("Ghostty said no"))
+	c := takeOn(t, srv, socket)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no close script ran")
+	}
+	if err := c.Write(context.Background(), websocket.MessageBinary, []byte("echo still-here\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the typed line in the pane", func() bool {
+		return strings.Contains(tmuxOut(t, socket, "capture-pane", "-p", "-t", "="+testSession+":"), "\nstill-here")
+	})
+}
+
+func TestTTYHasProcessReadsPs(t *testing.T) {
+	socket := tmuxServer(t)
+	ghosttyClient(t, socket)
+	if busy, err := ttyHasProcess(clientTTY(t, socket)); err != nil || !busy {
+		t.Fatalf("a tty with a client: busy = %v, err = %v", busy, err)
+	}
+	if busy, err := ttyHasProcess("/dev/no-such-tty"); err == nil || busy {
+		t.Fatalf("a tty ps cannot read: busy = %v, err = %v; want an error", busy, err)
+	}
 }

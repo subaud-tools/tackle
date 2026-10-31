@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.19.0] - 2026-10-31
+
+### Changed
+- When a Chrome page takes a session, proj closes the Ghostty terminal of each client it detached, once nothing is left running on its tty, so no empty "[detached …]" window stays behind. A terminal still running something, such as a tab that dropped back to a shell, stays open, and proj closes no terminal whose tty it didn't just detach.
+
 ## [proj 0.18.0] - 2026-10-31
 
 ### Added
