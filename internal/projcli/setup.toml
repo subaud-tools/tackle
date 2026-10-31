@@ -1,0 +1,11 @@
+[kempt]
+spec = 2
+
+[[packages.integration.managed-file]]
+from = "proj.zsh"
+to = "~/.local/share/proj/proj.zsh"
+mode = "0644"
+
+[[packages.integration.line-in-file]]
+file = "~/.zshrc"
+line = 'source "$HOME/.local/share/proj/proj.zsh"'

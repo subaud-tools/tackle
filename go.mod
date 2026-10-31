@@ -12,7 +12,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/mattn/go-isatty v0.0.24
-	github.com/subaud-tools/tools-common v0.34.0
+	github.com/subaud-tools/tools-common v0.40.0
 	github.com/subaud-tools/tools-common/sqlitedb v0.2.0
 	gopkg.in/yaml.v3 v3.0.1
 )

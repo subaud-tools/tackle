@@ -31,6 +31,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			Date:   version.Date(),
 		},
 	})
+	app.Register(setupCommand())
 	// Register the real subcommands. Dispatch is now their execution path (not
 	// just the help listing): each carries NewFlags so -h/help render richly and
 	// ExitError/UsageError from Run map to the right exit code.
@@ -133,7 +134,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			return startPicker("", "", true)
 		}
 		return app.Dispatch(args, out, errw)
-	case "list", "current", "new", "sidebar", "terminal", "window", "pages", "theme",
+	case "setup-bundle", "list", "current", "new", "sidebar", "terminal", "window", "pages", "theme",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}
