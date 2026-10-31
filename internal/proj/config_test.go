@@ -180,3 +180,33 @@ default_agent = "claude"
 		t.Fatalf("round-trip DefaultModel = %q", got)
 	}
 }
+
+func TestOpenInRoundTripsThroughConfig(t *testing.T) {
+	writeConfig(t, "sidebar = false\n\n[project.x]\nsidebar = true\n")
+	if got := LoadConfig().OpenIn; got != OpenTerminal {
+		t.Fatalf("default open_in = %q, want %q", got, OpenTerminal)
+	}
+	if err := SaveOpenIn(OpenChrome); err != nil {
+		t.Fatal(err)
+	}
+	c := LoadConfig()
+	if c.OpenIn != OpenChrome {
+		t.Fatalf("open_in after save = %q, want %q", c.OpenIn, OpenChrome)
+	}
+	if c.Sidebar || !c.SidebarFor("x") {
+		t.Fatalf("saving open_in changed the rest of the file: %+v", c)
+	}
+	if err := SaveOpenIn(OpenTerminal); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadConfig().OpenIn; got != OpenTerminal {
+		t.Fatalf("open_in after second save = %q, want %q", got, OpenTerminal)
+	}
+}
+
+func TestOpenInUnknownValueFallsBackToTerminal(t *testing.T) {
+	writeConfig(t, "open_in = \"safari\"\n")
+	if got := LoadConfig().OpenIn; got != OpenTerminal {
+		t.Fatalf("open_in = %q, want %q", got, OpenTerminal)
+	}
+}

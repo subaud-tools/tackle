@@ -31,6 +31,7 @@ type Config struct {
 	DefaultAgent  string                     `toml:"default_agent"`
 	DefaultModel  string                     `toml:"default_model"`
 	Sidebar       bool                       `toml:"sidebar"`
+	OpenIn        string                     `toml:"open_in"`
 	SidebarLayout Layout                     `toml:"sidebar_layout"`
 	Projects      map[string]ProjectOverride `toml:"project"`
 	// ModelProviders maps a proj agent to the ordered pi providers whose models
@@ -38,6 +39,12 @@ type Config struct {
 	// models are built in (see claudeModels). List order is picker order.
 	ModelProviders map[string][]string `toml:"model_providers"`
 }
+
+// Where the picker opens a session: OpenIn's two values.
+const (
+	OpenTerminal = "terminal"
+	OpenChrome   = "chrome"
+)
 
 func configPath() string {
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
@@ -50,6 +57,7 @@ func defaults() Config {
 	return Config{
 		DefaultAgent: "pi",
 		Sidebar:      true,
+		OpenIn:       OpenTerminal,
 		SidebarLayout: Layout{
 			Panes: []string{"scratch", "yazi", "shell"},
 			Sizes: map[string]int{"scratch": 12, "shell": 10},
@@ -70,6 +78,9 @@ func LoadConfig() Config {
 	seeded := defaults()
 	if _, err := toml.Decode(string(b), &seeded); err != nil {
 		return fallback
+	}
+	if seeded.OpenIn != OpenChrome {
+		seeded.OpenIn = OpenTerminal
 	}
 	if seeded.Projects == nil {
 		seeded.Projects = map[string]ProjectOverride{}
@@ -126,8 +137,19 @@ func (c Config) ModelFor(project string) string {
 // section (before the first table header) so it stays grouped with the other
 // top-level keys like default_agent.
 func SaveDefaultModel(model string) error {
+	return saveTopKey("default_model", model)
+}
+
+// SaveOpenIn upserts the top-level `open_in` key, as SaveDefaultModel does.
+func SaveOpenIn(where string) error {
+	return saveTopKey("open_in", where)
+}
+
+// saveTopKey upserts the top-level string key in config.toml; see
+// SaveDefaultModel.
+func saveTopKey(key, value string) error {
 	p := configPath()
-	line := fmt.Sprintf("default_model = %q", model)
+	line := fmt.Sprintf("%s = %q", key, value)
 
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -155,7 +177,7 @@ func SaveDefaultModel(model string) error {
 	}
 	// Replace an existing top-level key in place.
 	for i := 0; i < topEnd; i++ {
-		if isTopKey(lines[i], "default_model") {
+		if isTopKey(lines[i], key) {
 			lines[i] = line
 			return os.WriteFile(p, []byte(strings.Join(lines, "\n")), 0o644)
 		}
