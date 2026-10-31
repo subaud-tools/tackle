@@ -149,13 +149,13 @@ Selection order on open: a per-project `default_model` pin, else the global
 
 ### Shell shim + auto-join hook
 
-`proj` needs a thin zsh shim so the shell can `eval` the one command the binary
-cannot execute inside its own process (attaching a bare shell to a session on a
-remote server). Source it from your shell rc:
+`proj` needs a thin zsh shim so the shell can `eval` the one command the binary cannot execute inside its own process (attaching a bare shell to a session on a remote server). The release setup bundle installs the canonical `shell/proj.zsh` at `~/.local/share/proj/proj.zsh` and adds exactly this include to `~/.zshrc`:
 
 ```zsh
-source ~/GitHub/schuettc/tackle/shell/proj.zsh
+source "$HOME/.local/share/proj/proj.zsh"
 ```
+
+The bundle uses kempt schema 2 managed files (supported since kempt 0.12.0; the release pilot uses 0.13.0). It contains no project roots, skills or services. `proj setup-bundle --version X.Y.Z --out proj_setup.tar.gz` only builds the archive; it does not install files, start a TUI or attach to tmux. Releases publish it beside the matching binary, with checksums through the shared release action. The source wrapper's public URL remains unchanged.
 
 `shell/proj.zsh` defines:
 
@@ -190,10 +190,10 @@ Verify: `which proj` should print something under `~/go/bin` (or your `$GOPATH/b
 
 **Step 2 — Source the shim from your shell rc**
 
-Add to `~/.zshrc` (or equivalent):
+After applying the matching release setup through kempt, `~/.zshrc` contains:
 
 ```zsh
-source ~/GitHub/schuettc/tackle/shell/proj.zsh
+source "$HOME/.local/share/proj/proj.zsh"
 ```
 
 Reload: `exec zsh`. The shim wraps the binary and fires the auto-join hook.

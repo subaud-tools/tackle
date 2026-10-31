@@ -28,11 +28,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - id: rel
-        uses: subaud-tools/tools-actions/release-version@v0.11.0
+        uses: subaud-tools/tools-actions/release-version@v0.13.0
         with:
           mode: prefixed-tag
-      - uses: subaud-tools/tools-actions/go-release@v0.11.0
+      - uses: actions/setup-go@v7.0.0
+        if: steps.rel.outputs.tool == 'proj' && steps.rel.outputs.create == 'true'
         with:
+          go-version-file: go.mod
+      - name: Build proj setup bundle
+        if: steps.rel.outputs.tool == 'proj' && steps.rel.outputs.create == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          mkdir -p dist
+          go run ./cmd/proj setup-bundle --version "$RELEASE_VERSION" --out dist/proj_setup.tar.gz
+      - uses: subaud-tools/tools-actions/go-release@v0.13.0
+        with:
+          extra-assets: ${{ steps.rel.outputs.tool == 'proj' && steps.rel.outputs.create == 'true' && 'dist/proj_setup.tar.gz' || '' }}
           binaries: ${{ steps.rel.outputs.tool }}=./cmd/${{ steps.rel.outputs.tool }}
           # One shared version package for every tool in the monorepo.
           ldflags: >-

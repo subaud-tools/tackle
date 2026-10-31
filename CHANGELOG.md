@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.17.0] - 2026-10-31
+
+### Added
+- Release-owned setup bundle with the canonical zsh wrapper and one portable `.zshrc` include, built by `proj setup-bundle` without starting proj or configuring the machine.
+
 ## [proj 0.16.0] - 2026-10-31
 
 ### Added
