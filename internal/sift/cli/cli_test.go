@@ -12,7 +12,7 @@ import (
 func run(t *testing.T, stdin string, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errw bytes.Buffer
-	code := Main(args, strings.NewReader(stdin), &out, &errw)
+	code := Main(args, strings.NewReader(stdin), &out, &errw, nil)
 	return code, out.String(), errw.String()
 }
 

@@ -5,9 +5,23 @@
 package main
 
 import (
+	_ "embed"
+	"fmt"
 	"os"
+
+	"github.com/subaud-tools/tackle/internal/integrationsetup"
 
 	"github.com/subaud-tools/tackle/internal/imprint/cli"
 )
 
-func main() { os.Exit(cli.Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+//go:embed kempt.toml
+var declaration []byte
+
+func main() {
+	source, err := integrationsetup.Source("imprint", declaration)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(cli.Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, &source))
+}

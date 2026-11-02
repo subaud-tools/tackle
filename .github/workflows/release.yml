@@ -25,6 +25,8 @@ jobs:
     # macOS: codesign and notarytool exist nowhere else.
     runs-on: macos-26
     environment: release
+    env:
+      SETUP_BUNDLE_TOOLS: '["proj", "sift", "imprint", "cull"]'
     steps:
       - uses: actions/checkout@v7.0.1
       - id: rel
@@ -32,19 +34,20 @@ jobs:
         with:
           mode: prefixed-tag
       - uses: actions/setup-go@v7.0.0
-        if: steps.rel.outputs.tool == 'proj' && steps.rel.outputs.create == 'true'
+        if: contains(fromJSON(env.SETUP_BUNDLE_TOOLS), steps.rel.outputs.tool) && steps.rel.outputs.create == 'true'
         with:
           go-version-file: go.mod
-      - name: Build proj setup bundle
-        if: steps.rel.outputs.tool == 'proj' && steps.rel.outputs.create == 'true'
+      - name: Build selected tool setup bundle
+        if: contains(fromJSON(env.SETUP_BUNDLE_TOOLS), steps.rel.outputs.tool) && steps.rel.outputs.create == 'true'
         env:
+          RELEASE_TOOL: ${{ steps.rel.outputs.tool }}
           RELEASE_VERSION: ${{ steps.rel.outputs.version }}
         run: |
           mkdir -p dist
-          go run ./cmd/proj setup-bundle --version "$RELEASE_VERSION" --out dist/proj_setup.tar.gz
+          go run "./cmd/$RELEASE_TOOL" setup-bundle --version "$RELEASE_VERSION" --out "dist/${RELEASE_TOOL}_setup.tar.gz"
       - uses: subaud-tools/tools-actions/go-release@v0.13.1
         with:
-          extra-assets: ${{ steps.rel.outputs.tool == 'proj' && steps.rel.outputs.create == 'true' && 'dist/proj_setup.tar.gz' || '' }}
+          extra-assets: ${{ contains(fromJSON(env.SETUP_BUNDLE_TOOLS), steps.rel.outputs.tool) && steps.rel.outputs.create == 'true' && format('dist/{0}_setup.tar.gz', steps.rel.outputs.tool) || '' }}
           binaries: ${{ steps.rel.outputs.tool }}=./cmd/${{ steps.rel.outputs.tool }}
           # One shared version package for every tool in the monorepo.
           ldflags: >-

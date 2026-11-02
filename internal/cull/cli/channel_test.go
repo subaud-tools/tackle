@@ -15,7 +15,7 @@ func TestChannelSpeaksOnlyMCPOnStdout(t *testing.T) {
 	in := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n" +
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"
 	var out, errw bytes.Buffer
-	if code := Main([]string{"channel"}, strings.NewReader(in), &out, &errw); code != 0 {
+	if code := Main([]string{"channel"}, strings.NewReader(in), &out, &errw, nil); code != 0 {
 		t.Fatalf("code %d, errw %q", code, errw.String())
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")

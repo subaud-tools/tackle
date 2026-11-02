@@ -238,6 +238,27 @@ Open a new terminal window inside a project directory — it should land on the
 
 ---
 
+## Release-owned agent setup
+
+The sift, imprint and cull releases each publish `<tool>_setup.tar.gz` beside that tool's binary. With kempt 0.13.0 or newer, opt into the matching integration by setting `setup = true` on the tool's download in your own manifest:
+
+```toml
+[kempt]
+spec = 2
+
+[[packages.sift.download]]
+site = "tackle.tools"
+tool = "sift"
+bin = "sift"
+setup = true
+```
+
+Use the same shape with `imprint` or `cull` in place of `sift`. The bundle enables only that tool's Claude Code plugin and pi channel, removes only its retired plugin and bare MCP entry, and leaves the shared tackle marketplace and other tools alone. Sift and imprint also install their own embedded skill at the shared user-skill destinations; cull has no bundled skill. The existing Darwin restriction is preserved. Pi packages remain owned by your dotfiles manifest.
+
+The standalone `cmd/<tool>/kempt.toml` manifests below still require the stated manual skill installation. Release-owned setup does not select sift's audit roots or initialize projects, and it does not store cull's key or consent. Those remain explicit choices. For release builds, `<tool> setup-bundle --version X.Y.Z --out <tool>_setup.tar.gz` writes only the archive, without installing anything or starting a server.
+
+---
+
 ## cull
 
 cull looks at the tests an agent wrote and asks TypeSafe's Jev whether each one

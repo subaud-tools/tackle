@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [sift 0.7.0] - 2026-11-02
+
+### Added
+- Release-owned setup for kempt 0.13.0 or later, carrying sift's embedded skill and existing Claude/pi registrations. Preserves sibling plugins and private settings; audit roots and project initialization remain separate choices.
+
+## [imprint 0.5.0] - 2026-11-02
+
+### Added
+- Release-owned setup for kempt 0.13.0 or later, carrying imprint's embedded skill and existing Claude/pi registrations without other tackle tools' assets.
+
+## [cull 0.8.0] - 2026-11-02
+
+### Added
+- Release-owned setup for kempt 0.13.0 or later, carrying cull's existing Claude/pi registrations. Personal configuration, keys and project initialization remain separate choices; no skill is added.
+
 ## [proj 0.20.1] - 2026-10-31
 
 ### Fixed
