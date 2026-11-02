@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - id: rel
-        uses: subaud-tools/tools-actions/release-version@v0.13.1
+        uses: subaud-tools/tools-actions/release-version@v0.13.0
         with:
           mode: prefixed-tag
       - uses: actions/setup-go@v7.0.0
@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p dist
           go run "./cmd/$RELEASE_TOOL" setup-bundle --version "$RELEASE_VERSION" --out "dist/${RELEASE_TOOL}_setup.tar.gz"
-      - uses: subaud-tools/tools-actions/go-release@v0.13.1
+      - uses: subaud-tools/tools-actions/go-release@v0.13.0
         with:
           extra-assets: ${{ contains(fromJSON(env.SETUP_BUNDLE_TOOLS), steps.rel.outputs.tool) && steps.rel.outputs.create == 'true' && format('dist/{0}_setup.tar.gz', steps.rel.outputs.tool) || '' }}
           binaries: ${{ steps.rel.outputs.tool }}=./cmd/${{ steps.rel.outputs.tool }}
