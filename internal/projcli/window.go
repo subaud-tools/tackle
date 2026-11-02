@@ -24,7 +24,7 @@ func newWindowFlags() (*flag.FlagSet, *windowFlags) {
 	f := &windowFlags{
 		socket: fs.String("socket", "", "the tmux server's socket path (the part of $TMUX before the first comma)"),
 		pane:   fs.String("pane", "", "a pane of the session ($TMUX_PANE)"),
-		right:  fs.String("right", "", "the URL for the split's right half"),
+		right:  fs.String("right", "", "one of our pages on 127.0.0.1 to open as a tab beside the terminal"),
 		keep:   fs.Bool("keep-view", false, "leave a terminal page another terminal detached as it is"),
 		json:   fs.Bool("json", false, "emit JSON"),
 	}
@@ -33,12 +33,10 @@ func newWindowFlags() (*flag.FlagSet, *windowFlags) {
 }
 
 const windowHelp = "Moves the session to its Chrome window, detaching any other terminal, and brings the window " +
-	"to the front, or opens a new one with the session's " +
-	"terminal on the left of a split and --right (or an empty tab) on the right, and prints " +
-	"{window,id}: window is opened or raised. On a raised window, --right selects a tab already " +
-	"showing it, else goes in the window's right-half tab, else in a new tab. With --keep-view a page " +
-	"another terminal detached stays detached. A failure names the step and exits 1; the split " +
-	"needs macOS Accessibility permission for the app running proj."
+	"to the front, or opens a new one on the session's split page: its terminal on the left and its tabs " +
+	"on the right. Prints {window,id}: window is opened or raised. --right opens the page as a tab of the " +
+	"session's split page, or shows the tab already open on it; only pages on 127.0.0.1 open there. " +
+	"With --keep-view a page another terminal detached stays detached. A failure names the step and exits 1."
 
 // cmdWindow implements `proj window`.
 func cmdWindow(args []string, out, errw io.Writer) error {

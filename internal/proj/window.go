@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/proj/pages"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 // WindowResult is what `proj window --json` prints: Window is "opened" or
@@ -21,12 +22,8 @@ type WindowResult struct {
 	ID     string `json:"id"`
 }
 
-// windowOption and rightOption are the tmux session options holding the
-// session's Chrome window and the id of the tab that is its right half.
-const (
-	windowOption = "@chrome_window"
-	rightOption  = "@chrome_right"
-)
+// windowOption is the tmux session option holding the session's Chrome window.
+const windowOption = "@chrome_window"
 
 // pagesSocket and pagesSession are where proj window runs the page server.
 const (
@@ -62,53 +59,6 @@ return id of w as text
 end tell
 end run`
 
-// chromeSplitScript brings window argv[1] to the front, confirms it got there,
-// clicks Tab > Add Tab to New Split View, waits for that window to gain a tab,
-// and prints the id of the new half, its active tab: a disabled or absent item raises no error of its own, and the click
-// acts on whichever window is in front, so another window's tabs prove nothing.
-const chromeSplitScript = `on run argv
-set target to item 1 of argv
-tell application "Google Chrome"
-activate
-repeat with w in windows
-if (id of w as text) is target then
-set index of w to 1
-exit repeat
-end if
-end repeat
-end tell
-delay 0.3
-tell application "Google Chrome"
-if (id of front window as text) is not (item 1 of argv) then error "window " & target & " is not the front window"
-end tell
-tell application "System Events" to tell process "Google Chrome"
-click menu item "Add Tab to New Split View" of menu "Tab" of menu bar 1
-end tell
-tell application "Google Chrome"
-repeat 20 times
-repeat with w in windows
-if (id of w as text) is target and (count of tabs of w) > 1 then return id of active tab of w as text
-end repeat
-delay 0.1
-end repeat
-end tell
-error "Tab > Add Tab to New Split View made no new tab in window " & target
-end run`
-
-// chromeSetRightScript points window argv[1]'s active tab, the split's new
-// half, at the URL argv[2].
-const chromeSetRightScript = `on run argv
-tell application "Google Chrome"
-repeat with w in windows
-if (id of w as text) is (item 1 of argv) then
-set URL of active tab of w to (item 2 of argv)
-return
-end if
-end repeat
-end tell
-error "Chrome has no window " & (item 1 of argv)
-end run`
-
 // chromeRaiseScript brings window argv[1] to the front.
 const chromeRaiseScript = `on run argv
 tell application "Google Chrome"
@@ -124,27 +74,6 @@ end tell
 error "Chrome has no window " & (item 1 of argv)
 end run`
 
-// chromeShowTabScript points the tab whose id is argv[2] in window argv[1] at
-// the URL argv[3], makes it the active tab and prints "shown"; it prints nothing
-// when the window has no such tab.
-const chromeShowTabScript = `on run argv
-tell application "Google Chrome"
-repeat with w in windows
-if (id of w as text) is (item 1 of argv) then
-repeat with i from 1 to count of tabs of w
-if (id of tab i of w as text) is (item 2 of argv) then
-set URL of tab i of w to (item 3 of argv)
-set active tab index of w to i
-return "shown"
-end if
-end repeat
-return ""
-end if
-end repeat
-end tell
-error "Chrome has no window " & (item 1 of argv)
-end run`
-
 // chromeSetTabScript points tab number argv[2] of window argv[1] at the URL
 // argv[3], leaving which tab is active alone.
 const chromeSetTabScript = `on run argv
@@ -152,35 +81,6 @@ tell application "Google Chrome"
 repeat with w in windows
 if (id of w as text) is (item 1 of argv) then
 set URL of tab ((item 2 of argv) as integer) of w to (item 3 of argv)
-return
-end if
-end repeat
-end tell
-error "Chrome has no window " & (item 1 of argv)
-end run`
-
-// chromeNewTabScript opens a new tab on the URL argv[2] at the end of window
-// argv[1], makes it the active tab and prints its id.
-const chromeNewTabScript = `on run argv
-tell application "Google Chrome"
-repeat with w in windows
-if (id of w as text) is (item 1 of argv) then
-set t to make new tab at end of tabs of w with properties {URL:(item 2 of argv)}
-set active tab index of w to (count of tabs of w)
-return id of t as text
-end if
-end repeat
-end tell
-error "Chrome has no window " & (item 1 of argv)
-end run`
-
-// chromeSelectTabScript makes tab number argv[2] the active tab of window
-// argv[1].
-const chromeSelectTabScript = `on run argv
-tell application "Google Chrome"
-repeat with w in windows
-if (id of w as text) is (item 1 of argv) then
-set active tab index of w to ((item 2 of argv) as integer)
 return
 end if
 end repeat
@@ -225,13 +125,19 @@ func WindowKeepingView(socket, pane, right string) (WindowResult, error) {
 	return window(socket, pane, right, false)
 }
 
-// window brings pane's session's Chrome window to the front, or opens and splits a new one with its right half on right (empty when
-// right is ""). On a window that exists, right comes into view (see pointRight),
-// and with move a terminal page another terminal detached loads again to take
-// the session.
-// It never closes or moves a tab it did not open, and navigates none but those
-// two.
+// errNotOurPage refuses a right that a split page's frame may not show.
+var errNotOurPage = errors.New("only pages on 127.0.0.1 open in the split; give it as a link")
+
+// window brings pane's session's Chrome window to the front, or opens a new one
+// on the session's split page, and opens right (when not "") as a tab of the
+// session on proj's page server. On a window that exists, with move, a terminal
+// page another terminal detached loads again to take the session.
+// It never closes or moves a tab it did not open, and navigates none but the
+// terminal page.
 func window(socket, pane, right string, move bool) (WindowResult, error) {
+	if right != "" && !localPage(right) {
+		return WindowResult{}, errNotOurPage
+	}
 	name := Query(socket, pane, "#{session_name}")
 	if name == "" {
 		return WindowResult{}, errors.New("the session has ended")
@@ -241,8 +147,7 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 		if err != nil {
 			return WindowResult{}, stepError("find the window", err)
 		}
-		tabs := tabURLs(out)
-		if tab := terminalTab(tabs, socket, name); tab >= 0 {
+		if tab := terminalTab(tabURLs(out), socket, name); tab >= 0 {
 			if move && !pageAttached(socket, pane, name) {
 				addr, token, err := ensurePages()
 				if err != nil {
@@ -252,10 +157,8 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 					return WindowResult{}, stepError("attach the terminal page", err)
 				}
 			}
-			if right != "" {
-				if err := pointRight(socket, pane, name, id, tabs, right); err != nil {
-					return WindowResult{}, stepError("set the right half", err)
-				}
+			if err := openTab(name, right); err != nil {
+				return WindowResult{}, err
 			}
 			if _, err := osascript(chromeRaiseScript, id); err != nil {
 				return WindowResult{}, stepError("raise the window", err)
@@ -279,20 +182,11 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 	if id == "" {
 		return WindowResult{}, stepError("open the window", errors.New("no window id from Chrome"))
 	}
-	half, err := osascript(chromeSplitScript, id)
-	if err != nil {
-		return WindowResult{}, stepError("split the window", err)
-	}
-	if right != "" {
-		if _, err := osascript(chromeSetRightScript, id, right); err != nil {
-			return WindowResult{}, stepError("set the right half", err)
-		}
-	}
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", windowOption, id); err != nil {
 		return WindowResult{}, stepError("store the window id", err)
 	}
-	if _, err := Run(socket, "set-option", "-t", "="+name+":", rightOption, strings.TrimSpace(half)); err != nil {
-		return WindowResult{}, stepError("store the right half's id", err)
+	if err := openTab(name, right); err != nil {
+		return WindowResult{}, err
 	}
 	if _, err := osascript(chromeRaiseScript, id); err != nil {
 		return WindowResult{}, stepError("raise the window", err)
@@ -301,51 +195,27 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 	return WindowResult{Window: "opened", ID: id}, nil
 }
 
-// pointRight brings right into view in window id, whose tab URLs are tabs: it
-// selects a tab already showing right, else points the session's right-half
-// tab at it and selects that, else opens a new tab on it, which becomes the
-// right half.
-func pointRight(socket, pane, name, id string, tabs []string, right string) error {
-	for i, u := range tabs {
-		if samePage(u, right) {
-			_, err := osascript(chromeSelectTabScript, id, strconv.Itoa(i+1))
-			return err
-		}
+// openTab opens right as a tab of session's split page on proj's page server,
+// which shows it beside the terminal; nothing when right is "".
+func openTab(session, right string) error {
+	if right == "" {
+		return nil
 	}
-	if half := Query(socket, pane, "#{"+rightOption+"}"); half != "" {
-		out, err := osascript(chromeShowTabScript, id, half, right)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(out) == "shown" {
-			return nil
-		}
-	}
-	out, err := osascript(chromeNewTabScript, id, right)
+	addr, token, err := ensurePages()
 	if err != nil {
-		return err
+		return stepError("start the page server", err)
 	}
-	_, err = Run(socket, "set-option", "-t", "="+name+":", rightOption, strings.TrimSpace(out))
-	return err
+	if _, err := splitpage.Open("http://"+addr, token, session, right, ""); err != nil {
+		return stepError("open the tab", err)
+	}
+	return nil
 }
 
-// samePage says whether a tab's URL is the page asked for: a page takes its
-// token off its address when it loads, and may add a #section.
-func samePage(tab, asked string) bool {
-	a, errA := pageKey(tab)
-	b, errB := pageKey(asked)
-	return errA == nil && errB == nil && a == b
-}
-
-func pageKey(raw string) (string, error) {
+// localPage says whether a split page's frame may show raw: one of our own
+// pages, http on 127.0.0.1 with a port, as splitpage.Tabs requires.
+func localPage(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Del("t")
-	u.RawQuery, u.Fragment = q.Encode(), ""
-	return u.String(), nil
+	return err == nil && u.Scheme == "http" && u.User == nil && u.Hostname() == "127.0.0.1" && u.Port() != ""
 }
 
 // tabURLs is the has-window script's output as a list.
@@ -430,14 +300,9 @@ func ping(script string) error {
 	return err
 }
 
-// stepError names the step that failed and carries Chrome's or macOS's message,
-// and says what to do when that message is the missing Accessibility permission.
+// stepError names the step that failed and carries Chrome's or macOS's message.
 func stepError(step string, err error) error {
-	msg := failureText(err)
-	if strings.Contains(msg, "assistive access") || strings.Contains(msg, "-25211") || strings.Contains(msg, "-1719") {
-		msg += " (macOS Accessibility permission is missing: allow the app running proj in System Settings > Privacy & Security > Accessibility)"
-	}
-	return fmt.Errorf("%s: %s", step, msg)
+	return fmt.Errorf("%s: %s", step, failureText(err))
 }
 
 // failureText is a command's stderr when it has one, else the error itself.
