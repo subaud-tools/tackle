@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 // closeNoSession is the close code when the session does not exist.
@@ -166,6 +167,11 @@ func (b *bridge) serveTerm(w http.ResponseWriter, r *http.Request) {
 		_ = cmd.Process.Kill() // the client only: the session keeps running
 		_ = cmd.Wait()
 	}()
+	// The page writes no input until its first frame, the replay: tmux redraws
+	// the whole screen on attach, so the reset is all it needs.
+	if c.Write(r.Context(), websocket.MessageBinary, []byte(splitpage.TerminalReset)) != nil {
+		return
+	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

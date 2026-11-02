@@ -1,6 +1,6 @@
 // Package pages is `proj pages`: one long-running local server that shows any
-// session's terminal in a browser page, xterm.js over a websocket to a tmux
-// client in a pty.
+// session's split page, the family's splitpage: its terminal on the left,
+// xterm.js over a websocket to a tmux client in a pty, and its tabs on the right.
 package pages
 
 import (
@@ -23,12 +23,20 @@ import (
 
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 const tool = "proj"
 
+// assets is the server's own index.html, a hint at /; everything else is the
+// split page's.
+//
 //go:embed assets
 var assets embed.FS
+
+// termPage is the split page every session's /term serves; the page reads its
+// session and socket from its own query.
+var termPage = splitpage.Page(splitpage.Config{Title: "proj", Socket: "/api/term/ws", Take: true})
 
 // Start serves the page until ctx ends, on a new token each launch, which it
 // leaves in StateDir for `proj window` once the server listens.
@@ -42,8 +50,11 @@ func Start(ctx context.Context) (*localweb.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	api := http.NewServeMux()
+	api.Handle("/api/term/", newBridge().handler())
+	api.Handle("/api/split/", splitpage.NewTabs().Handler())
 	ctx, stop := context.WithCancel(ctx)
-	srv, err := localweb.Start(ctx, localweb.Config{Tool: tool, Assets: healthFS{FS: sub, token: token}, API: newBridge().handler(), Token: token})
+	srv, err := localweb.Start(ctx, localweb.Config{Tool: tool, Assets: healthFS{FS: siteFS{own: sub}, token: token}, API: api, Token: token})
 	if err != nil {
 		stop()
 		return nil, err
@@ -103,6 +114,20 @@ func Address() (addr, token string, ok bool) {
 	return addr, token, hmac.Equal(proof, []byte(healthProof(token, nonce)))
 }
 
+// siteFS serves the split page at term, the server's own files (index.html),
+// and the split page's script and styles beside them.
+type siteFS struct{ own fs.FS }
+
+func (s siteFS) Open(name string) (fs.File, error) {
+	if name == "term" {
+		return termPage.Open("index.html")
+	}
+	if f, err := s.own.Open(name); err == nil {
+		return f, nil
+	}
+	return termPage.Open(name)
+}
+
 // healthDir is where the server answers health challenges. It is an asset path
 // because localweb asks for the token on everything under /api/.
 const healthDir = "health"
@@ -148,7 +173,7 @@ func (f proofFile) ModTime() time.Time         { return time.Time{} }
 func (f proofFile) IsDir() bool                { return false }
 func (f proofFile) Sys() any                   { return nil }
 
-// TermURL is the address to open for a session's terminal page, with the token,
+// TermURL is the address to open for a session's split page, with the token,
 // to take the session from any other client; the page drops both on load.
 func TermURL(addr, token, socket, session string) string {
 	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}, "take": {"1"}}.Encode()
