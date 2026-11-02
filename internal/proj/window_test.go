@@ -350,9 +350,11 @@ func TestPingsLaunchNothing(t *testing.T) {
 // diazo_open places the plan's page without taking the session from Ghostty.
 func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
 	socket, name, pane := terminalServer(t)
-	term := storedWindow(t, socket, name)
-	calls := fakeChrome(t, term, nil)
+	storedWindow(t, socket, name)
+	calls := fakeChrome(t, "", nil)
 	opened := fakePageServer(t)
+	addr, _, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}}.Encode()+"\n")
 	got, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan")
 	if err != nil {
 		t.Fatal(err)
@@ -374,5 +376,95 @@ func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
 	}
 	if a := (*calls)[0].args[0]; !strings.Contains(a, "take=1") || !pages.TermMatches(a, socket, name) {
 		t.Fatalf("opened %q", a)
+	}
+}
+
+// proj pages 0.20.1, left running from before an upgrade, has no split API:
+// the first proj window after it stops that server in its tmux session and
+// starts this binary's.
+func TestEnsurePagesReplacesAServerFromAnotherBuild(t *testing.T) {
+	var tmux []string
+	started := false
+	origExec, origAddress := execCommand, pagesAddress
+	t.Cleanup(func() { execCommand, pagesAddress = origExec, origAddress })
+	execCommand = func(name string, arg ...string) *exec.Cmd {
+		tmux = append(tmux, strings.Join(arg[:min(len(arg), 6)], " "))
+		started = started || slices.Contains(arg, "new-session")
+		return origExec("true")
+	}
+	pagesAddress = func() (string, string, string, bool) {
+		if started {
+			return "127.0.0.1:2", "new", pages.Build, true
+		}
+		return "127.0.0.1:1", "old", "", true
+	}
+	addr, token, err := ensurePages()
+	if err != nil || addr != "127.0.0.1:2" || token != "new" {
+		t.Fatalf("ensurePages = %q, %q, %v; want the new server", addr, token, err)
+	}
+	want := []string{"-L proj-pages kill-session -t =pages", "-L proj-pages new-session -d -s pages"}
+	if !slices.Equal(tmux, want) {
+		t.Fatalf("ran tmux %q, want %q", tmux, want)
+	}
+}
+
+// chromeShows makes the fake Chrome's stored window show tabs, after
+// fakePageServer, so a tab can be on the fake server's port.
+func chromeShows(t *testing.T, tabs string) {
+	t.Helper()
+	inner := osascript
+	osascript = func(script string, args ...string) (string, error) {
+		out, err := inner(script, args...)
+		if script == chromeHasWindowScript && err == nil {
+			return tabs, nil
+		}
+		return out, err
+	}
+}
+
+// After the page server restarts, the window's terminal page is still on the
+// old port, saying its server stopped. Keeping the view, it loads from the new
+// server, offering to show the session rather than taking it from Ghostty.
+func TestWindowKeepingViewReloadsATerminalPageOnAStoppedServer(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, term, nil)
+	opened := fakePageServer(t)
+	addr, _, _ := ensurePages()
+	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
+		t.Fatal(err)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
+	a := (*calls)[1].args
+	if a[0] != "55" || a[1] != "1" || !strings.HasPrefix(a[2], "http://"+addr+"/term?") || !pages.TermMatches(a[2], socket, name) || !strings.Contains(a[2], "t=tok") || strings.Contains(a[2], "take=") {
+		t.Fatalf("set tab %q, want the page on %s without take", a, addr)
+	}
+	if len(*opened) != 1 {
+		t.Fatalf("opened tabs %+v", *opened)
+	}
+}
+
+// A new window whose tab fails to open still opened, with the terminal in it:
+// it reports opened, so the caller does not open the page somewhere else too,
+// and says on stderr why the tab is missing.
+func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
+	socket, _, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no split here", http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	var warned strings.Builder
+	orig := warnings
+	t.Cleanup(func() { warnings = orig })
+	warnings = &warned
+	got, err := Window(socket, pane, "http://127.0.0.1:4321/plan")
+	if err != nil || got != (WindowResult{Window: "opened", ID: "77"}) {
+		t.Fatalf("Window = %+v, %v; want opened", got, err)
+	}
+	sameScripts(t, *calls, chromeOpenScript, chromeRaiseScript)
+	if !strings.Contains(warned.String(), "open the tab") {
+		t.Fatalf("warned %q", warned.String())
 	}
 }

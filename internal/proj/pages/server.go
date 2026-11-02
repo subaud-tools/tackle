@@ -17,16 +17,43 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/subaud-tools/tackle/internal/version"
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/localweb"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 const tool = "proj"
+
+// Build names the binary a server runs, proj's version and the commit it was
+// built from, so proj window can tell a server an older proj left running.
+var Build = buildName()
+
+// buildName is the version and commit stamped at release, or for a local
+// build the commit Go recorded, marked when the tree had changes.
+func buildName() string {
+	commit := version.Commit()
+	if info, ok := debug.ReadBuildInfo(); ok && commit == "" {
+		var modified bool
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				commit = s.Value
+			case "vcs.modified":
+				modified = s.Value == "true"
+			}
+		}
+		if modified {
+			commit += "+modified"
+		}
+	}
+	return version.Number() + " " + commit
+}
 
 // assets is the server's own index.html, a hint at /; everything else is the
 // split page's.
@@ -77,25 +104,26 @@ func Run(ctx context.Context, out io.Writer) error {
 	return srv.Wait()
 }
 
-// Address says where a running server is: its host:port and token. ok is false
+// Address says where a running server is: its host:port, its token and the
+// build it runs, "" for a server from before builds were named. ok is false
 // when nothing on the remembered port proves it holds our token. The probe
 // never sends the token: whatever listens there may be another program.
-func Address() (addr, token string, ok bool) {
+func Address() (addr, token, build string, ok bool) {
 	port, err := os.ReadFile(filepath.Join(tools.StateDir(tool), "port"))
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	if _, err := strconv.Atoi(strings.TrimSpace(string(port))); err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	tok, err := os.ReadFile(tokenPath())
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	addr, token = "127.0.0.1:"+strings.TrimSpace(string(port)), strings.TrimSpace(string(tok))
 	n := make([]byte, 32)
 	if _, err := rand.Read(n); err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	nonce := hex.EncodeToString(n)
 	client := &http.Client{
@@ -104,14 +132,15 @@ func Address() (addr, token string, ok bool) {
 	}
 	resp, err := client.Get("http://" + addr + "/" + healthDir + "/" + nonce)
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	proof, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 256))
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return "", "", false
+		return "", "", "", false
 	}
-	return addr, token, hmac.Equal(proof, []byte(healthProof(token, nonce)))
+	proof, build, _ := strings.Cut(string(answer), "\n")
+	return addr, token, build, hmac.Equal([]byte(proof), []byte(healthProof(token, nonce)))
 }
 
 // siteFS serves the split page at term, the server's own files (index.html),
@@ -140,7 +169,8 @@ func healthProof(token, nonce string) string {
 }
 
 // healthFS is the page's assets, plus health/<nonce>, a file whose content is
-// the proof for that nonce. A nonce is 64 hex characters.
+// the proof for that nonce and, on the next line, the server's Build. A nonce
+// is 64 hex characters.
 type healthFS struct {
 	fs.FS
 	token string
@@ -154,7 +184,7 @@ func (h healthFS) Open(name string) (fs.File, error) {
 	if b, err := hex.DecodeString(nonce); err != nil || len(b) != 32 {
 		return nil, fs.ErrNotExist
 	}
-	proof := healthProof(h.token, nonce)
+	proof := healthProof(h.token, nonce) + "\n" + Build
 	return proofFile{Reader: strings.NewReader(proof), size: int64(len(proof))}, nil
 }
 
@@ -177,6 +207,12 @@ func (f proofFile) Sys() any                   { return nil }
 // to take the session from any other client; the page drops both on load.
 func TermURL(addr, token, socket, session string) string {
 	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}, "take": {"1"}}.Encode()
+}
+
+// ViewURL is TermURL without the take: a page that attaches only when no other
+// client has the session, else offers to show it there.
+func ViewURL(addr, token, socket, session string) string {
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}}.Encode()
 }
 
 // TermMatches says whether pageURL is the terminal page of session on socket:

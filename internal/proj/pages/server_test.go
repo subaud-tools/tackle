@@ -56,7 +56,7 @@ func recordingServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 func TestAddressRejectsAnotherServerAndKeepsTheTokenFromIt(t *testing.T) {
 	srv, seen := recordingServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	remember(t, srv)
-	if _, _, ok := Address(); ok {
+	if _, _, _, ok := Address(); ok {
 		t.Fatal("a server that only answers 200 was accepted")
 	}
 	if got := seen(); got == "" || strings.Contains(got, fakeToken) {
@@ -70,7 +70,7 @@ func TestAddressDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusFound)
 	})
 	remember(t, srv)
-	if _, _, ok := Address(); ok {
+	if _, _, _, ok := Address(); ok {
 		t.Fatal("a redirect was accepted")
 	}
 	if got := seen(); got != "" {
@@ -80,9 +80,22 @@ func TestAddressDoesNotFollowRedirects(t *testing.T) {
 
 func TestAddressFindsTheRunningServer(t *testing.T) {
 	srv := startServer(t)
-	addr, token, ok := Address()
-	if !ok || addr != srv.Addr() || token != srv.Token {
-		t.Fatalf("Address = %q, %q, %v; want %q and its token", addr, token, ok, srv.Addr())
+	addr, token, build, ok := Address()
+	if !ok || addr != srv.Addr() || token != srv.Token || build != Build {
+		t.Fatalf("Address = %q, %q, %q, %v; want %q, its token and build %q", addr, token, build, ok, srv.Addr(), Build)
+	}
+}
+
+// proj pages 0.20.1 answers the challenge with the proof alone: it is ours,
+// from no build this proj names, so proj window replaces it.
+func TestAddressNamesNoBuildForAServerFromBeforeBuilds(t *testing.T) {
+	srv, _ := recordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, healthProof(fakeToken, strings.TrimPrefix(r.URL.Path, "/"+healthDir+"/")))
+	})
+	remember(t, srv)
+	_, _, build, ok := Address()
+	if !ok || build != "" {
+		t.Fatalf("Address = build %q, %v; want ours with no build", build, ok)
 	}
 }
 

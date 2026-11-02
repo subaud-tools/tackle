@@ -3,6 +3,7 @@ package proj
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -21,6 +22,9 @@ type WindowResult struct {
 	Window string `json:"window"`
 	ID     string `json:"id"`
 }
+
+// warnings is where window says what went wrong in a step it carried on past.
+var warnings io.Writer = os.Stderr
 
 // windowOption is the tmux session option holding the session's Chrome window.
 const windowOption = "@chrome_window"
@@ -88,11 +92,21 @@ end tell
 error "Chrome has no window " & (item 1 of argv)
 end run`
 
+// pagesAddress finds the running page server; a seam for tests.
+var pagesAddress = pages.Address
+
 // ensurePages returns the running page server's address and token, starting
-// it first in its own tmux session when nothing answers. A seam for tests.
+// it first in its own tmux session when nothing answers. A server from another
+// build, an older proj's left running across an upgrade, may lack routes this
+// proj uses, so it is stopped and this binary's started. A seam for tests.
 var ensurePages = func() (addr, token string, err error) {
-	if addr, token, ok := pages.Address(); ok {
+	addr, token, build, ok := pagesAddress()
+	if ok && build == pages.Build {
 		return addr, token, nil
+	}
+	if ok {
+		// A server not in the session lives on beside the new one, unused.
+		_, _ = Run(pagesSocket, "kill-session", "-t", "="+pagesSession)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -102,7 +116,7 @@ var ensurePages = func() (addr, token string, err error) {
 	// moment, so it only says what went wrong if the server never answers.
 	_, startErr := Run(pagesSocket, "new-session", "-d", "-s", pagesSession, exe, "pages")
 	for range 50 {
-		if addr, token, ok := pages.Address(); ok {
+		if addr, token, build, ok := pagesAddress(); ok && build == pages.Build {
 			return addr, token, nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -131,7 +145,8 @@ var errNotOurPage = errors.New("only pages on 127.0.0.1 open in the split; give 
 // window brings pane's session's Chrome window to the front, or opens a new one
 // on the session's split page, and opens right (when not "") as a tab of the
 // session on proj's page server. On a window that exists, with move, a terminal
-// page another terminal detached loads again to take the session.
+// page another terminal detached loads again to take the session; without, a
+// terminal page on a page server that has since restarted loads from the new one.
 // It never closes or moves a tab it did not open, and navigates none but the
 // terminal page.
 func window(socket, pane, right string, move bool) (WindowResult, error) {
@@ -147,7 +162,8 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 		if err != nil {
 			return WindowResult{}, stepError("find the window", err)
 		}
-		if tab := terminalTab(tabURLs(out), socket, name); tab >= 0 {
+		urls := tabURLs(out)
+		if tab := terminalTab(urls, socket, name); tab >= 0 {
 			if move && !pageAttached(socket, pane, name) {
 				addr, token, err := ensurePages()
 				if err != nil {
@@ -155,6 +171,18 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 				}
 				if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.TermURL(addr, token, socket, name)); err != nil {
 					return WindowResult{}, stepError("attach the terminal page", err)
+				}
+			} else if !move {
+				// A page on a server that has since restarted only says it
+				// stopped; it loads from the new one, leaving the session where it is.
+				addr, token, err := ensurePages()
+				if err != nil {
+					return WindowResult{}, stepError("start the page server", err)
+				}
+				if u, err := url.Parse(urls[tab]); err == nil && u.Host != addr {
+					if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.ViewURL(addr, token, socket, name)); err != nil {
+						return WindowResult{}, stepError("reload the terminal page", err)
+					}
 				}
 			}
 			if err := openTab(name, right); err != nil {
@@ -185,8 +213,10 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 	if _, err := Run(socket, "set-option", "-t", "="+name+":", windowOption, id); err != nil {
 		return WindowResult{}, stepError("store the window id", err)
 	}
+	// The window opened with the terminal in it, so a failed tab only warns:
+	// an error would have the caller open the page a second time elsewhere.
 	if err := openTab(name, right); err != nil {
-		return WindowResult{}, err
+		_, _ = fmt.Fprintf(warnings, "proj window: %v\n", err)
 	}
 	if _, err := osascript(chromeRaiseScript, id); err != nil {
 		return WindowResult{}, stepError("raise the window", err)
