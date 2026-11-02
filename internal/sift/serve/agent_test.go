@@ -251,3 +251,24 @@ func TestStatusListsTheUnsettledSends(t *testing.T) {
 		t.Fatalf("%s", w.Body)
 	}
 }
+
+// pageserve's default presence carries where the session runs in tmux; serve
+// takes it, or a channel under tmux is never present and never gets a Send.
+func TestPresenceTakesTheTmuxFields(t *testing.T) {
+	f := newFixture(t)
+	w := f.do("POST", "/api/agent/presence", `{"session":"s1","harness":"pi","label":"pi · x","tmux_socket":"/tmp/tmux-501/default","tmux_pane":"%1"}`)
+	if w.Code != 204 {
+		t.Fatalf("presence %d %s", w.Code, w.Body)
+	}
+}
+
+// A session's activity (tools-common 0.51) reaches serve too; sift has no use
+// for it, so it is taken and ignored rather than refused.
+func TestAnActivityReportIsTakenAndIgnored(t *testing.T) {
+	f := newFixture(t)
+	for _, tok := range []string{"working", "idle"} {
+		if w := f.do("POST", "/api/agent/report", `{"session":"s1","event":"activity","token":"`+tok+`"}`); w.Code != 204 {
+			t.Fatalf("activity %s: %d %s", tok, w.Code, w.Body)
+		}
+	}
+}

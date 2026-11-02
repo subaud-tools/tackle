@@ -21,6 +21,7 @@ import (
 	"github.com/subaud-tools/tackle/internal/sift/store"
 	"github.com/subaud-tools/tools-common/channelmcp"
 	"github.com/subaud-tools/tools-common/msgstate"
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // presenceTTL is how long a session counts as present after its last
@@ -133,9 +134,10 @@ func (s *Server) wakeAll() {
 
 func (s *Server) agentPresence(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Session string `json:"session"`
-		Harness string `json:"harness"`
-		Label   string `json:"label"`
+		Session         string `json:"session"`
+		Harness         string `json:"harness"`
+		Label           string `json:"label"`
+		pageserve.Where        // where it runs in tmux: pageserve sends it, serve has no use for it yet
 	}
 	if err := decode(r, &b); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -367,6 +369,9 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case b.Session == "":
 		writeErr(w, http.StatusBadRequest, "session is required")
+		return
+	case b.Event == channelmcp.ReportActivity: // whether the session is working: no use for it yet
+		w.WriteHeader(http.StatusNoContent)
 		return
 	case b.Event == channelmcp.ReportTurnEnded:
 	case b.Event != channelmcp.ReportHeld && b.Event != channelmcp.ReportLanded:
