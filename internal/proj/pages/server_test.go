@@ -2,6 +2,8 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -13,6 +15,8 @@ import (
 	"testing"
 
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 const fakeToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -52,7 +56,7 @@ func recordingServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 func TestAddressRejectsAnotherServerAndKeepsTheTokenFromIt(t *testing.T) {
 	srv, seen := recordingServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	remember(t, srv)
-	if _, _, ok := Address(); ok {
+	if _, _, _, ok := Address(); ok {
 		t.Fatal("a server that only answers 200 was accepted")
 	}
 	if got := seen(); got == "" || strings.Contains(got, fakeToken) {
@@ -66,7 +70,7 @@ func TestAddressDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusFound)
 	})
 	remember(t, srv)
-	if _, _, ok := Address(); ok {
+	if _, _, _, ok := Address(); ok {
 		t.Fatal("a redirect was accepted")
 	}
 	if got := seen(); got != "" {
@@ -76,9 +80,22 @@ func TestAddressDoesNotFollowRedirects(t *testing.T) {
 
 func TestAddressFindsTheRunningServer(t *testing.T) {
 	srv := startServer(t)
-	addr, token, ok := Address()
-	if !ok || addr != srv.Addr() || token != srv.Token {
-		t.Fatalf("Address = %q, %q, %v; want %q and its token", addr, token, ok, srv.Addr())
+	addr, token, build, ok := Address()
+	if !ok || addr != srv.Addr() || token != srv.Token || build != Build {
+		t.Fatalf("Address = %q, %q, %q, %v; want %q, its token and build %q", addr, token, build, ok, srv.Addr(), Build)
+	}
+}
+
+// proj pages 0.20.1 answers the challenge with the proof alone: it is ours,
+// from no build this proj names, so proj window replaces it.
+func TestAddressNamesNoBuildForAServerFromBeforeBuilds(t *testing.T) {
+	srv, _ := recordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, healthProof(fakeToken, strings.TrimPrefix(r.URL.Path, "/"+healthDir+"/")))
+	})
+	remember(t, srv)
+	_, _, build, ok := Address()
+	if !ok || build != "" {
+		t.Fatalf("Address = build %q, %v; want ours with no build", build, ok)
 	}
 }
 
@@ -126,5 +143,61 @@ func TestTermMatches(t *testing.T) {
 		if got := TermMatches(c.url, s, session); got != c.want {
 			t.Errorf("%s: %q = %v, want %v", c.name, c.url, got, c.want)
 		}
+	}
+}
+
+func get(t *testing.T, u string, header http.Header) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header = header
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, string(b)
+}
+
+func TestTermServesTheSplitPageThatTakes(t *testing.T) {
+	srv := startServer(t)
+	q := url.Values{"socket": {"/tmp/a/s"}, "session": {"p/w"}}
+	code, body := get(t, "http://"+srv.Addr()+"/term?"+q.Encode(), nil)
+	if code != http.StatusOK || !strings.Contains(body, `data-take="true"`) || !strings.Contains(body, `data-socket="/api/term/ws"`) {
+		t.Fatalf("/term = %d:\n%s", code, body)
+	}
+	if code, _ := get(t, "http://"+srv.Addr()+"/split.js", nil); code != http.StatusOK {
+		t.Fatalf("/split.js = %d", code)
+	}
+}
+
+func TestATabOpenedForOneSessionIsNotListedForAnother(t *testing.T) {
+	srv := startServer(t)
+	base := "http://" + srv.Addr()
+	if _, err := splitpage.Open(base, srv.Token, "p/w", "http://127.0.0.1:4321/plan", "plan"); err != nil {
+		t.Fatal(err)
+	}
+	auth := http.Header{localweb.TokenHeader: {srv.Token}}
+	var other, own splitpage.TabList
+	for _, c := range []struct {
+		session string
+		into    *splitpage.TabList
+	}{{"p/x", &other}, {"p/w", &own}} {
+		code, body := get(t, base+"/api/split/tabs?"+url.Values{"session": {c.session}}.Encode(), auth)
+		if code != http.StatusOK {
+			t.Fatalf("tabs for %s = %d: %s", c.session, code, body)
+		}
+		if err := json.Unmarshal([]byte(body), c.into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(other.Tabs) != 0 || len(own.Tabs) != 1 || own.Tabs[0].Address != "http://127.0.0.1:4321/plan" {
+		t.Fatalf("other session's tabs %+v, own %+v", other, own)
 	}
 }

@@ -1,7 +1,9 @@
 package proj
 
 import (
-	"errors"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -12,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/subaud-tools/tackle/internal/proj/pages"
+	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 // chromeCall is one AppleScript the fake Chrome ran.
@@ -40,12 +44,6 @@ func fakeChrome(t *testing.T, tabs string, fail map[string]error) *[]chromeCall 
 			return tabs, nil
 		case chromeOpenScript:
 			return "77\n", nil
-		case chromeSplitScript:
-			return "88\n", nil
-		case chromeShowTabScript:
-			return "shown\n", nil
-		case chromeNewTabScript:
-			return "99\n", nil
 		}
 		return "", nil
 	}
@@ -68,43 +66,63 @@ func sameScripts(t *testing.T, calls []chromeCall, want ...string) {
 	}
 }
 
-func TestWindowOpensAndSplitsWithNoStoredID(t *testing.T) {
+// fakePageServer stands in for proj's page server, after fakeChrome: it
+// records each tab it is asked to open, with the token it was sent.
+func fakePageServer(t *testing.T) *[]splitpage.OpenRequest {
+	t.Helper()
+	var opened []splitpage.OpenRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req splitpage.OpenRequest
+		if r.URL.Path != "/api/split/open" || r.Header.Get(localweb.TokenHeader) != "tok" || json.NewDecoder(r.Body).Decode(&req) != nil {
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		opened = append(opened, req)
+		_ = json.NewEncoder(w).Encode(splitpage.TabList{Session: req.Session, Tabs: []splitpage.Tab{}})
+	}))
+	t.Cleanup(srv.Close)
+	orig := ensurePages
+	t.Cleanup(func() { ensurePages = orig })
+	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	return &opened
+}
+
+func TestWindowOpensTheTerminalPageAloneWithNoStoredID(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	calls := fakeChrome(t, "", nil)
-	got, err := Window(socket, pane, "http://right.example/")
+	opened := fakePageServer(t)
+	got, err := Window(socket, pane, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != (WindowResult{Window: "opened", ID: "77"}) {
 		t.Fatalf("got %+v", got)
 	}
-	sameScripts(t, *calls, chromeOpenScript, chromeSplitScript, chromeSetRightScript, chromeRaiseScript)
+	sameScripts(t, *calls, chromeOpenScript, chromeRaiseScript)
 	open := (*calls)[0].args[0]
-	for _, want := range []string{"127.0.0.1:9/term?", "t=tok", "session=terminal-test%2Fw"} {
+	for _, want := range []string{"/term?", "t=tok", "session=terminal-test%2Fw"} {
 		if !strings.Contains(open, want) {
 			t.Fatalf("opened %q, want it to contain %q", open, want)
 		}
 	}
-	if a := (*calls)[2].args; a[0] != "77" || a[1] != "http://right.example/" {
-		t.Fatalf("set right with %q", a)
+	if len(*opened) != 0 {
+		t.Fatalf("opened tabs %+v, want none", *opened)
 	}
 	if got := Query(socket, "="+name+":", "#{@chrome_window}"); got != "77" {
 		t.Fatalf("@chrome_window = %q", got)
 	}
-	if got := Query(socket, "="+name+":", "#{@chrome_right}"); got != "88" {
-		t.Fatalf("@chrome_right = %q", got)
-	}
 }
 
-func TestWindowLeavesTheRightHalfEmptyWithoutRight(t *testing.T) {
+func TestWindowOpensRightAsATabOfTheNewWindowsSession(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	calls := fakeChrome(t, "", nil)
-	if _, err := Window(socket, pane, ""); err != nil {
+	opened := fakePageServer(t)
+	if _, err := Window(socket, pane, "http://127.0.0.1:4321/plan?t=x"); err != nil {
 		t.Fatal(err)
 	}
-	sameScripts(t, *calls, chromeOpenScript, chromeSplitScript, chromeRaiseScript)
-	if got := Query(socket, "="+name+":", "#{@chrome_right}"); got != "88" {
-		t.Fatalf("@chrome_right = %q", got)
+	sameScripts(t, *calls, chromeOpenScript, chromeRaiseScript)
+	if len(*opened) != 1 || (*opened)[0].Session != name || (*opened)[0].Address != "http://127.0.0.1:4321/plan?t=x" {
+		t.Fatalf("opened tabs %+v", *opened)
 	}
 }
 
@@ -187,79 +205,38 @@ func storedWindow(t *testing.T, socket, name string) string {
 	return "http://127.0.0.1:9/term?" + url.Values{"session": {name}, "socket": {socket}}.Encode() + "\n"
 }
 
-// A Playwright tab beside the terminal is not the right half: only the tab
-// stored as the right half is navigated, and it is selected.
-func TestWindowRaisePointsTheStoredRightTabAtRight(t *testing.T) {
+// On a window that exists, right opens as a tab of the session on proj's page
+// server, then the window comes to the front; no Chrome tab is touched.
+func TestWindowRaiseOpensRightAsATabOfTheSession(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	pageShows(t, socket, name)
 	term := storedWindow(t, socket, name)
-	if _, err := Run(socket, "set-option", "-t", "="+name+":", "@chrome_right", "88"); err != nil {
-		t.Fatal(err)
-	}
-	calls := fakeChrome(t, term+"https://playwright.example/\nchrome://newtab/\n", nil)
-	got, err := Window(socket, pane, "http://right.example/?t=tok&f=a")
+	calls := fakeChrome(t, term+"https://playwright.example/\n", nil)
+	opened := fakePageServer(t)
+	got, err := Window(socket, pane, "http://127.0.0.1:4321/plan?t=tok&f=a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != (WindowResult{Window: "raised", ID: "55"}) {
 		t.Fatalf("got %+v", got)
 	}
-	sameScripts(t, *calls, chromeHasWindowScript, chromeShowTabScript, chromeRaiseScript)
-	if a := (*calls)[1].args; strings.Join(a, " ") != "55 88 http://right.example/?t=tok&f=a" {
-		t.Fatalf("show tab with %q", a)
+	sameScripts(t, *calls, chromeHasWindowScript, chromeRaiseScript)
+	if len(*opened) != 1 || (*opened)[0].Session != name || (*opened)[0].Address != "http://127.0.0.1:4321/plan?t=tok&f=a" {
+		t.Fatalf("opened tabs %+v", *opened)
 	}
 }
 
-// With the right half closed, or never recorded, a new tab takes the URL and
-// becomes the right half; no tab that is there changes.
-func TestWindowRaiseOpensANewTabWhenTheRightTabIsGone(t *testing.T) {
-	for name, stored := range map[string]string{"closed": "88", "never stored": ""} {
-		t.Run(name, func(t *testing.T) {
-			socket, session, pane := terminalServer(t)
-			pageShows(t, socket, session)
-			term := storedWindow(t, socket, session)
-			if stored != "" {
-				if _, err := Run(socket, "set-option", "-t", "="+session+":", "@chrome_right", stored); err != nil {
-					t.Fatal(err)
-				}
-			}
-			calls := fakeChrome(t, "https://first.example/\n"+term, nil)
-			fake := osascript
-			osascript = func(script string, args ...string) (string, error) {
-				out, err := fake(script, args...)
-				if script == chromeShowTabScript {
-					return "", err // the tab is gone
-				}
-				return out, err
-			}
-			if _, err := Window(socket, pane, "http://right.example/"); err != nil {
-				t.Fatal(err)
-			}
-			want := []string{chromeHasWindowScript}
-			if stored != "" {
-				want = append(want, chromeShowTabScript)
-			}
-			sameScripts(t, *calls, append(want, chromeNewTabScript, chromeRaiseScript)...)
-			if got := Query(socket, "="+session+":", "#{@chrome_right}"); got != "99" {
-				t.Fatalf("@chrome_right = %q", got)
-			}
-		})
-	}
-}
-
-// A page that took its token shows its address without it, and may add a
-// section; that is still the page asked for.
-func TestWindowRaiseSelectsATabAlreadyShowingRight(t *testing.T) {
+func TestWindowRefusesARightThatIsNotOurPageAndTouchesNothing(t *testing.T) {
 	socket, name, pane := terminalServer(t)
-	pageShows(t, socket, name)
-	term := storedWindow(t, socket, name)
-	calls := fakeChrome(t, term+"chrome://newtab/\nhttp://right.example/?f=a#decisions\n", nil)
-	if _, err := Window(socket, pane, "http://right.example/?t=tok&f=a"); err != nil {
-		t.Fatal(err)
+	storedWindow(t, socket, name)
+	calls := fakeChrome(t, "", nil)
+	opened := fakePageServer(t)
+	_, err := Window(socket, pane, "https://example.com/")
+	if err == nil || err.Error() != "only pages on 127.0.0.1 open in the split; give it as a link" {
+		t.Fatalf("err = %v", err)
 	}
-	sameScripts(t, *calls, chromeHasWindowScript, chromeSelectTabScript, chromeRaiseScript)
-	if a := (*calls)[1].args; strings.Join(a, " ") != "55 3" {
-		t.Fatalf("selected %q", a)
+	if len(*calls) != 0 || len(*opened) != 0 {
+		t.Fatalf("ran %q and opened %+v", scripts(*calls), *opened)
 	}
 }
 
@@ -276,28 +253,9 @@ func TestWindowReplacesAStoredWindowChromeNoLongerHas(t *testing.T) {
 	if got != (WindowResult{Window: "opened", ID: "77"}) {
 		t.Fatalf("got %+v", got)
 	}
-	sameScripts(t, *calls, chromeHasWindowScript, chromeOpenScript, chromeSplitScript, chromeRaiseScript)
+	sameScripts(t, *calls, chromeHasWindowScript, chromeOpenScript, chromeRaiseScript)
 	if got := Query(socket, "="+name+":", "#{@chrome_window}"); got != "77" {
 		t.Fatalf("@chrome_window = %q", got)
-	}
-}
-
-func TestWindowSplitFailureNamesTheStepAndAccessibility(t *testing.T) {
-	socket, name, pane := terminalServer(t)
-	macos := errors.New("System Events got an error: osascript is not allowed assistive access. (-1719)")
-	calls := fakeChrome(t, "", map[string]error{chromeSplitScript: macos})
-	_, err := Window(socket, pane, "http://right.example/")
-	if err == nil {
-		t.Fatal("no error")
-	}
-	for _, want := range []string{"split", "assistive access", "Accessibility"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("err = %q, want it to contain %q", err, want)
-		}
-	}
-	sameScripts(t, *calls, chromeOpenScript, chromeSplitScript)
-	if got := Query(socket, "="+name+":", "#{@chrome_window}"); got != "" {
-		t.Fatalf("@chrome_window = %q, want nothing stored", got)
 	}
 }
 
@@ -314,16 +272,6 @@ func TestWindowOpensANewOneWhenTheStoredWindowShowsTheSameNameOnAnotherSocket(t 
 	}
 	if got.Window != "opened" {
 		t.Fatalf("got %+v; ran %q", got, scripts(*calls))
-	}
-}
-
-// The AppleScript itself is checked live; this holds the two guards in place.
-func TestSplitScriptActsOnlyOnTheTargetWindow(t *testing.T) {
-	if strings.Contains(chromeSplitScript, "of tabs of front window") {
-		t.Error("the split waits on the front window, which may not be the target")
-	}
-	if !strings.Contains(chromeSplitScript, "(id of front window as text) is not (item 1 of argv)") {
-		t.Error("the split does not confirm the target is in front before the click")
 	}
 }
 
@@ -402,16 +350,22 @@ func TestPingsLaunchNothing(t *testing.T) {
 // diazo_open places the plan's page without taking the session from Ghostty.
 func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
 	socket, name, pane := terminalServer(t)
-	term := storedWindow(t, socket, name)
-	calls := fakeChrome(t, term, nil)
-	got, err := WindowKeepingView(socket, pane, "http://right.example/")
+	storedWindow(t, socket, name)
+	calls := fakeChrome(t, "", nil)
+	opened := fakePageServer(t)
+	addr, _, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("tok")}}.Encode()+"\n")
+	got, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != (WindowResult{Window: "raised", ID: "55"}) {
 		t.Fatalf("got %+v", got)
 	}
-	sameScripts(t, *calls, chromeHasWindowScript, chromeNewTabScript, chromeRaiseScript)
+	sameScripts(t, *calls, chromeHasWindowScript, chromeRaiseScript)
+	if len(*opened) != 1 {
+		t.Fatalf("opened tabs %+v", *opened)
+	}
 }
 
 func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
@@ -422,5 +376,117 @@ func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
 	}
 	if a := (*calls)[0].args[0]; !strings.Contains(a, "take=1") || !pages.TermMatches(a, socket, name) {
 		t.Fatalf("opened %q", a)
+	}
+}
+
+// proj pages 0.20.1, left running from before an upgrade, has no split API:
+// the first proj window after it stops that server in its tmux session and
+// starts this binary's.
+func TestEnsurePagesReplacesAServerFromAnotherBuild(t *testing.T) {
+	var tmux []string
+	started := false
+	origExec, origAddress := execCommand, pagesAddress
+	t.Cleanup(func() { execCommand, pagesAddress = origExec, origAddress })
+	execCommand = func(name string, arg ...string) *exec.Cmd {
+		tmux = append(tmux, strings.Join(arg[:min(len(arg), 6)], " "))
+		started = started || slices.Contains(arg, "new-session")
+		return origExec("true")
+	}
+	pagesAddress = func() (string, string, string, bool) {
+		if started {
+			return "127.0.0.1:2", "new", pages.Build, true
+		}
+		return "127.0.0.1:1", "old", "", true
+	}
+	addr, token, err := ensurePages()
+	if err != nil || addr != "127.0.0.1:2" || token != "new" {
+		t.Fatalf("ensurePages = %q, %q, %v; want the new server", addr, token, err)
+	}
+	want := []string{"-L proj-pages kill-session -t =pages", "-L proj-pages new-session -d -s pages"}
+	if !slices.Equal(tmux, want) {
+		t.Fatalf("ran tmux %q, want %q", tmux, want)
+	}
+}
+
+// chromeShows makes the fake Chrome's stored window show tabs, after
+// fakePageServer, so a tab can be on the fake server's port.
+func chromeShows(t *testing.T, tabs string) {
+	t.Helper()
+	inner := osascript
+	osascript = func(script string, args ...string) (string, error) {
+		out, err := inner(script, args...)
+		if script == chromeHasWindowScript && err == nil {
+			return tabs, nil
+		}
+		return out, err
+	}
+}
+
+// After the page server restarts, the window's terminal page is still on the
+// old port, saying its server stopped. Keeping the view, it loads from the new
+// server, offering to show the session rather than taking it from Ghostty.
+func TestWindowKeepingViewReloadsATerminalPageOnAStoppedServer(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	term := storedWindow(t, socket, name)
+	calls := fakeChrome(t, term, nil)
+	opened := fakePageServer(t)
+	addr, _, _ := ensurePages()
+	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
+		t.Fatal(err)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
+	a := (*calls)[1].args
+	if a[0] != "55" || a[1] != "1" || !strings.HasPrefix(a[2], "http://"+addr+"/term?") || !pages.TermMatches(a[2], socket, name) || !strings.Contains(a[2], "t=tok") || strings.Contains(a[2], "take=") {
+		t.Fatalf("set tab %q, want the page on %s without take", a, addr)
+	}
+	if len(*opened) != 1 {
+		t.Fatalf("opened tabs %+v", *opened)
+	}
+}
+
+// A new window whose tab fails to open still opened, with the terminal in it:
+// it reports opened, so the caller does not open the page somewhere else too,
+// and says on stderr why the tab is missing.
+func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
+	socket, _, pane := terminalServer(t)
+	calls := fakeChrome(t, "", nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no split here", http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	var warned strings.Builder
+	orig := warnings
+	t.Cleanup(func() { warnings = orig })
+	warnings = &warned
+	got, err := Window(socket, pane, "http://127.0.0.1:4321/plan")
+	if err != nil || got != (WindowResult{Window: "opened", ID: "77"}) {
+		t.Fatalf("Window = %+v, %v; want opened", got, err)
+	}
+	sameScripts(t, *calls, chromeOpenScript, chromeRaiseScript)
+	if !strings.Contains(warned.String(), "open the tab") {
+		t.Fatalf("warned %q", warned.String())
+	}
+}
+
+// A page server restarted on the same port leaves the window's terminal page
+// dead on the same address: the page names the server it came from, so it
+// loads from the new one, keeping the view.
+func TestWindowKeepingViewReloadsAPageFromAnEarlierServerOnTheSamePort(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	storedWindow(t, socket, name)
+	calls := fakeChrome(t, "", nil)
+	opened := fakePageServer(t)
+	addr, _, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("an-earlier-token")}}.Encode()+"\n")
+	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
+		t.Fatal(err)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
+	if a := (*calls)[1].args[2]; strings.Contains(a, "take=") || !strings.Contains(a, "i="+pages.Instance("tok")) {
+		t.Fatalf("set tab %q, want the page from the current server without take", a)
+	}
+	if len(*opened) != 1 {
+		t.Fatalf("opened tabs %+v", *opened)
 	}
 }

@@ -1,6 +1,6 @@
 // Package pages is `proj pages`: one long-running local server that shows any
-// session's terminal in a browser page, xterm.js over a websocket to a tmux
-// client in a pty.
+// session's split page, the family's splitpage: its terminal on the left,
+// xterm.js over a websocket to a tmux client in a pty, and its tabs on the right.
 package pages
 
 import (
@@ -17,18 +17,53 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/subaud-tools/tackle/internal/version"
 	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 const tool = "proj"
 
+// Build names the binary a server runs, proj's version and the commit it was
+// built from, so proj window can tell a server an older proj left running.
+var Build = buildName()
+
+// buildName is the version and commit stamped at release, or for a local
+// build the commit Go recorded, marked when the tree had changes.
+func buildName() string {
+	commit := version.Commit()
+	if info, ok := debug.ReadBuildInfo(); ok && commit == "" {
+		var modified bool
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				commit = s.Value
+			case "vcs.modified":
+				modified = s.Value == "true"
+			}
+		}
+		if modified {
+			commit += "+modified"
+		}
+	}
+	return version.Number() + " " + commit
+}
+
+// assets is the server's own index.html, a hint at /; everything else is the
+// split page's.
+//
 //go:embed assets
 var assets embed.FS
+
+// termPage is the split page every session's /term serves; the page reads its
+// session and socket from its own query.
+var termPage = splitpage.Page(splitpage.Config{Title: "proj", Socket: "/api/term/ws", Take: true})
 
 // Start serves the page until ctx ends, on a new token each launch, which it
 // leaves in StateDir for `proj window` once the server listens.
@@ -42,8 +77,11 @@ func Start(ctx context.Context) (*localweb.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	api := http.NewServeMux()
+	api.Handle("/api/term/", newBridge().handler())
+	api.Handle("/api/split/", splitpage.NewTabs().Handler())
 	ctx, stop := context.WithCancel(ctx)
-	srv, err := localweb.Start(ctx, localweb.Config{Tool: tool, Assets: healthFS{FS: sub, token: token}, API: newBridge().handler(), Token: token})
+	srv, err := localweb.Start(ctx, localweb.Config{Tool: tool, Assets: healthFS{FS: siteFS{own: sub}, token: token}, API: api, Token: token})
 	if err != nil {
 		stop()
 		return nil, err
@@ -66,25 +104,26 @@ func Run(ctx context.Context, out io.Writer) error {
 	return srv.Wait()
 }
 
-// Address says where a running server is: its host:port and token. ok is false
+// Address says where a running server is: its host:port, its token and the
+// build it runs, "" for a server from before builds were named. ok is false
 // when nothing on the remembered port proves it holds our token. The probe
 // never sends the token: whatever listens there may be another program.
-func Address() (addr, token string, ok bool) {
+func Address() (addr, token, build string, ok bool) {
 	port, err := os.ReadFile(filepath.Join(tools.StateDir(tool), "port"))
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	if _, err := strconv.Atoi(strings.TrimSpace(string(port))); err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	tok, err := os.ReadFile(tokenPath())
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	addr, token = "127.0.0.1:"+strings.TrimSpace(string(port)), strings.TrimSpace(string(tok))
 	n := make([]byte, 32)
 	if _, err := rand.Read(n); err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	nonce := hex.EncodeToString(n)
 	client := &http.Client{
@@ -93,14 +132,29 @@ func Address() (addr, token string, ok bool) {
 	}
 	resp, err := client.Get("http://" + addr + "/" + healthDir + "/" + nonce)
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	proof, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 256))
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return "", "", false
+		return "", "", "", false
 	}
-	return addr, token, hmac.Equal(proof, []byte(healthProof(token, nonce)))
+	proof, build, _ := strings.Cut(string(answer), "\n")
+	return addr, token, build, hmac.Equal([]byte(proof), []byte(healthProof(token, nonce)))
+}
+
+// siteFS serves the split page at term, the server's own files (index.html),
+// and the split page's script and styles beside them.
+type siteFS struct{ own fs.FS }
+
+func (s siteFS) Open(name string) (fs.File, error) {
+	if name == "term" {
+		return termPage.Open("index.html")
+	}
+	if f, err := s.own.Open(name); err == nil {
+		return f, nil
+	}
+	return termPage.Open(name)
 }
 
 // healthDir is where the server answers health challenges. It is an asset path
@@ -115,7 +169,8 @@ func healthProof(token, nonce string) string {
 }
 
 // healthFS is the page's assets, plus health/<nonce>, a file whose content is
-// the proof for that nonce. A nonce is 64 hex characters.
+// the proof for that nonce and, on the next line, the server's Build. A nonce
+// is 64 hex characters.
 type healthFS struct {
 	fs.FS
 	token string
@@ -129,7 +184,7 @@ func (h healthFS) Open(name string) (fs.File, error) {
 	if b, err := hex.DecodeString(nonce); err != nil || len(b) != 32 {
 		return nil, fs.ErrNotExist
 	}
-	proof := healthProof(h.token, nonce)
+	proof := healthProof(h.token, nonce) + "\n" + Build
 	return proofFile{Reader: strings.NewReader(proof), size: int64(len(proof))}, nil
 }
 
@@ -148,10 +203,25 @@ func (f proofFile) ModTime() time.Time         { return time.Time{} }
 func (f proofFile) IsDir() bool                { return false }
 func (f proofFile) Sys() any                   { return nil }
 
-// TermURL is the address to open for a session's terminal page, with the token,
+// TermURL is the address to open for a session's split page, with the token,
 // to take the session from any other client; the page drops both on load.
 func TermURL(addr, token, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}, "take": {"1"}}.Encode()
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {Instance(token)}, "t": {token}, "take": {"1"}}.Encode()
+}
+
+// Instance names the page server a terminal page came from, in its address,
+// where it stays after the page drops its token: a restart on the same port is
+// a new token, so a page whose instance differs is on a server that has gone.
+// It is a hash, so the address never carries the token itself.
+func Instance(token string) string {
+	h := sha256.Sum256([]byte("proj pages instance " + token))
+	return hex.EncodeToString(h[:6])
+}
+
+// ViewURL is TermURL without the take: a page that attaches only when no other
+// client has the session, else offers to show it there.
+func ViewURL(addr, token, socket, session string) string {
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {Instance(token)}, "t": {token}}.Encode()
 }
 
 // TermMatches says whether pageURL is the terminal page of session on socket:

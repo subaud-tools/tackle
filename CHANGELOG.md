@@ -6,6 +6,20 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.21.0] - 2026-11-02
+
+### Changed
+- A session's Chrome window is now one tab, the family's split page (tools-common 0.54.0): the terminal on the left and the session's tabs on the right, each tab named by its page (diazo, casebook). A link the terminal prints opens in a browser tab of its own when clicked. `proj window --right <url>` opens the URL as a tab of the session's split page instead of a tab in Chrome's own split, so a page an agent opens lands beside the terminal; a URL that isn't one of our pages on 127.0.0.1 is refused with an error saying to give it as a link.
+- `proj window` no longer drives System Events, so it no longer needs the macOS Accessibility permission. The `@chrome_right` session option is no longer set or read.
+
+### Fixed
+- A `proj pages` server left running by another proj build (0.20.1 has no split page) is replaced by this binary's the first time `proj window` needs it: its health answer now names its build, and one that names none or another is stopped in tmux session `pages` on socket proj-pages and started again.
+- A session window's terminal page left on a page server that has since restarted loads from the new one, even when `proj window` keeps the view; it does not take the session from Ghostty, it offers to show it.
+- A new window whose `--right` tab fails to open is reported as opened, with the tab's error on stderr, so a caller does not open the page a second time elsewhere.
+
+### Removed
+- proj's own terminal page frontend (`internal/proj/pages/web`): the split page's terminal replaces it.
+
 ## [cull 0.9.1] - 2026-11-02
 
 ### Fixed

@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/splitpage"
 )
 
 const testSession = "pages-test/w"
@@ -436,5 +437,22 @@ func TestTTYHasProcessReadsPs(t *testing.T) {
 	}
 	if busy, err := ttyHasProcess("/dev/no-such-tty"); err == nil || busy {
 		t.Fatalf("a tty ps cannot read: busy = %v, err = %v; want an error", busy, err)
+	}
+}
+
+// The page writes no input until the replay, at least the reset, has arrived.
+func TestFirstFrameIsTheTerminalReset(t *testing.T) {
+	socket := tmuxServer(t)
+	srv := startServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, wsURL(srv, socket, testSession), withToken(srv)) //nolint:bodyclose // a 101 has no body
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.CloseNow() }()
+	kind, data, err := c.Read(ctx)
+	if err != nil || kind != websocket.MessageBinary || string(data) != splitpage.TerminalReset {
+		t.Fatalf("first frame = %v %q, %v; want the binary reset", kind, data, err)
 	}
 }
