@@ -6,12 +6,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 	"github.com/subaud-tools/tools-common/setupbundle"
 	commonskills "github.com/subaud-tools/tools-common/skills"
 )
+
+func TestReleaseWorkflowSetupSelection(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	const declaration = `SETUP_BUNDLE_TOOLS: '["proj", "sift", "imprint", "cull"]'`
+	if strings.Count(workflow, declaration) != 1 {
+		t.Fatal("declare the setup-producing tools once")
+	}
+	if strings.Count(workflow, "contains(fromJSON(env.SETUP_BUNDLE_TOOLS), steps.rel.outputs.tool)") != 3 {
+		t.Fatal("setup-go, producer and extra-assets must use the same tool selection")
+	}
+}
 
 // Exercise the actual cmd adapters: an internal-only registration would not
 // publish the declaration embedded by the release's entry point.
