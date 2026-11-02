@@ -151,7 +151,7 @@ func startWait(args ...string) <-chan waitResult {
 	ch := make(chan waitResult, 1)
 	go func() {
 		var o, e strings.Builder
-		code := Main(append([]string{"wait"}, args...), strings.NewReader(""), &o, &e)
+		code := Main(append([]string{"wait"}, args...), strings.NewReader(""), &o, &e, nil)
 		ch <- waitResult{code, o.String(), e.String()}
 	}()
 	return ch

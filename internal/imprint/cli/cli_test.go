@@ -15,7 +15,7 @@ import (
 func run(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errw bytes.Buffer
-	code := Main(args, strings.NewReader(""), &out, &errw)
+	code := Main(args, strings.NewReader(""), &out, &errw, nil)
 	return code, out.String(), errw.String()
 }
 

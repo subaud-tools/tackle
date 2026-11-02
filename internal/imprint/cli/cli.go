@@ -7,10 +7,11 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/version"
 	tools "github.com/subaud-tools/tools-common"
+	"github.com/subaud-tools/tools-common/setupbundle"
 )
 
 // Main runs `imprint args...` and returns the exit code.
-func Main(args []string, stdin io.Reader, out, errw io.Writer) int {
+func Main(args []string, stdin io.Reader, out, errw io.Writer, setup *setupbundle.Source) int {
 	a := tools.New(tools.Config{
 		Name:    "imprint",
 		Domain:  "tackle.tools",
@@ -23,6 +24,9 @@ func Main(args []string, stdin io.Reader, out, errw io.Writer) int {
 	})
 	for _, c := range commands(stdin) {
 		a.Register(c)
+	}
+	if setup != nil {
+		a.Register(setupbundle.BundleCommand("imprint", version.Number(), *setup))
 	}
 	return a.Dispatch(args, out, errw)
 }
