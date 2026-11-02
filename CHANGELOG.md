@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.9.1] - 2026-11-02
+
+### Fixed
+- The channel no longer prints `cull channel: report activity: cull serve isn't running` each time a session starts or stops working while cull's page server isn't up. A session's last working or idle report still reaches the server after it restarts (tools-common 0.53.1).
+
+## [sift 0.8.1] - 2026-11-02
+
+### Fixed
+- The channel no longer prints `sift channel: report activity: sift serve isn't running` each time a session starts or stops working while sift's page server isn't up. A session's last working or idle report still reaches the server after it restarts (tools-common 0.53.1).
+
+## [imprint 0.5.1] - 2026-11-02
+
+### Fixed
+- The channel no longer prints `imprint channel: report activity: imprint serve isn't running` each time a session starts or stops working while imprint's page server isn't up. A session's last working or idle report still reaches the server after it restarts (tools-common 0.53.1).
+
 ## [cull 0.9.0] - 2026-11-02
 
 ### Changed
