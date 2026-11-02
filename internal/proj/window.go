@@ -173,13 +173,14 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 					return WindowResult{}, stepError("attach the terminal page", err)
 				}
 			} else if !move {
-				// A page on a server that has since restarted only says it
-				// stopped; it loads from the new one, leaving the session where it is.
+				// A page on a server that has since restarted, on another port or
+				// the same one, only says it stopped; it loads from the new one,
+				// leaving the session where it is.
 				addr, token, err := ensurePages()
 				if err != nil {
 					return WindowResult{}, stepError("start the page server", err)
 				}
-				if u, err := url.Parse(urls[tab]); err == nil && u.Host != addr {
+				if u, err := url.Parse(urls[tab]); err == nil && (u.Host != addr || u.Query().Get("i") != pages.Instance(token)) {
 					if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.ViewURL(addr, token, socket, name)); err != nil {
 						return WindowResult{}, stepError("reload the terminal page", err)
 					}

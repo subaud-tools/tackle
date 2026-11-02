@@ -206,13 +206,22 @@ func (f proofFile) Sys() any                   { return nil }
 // TermURL is the address to open for a session's split page, with the token,
 // to take the session from any other client; the page drops both on load.
 func TermURL(addr, token, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}, "take": {"1"}}.Encode()
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {Instance(token)}, "t": {token}, "take": {"1"}}.Encode()
+}
+
+// Instance names the page server a terminal page came from, in its address,
+// where it stays after the page drops its token: a restart on the same port is
+// a new token, so a page whose instance differs is on a server that has gone.
+// It is a hash, so the address never carries the token itself.
+func Instance(token string) string {
+	h := sha256.Sum256([]byte("proj pages instance " + token))
+	return hex.EncodeToString(h[:6])
 }
 
 // ViewURL is TermURL without the take: a page that attaches only when no other
 // client has the session, else offers to show it there.
 func ViewURL(addr, token, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "t": {token}}.Encode()
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {Instance(token)}, "t": {token}}.Encode()
 }
 
 // TermMatches says whether pageURL is the terminal page of session on socket:

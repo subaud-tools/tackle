@@ -354,7 +354,7 @@ func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
 	calls := fakeChrome(t, "", nil)
 	opened := fakePageServer(t)
 	addr, _, _ := ensurePages()
-	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}}.Encode()+"\n")
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("tok")}}.Encode()+"\n")
 	got, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan")
 	if err != nil {
 		t.Fatal(err)
@@ -466,5 +466,27 @@ func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
 	sameScripts(t, *calls, chromeOpenScript, chromeRaiseScript)
 	if !strings.Contains(warned.String(), "open the tab") {
 		t.Fatalf("warned %q", warned.String())
+	}
+}
+
+// A page server restarted on the same port leaves the window's terminal page
+// dead on the same address: the page names the server it came from, so it
+// loads from the new one, keeping the view.
+func TestWindowKeepingViewReloadsAPageFromAnEarlierServerOnTheSamePort(t *testing.T) {
+	socket, name, pane := terminalServer(t)
+	storedWindow(t, socket, name)
+	calls := fakeChrome(t, "", nil)
+	opened := fakePageServer(t)
+	addr, _, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("an-earlier-token")}}.Encode()+"\n")
+	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
+		t.Fatal(err)
+	}
+	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
+	if a := (*calls)[1].args[2]; strings.Contains(a, "take=") || !strings.Contains(a, "i="+pages.Instance("tok")) {
+		t.Fatalf("set tab %q, want the page from the current server without take", a)
+	}
+	if len(*opened) != 1 {
+		t.Fatalf("opened tabs %+v", *opened)
 	}
 }
