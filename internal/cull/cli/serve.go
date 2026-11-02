@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/subaud-tools/tackle/internal/cull/channel"
 	"github.com/subaud-tools/tackle/internal/cull/discover"
@@ -70,7 +69,7 @@ func serveForeground(ctx context.Context, port int, errw io.Writer) error {
 		return err
 	}
 	defer func() { _ = st.Close() }()
-	return serve.Run(ctx, st, serve.Options{Port: port, Idle: 8 * time.Hour, Version: version.Number(), Log: errw,
+	return serve.Run(ctx, st, serve.Options{Port: port, Version: version.Number(), Log: errw,
 		Ready: func(string) {}})
 }
 

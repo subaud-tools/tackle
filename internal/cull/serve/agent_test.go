@@ -478,3 +478,25 @@ func TestASendWhoseClaimerIsGoneGoesToTheNextWait(t *testing.T) {
 		t.Fatalf("s2 got nothing: %d %s", w.Code, w.Body)
 	}
 }
+
+// pageserve's default presence carries where the session runs in tmux; serve
+// takes it, or a channel under tmux is never present and never gets a Send.
+func TestPresenceTakesTheTmuxFields(t *testing.T) {
+	a := newAgentFx(t)
+	w := a.post("/api/agent/presence", map[string]string{"session": "s1", "harness": "pi", "label": "pi · x",
+		"root": "/r", "tmux_socket": "/tmp/tmux-501/default", "tmux_pane": "%1"})
+	if w.Code != 204 {
+		t.Fatalf("presence %d %s", w.Code, w.Body)
+	}
+}
+
+// A session's activity (tools-common 0.51) reaches serve too; cull has no use
+// for it, so it is taken and ignored rather than refused.
+func TestAnActivityReportIsTakenAndIgnored(t *testing.T) {
+	a := newAgentFx(t)
+	for _, tok := range []string{"working", "idle"} {
+		if w := a.post("/api/agent/report", map[string]string{"session": "s1", "event": "activity", "token": tok}); w.Code != 204 {
+			t.Fatalf("activity %s: %d %s", tok, w.Code, w.Body)
+		}
+	}
+}

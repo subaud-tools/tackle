@@ -43,16 +43,15 @@ func New(st *store.Store) *Server {
 
 // Options configures Run.
 type Options struct {
-	Port      int           // 0: remembered, else free
-	Idle      time.Duration // shut down after this long with no API traffic (0: never)
+	Port      int // 0: remembered, else free
 	Version   string
 	Log       io.Writer // one line per start/stop
 	Ready     func(url string)
 	PollEvery time.Duration // round-change poll; default 2s
 }
 
-// Run serves until ctx ends, /api/stop, or the idle limit. pageserve writes
-// the entry while running and removes it on the way out.
+// Run serves until ctx ends or /api/stop. pageserve writes the entry while
+// running and removes it on the way out.
 func Run(ctx context.Context, st *store.Store, o Options) error {
 	if o.PollEvery <= 0 {
 		o.PollEvery = 2 * time.Second
@@ -64,7 +63,7 @@ func Run(ctx context.Context, st *store.Store, o Options) error {
 	s := New(st)
 	return pageserve.Run(ctx, pageserve.Options{
 		Live: Live(), Assets: page.With(assetsFS), API: s.Handler(), Events: s.events,
-		Port: o.Port, Idle: o.Idle, Version: o.Version, Log: o.Log, Ready: o.Ready,
+		Port: o.Port, Version: o.Version, Log: o.Log, Ready: o.Ready,
 		OnStart: func(ctx context.Context, url string) {
 			s.pageURL = url
 			go s.Watch(ctx, o.PollEvery)
