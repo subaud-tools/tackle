@@ -6,7 +6,7 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
-## [cull Unreleased]
+## [cull 0.9.0] - 2026-11-02
 
 ### Changed
 - cull's page server no longer shuts down after 8 hours with no use: it runs until `cull serve --stop` or a newer install replaces it. When an install replaces the cull binary, the running server marks itself stale and the next cull tool call restarts it on the new binary; it keeps its token across restarts, so an open review page reconnects (tools-common 0.52.1).
@@ -15,7 +15,7 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 ### Fixed
 - An agent session running in tmux still gets Court's answers: the channel's presence now says which tmux pane it runs in, and cull's server takes it. A session's working or idle report is taken and ignored.
 
-## [sift Unreleased]
+## [sift 0.8.0] - 2026-11-02
 
 ### Changed
 - sift's page server no longer shuts down after 8 hours with no use: it runs until `sift serve --stop` or a newer install replaces it. When an install replaces the sift binary, the running server marks itself stale and the next sift tool call restarts it on the new binary; it keeps its token across restarts, so an open review page reconnects (tools-common 0.52.1).
