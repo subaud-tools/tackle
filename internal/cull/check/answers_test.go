@@ -90,10 +90,10 @@ func TestAnswerSettlesUnchangedTest(t *testing.T) {
 	answerLatest(t, s, first.Root, first.Tests[0].ID, "test", "cut", "dead weight")
 	second := runCheck(t, root, f, s)
 	tr := second.Tests[0]
-	if tr.Verdict != "cut" || tr.Rule != "court" || second.Summary["answered"] != 1 || second.Summary["cut"] != 1 || second.Summary["review"] != 0 {
+	if tr.Verdict != "cut" || tr.Rule != "user" || second.Summary["answered"] != 1 || second.Summary["cut"] != 1 || second.Summary["review"] != 0 {
 		t.Fatalf("second: %+v %v", tr, second.Summary)
 	}
-	if last := tr.Reasons[len(tr.Reasons)-1]; last != "court: dead weight" {
+	if last := tr.Reasons[len(tr.Reasons)-1]; last != "user: dead weight" {
 		t.Fatalf("reasons %v", tr.Reasons)
 	}
 	if !second.HasActions() {
@@ -145,7 +145,7 @@ func TestGroupAnswerMerge(t *testing.T) {
 	answerLatest(t, s, first.Root, g.ID, "group", "merge", "")
 	second := runCheck(t, root, f, s)
 	g = second.Groups[0]
-	if g.Verdict != "consolidate" || g.Rule != "court" || second.Summary["consolidate"] != 1 || second.Summary["group_review"] != 0 {
+	if g.Verdict != "consolidate" || g.Rule != "user" || second.Summary["consolidate"] != 1 || second.Summary["group_review"] != 0 {
 		t.Fatalf("%+v %v", g, second.Summary)
 	}
 	// An answer whose value does not fit the kind is ignored.
@@ -187,7 +187,7 @@ func TestRunRecorded(t *testing.T) {
 		byName[it.Name] = it
 	}
 	a, b := byName["TestA"], byName["TestB"]
-	if a.Verdict != "review" || a.Rule != "review_band" || b.Verdict != "keep" || b.Rule != "court" {
+	if a.Verdict != "review" || a.Rule != "review_band" || b.Verdict != "keep" || b.Rule != "user" {
 		t.Fatalf("a=%+v b=%+v", a, b)
 	}
 	// The recorded state is exactly what Jev saw: same hash, same bytes.
@@ -283,7 +283,7 @@ func TestGroupWrongKindAnswerIgnored(t *testing.T) {
 	answerLatest(t, s, first.Root, first.Groups[0].ID, "group", "keep", "")
 	second := runCheck(t, root, f, s)
 	g := second.Groups[0]
-	if g.Verdict != "review" || g.Rule == "court" || second.Summary["answered"] != 0 {
+	if g.Verdict != "review" || g.Rule == "user" || second.Summary["answered"] != 0 {
 		t.Fatalf("%+v %v", g, second.Summary)
 	}
 }
@@ -320,21 +320,21 @@ func TestRecordRunFailureWarnsAndWritesLastJSON(t *testing.T) {
 	if !strings.Contains(se.String(), "cull: review store unavailable: ") {
 		t.Fatalf("stderr %q", se.String())
 	}
-	if r.Tests[0].Verdict != "cut" || r.Tests[0].Rule != "court" {
+	if r.Tests[0].Verdict != "cut" || r.Tests[0].Rule != "user" {
 		t.Fatalf("%+v", r.Tests[0])
 	}
 	b, err := os.ReadFile(filepath.Join(root, ".cull", "last.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"court"`) {
+	if !strings.Contains(string(b), `"user"`) {
 		t.Fatalf("last.json lacks applied answer: %s", b)
 	}
 }
 
 const pinSrc = "package pkg\n\nfunc TestPin(t *testing.T) {\n\tif Setting != 3 {\n\t\tt.Fatal(\"x\")\n\t}\n}\n"
 
-func TestPinsSettingCutGoesToCourt(t *testing.T) {
+func TestPinsSettingCutGoesToTheUser(t *testing.T) {
 	root := fixture(t, pinSrc)
 	writeFile(t, root, "pkg/calc.go", "package pkg\n\nconst Setting = 3\n")
 	s := openStore(t)
@@ -358,11 +358,11 @@ func TestPinsSettingCutGoesToCourt(t *testing.T) {
 	if !strings.Contains(string(b), `"pins_setting":true`) {
 		t.Fatalf("json %s", b)
 	}
-	// Court's saved answer settles it.
+	// The user's saved answer settles it.
 	answerLatest(t, s, first.Root, tr.ID, "test", "cut", "deliberate? no")
 	second := runCheck(t, root, f, s)
 	tr = second.Tests[0]
-	if tr.Verdict != "cut" || tr.Rule != "court" || second.Summary["answered"] != 1 {
+	if tr.Verdict != "cut" || tr.Rule != "user" || second.Summary["answered"] != 1 {
 		t.Fatalf("%+v %v", tr, second.Summary)
 	}
 }

@@ -29,7 +29,7 @@ func commands(stdin io.Reader) []tools.Command {
 		shell().ReportCommand(),
 		{
 			Name: "wait", Group: "check", Synopsis: "[path] [--timeout D]",
-			Summary:  "wait until Court sends his answers for this project, then print what to do (for sessions without the cull channel)",
+			Summary:  "wait until the user sends their answers for this project, then print what to do (for sessions without the cull channel)",
 			NewFlags: waitFlags, Run: runWait,
 		},
 		{

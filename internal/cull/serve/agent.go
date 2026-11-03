@@ -211,7 +211,7 @@ func (s *Server) ownerPresent(p store.Project) (string, bool) {
 	return "", false
 }
 
-// agentWait is a session's long poll for Court's Sends. root is the
+// agentWait is a session's long poll for the user's Sends. root is the
 // session's folder (its scope): the session covers the repository that
 // contains that folder and every repository inside it, so an agent started
 // at a workspace root hears Sends for each repository in the workspace.
@@ -430,13 +430,13 @@ func (s *Server) agentReply(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SendText is the message an agent reads when Court presses Send: the counts,
-// his notes (each with its test or group), and what to do next. It is the one
+// SendText is the message an agent reads when the user presses Send: the counts,
+// their notes (each with its test or group), and what to do next. It is the one
 // place that wording lives.
 func SendText(sd store.Send, root string) string {
 	c := sd.Counts
 	var b strings.Builder
-	fmt.Fprintf(&b, "Court sent his answers for %s: %d cut, %d keep, %d merge, %d separate.\n",
+	fmt.Fprintf(&b, "The user sent their answers for %s: %d cut, %d keep, %d merge, %d separate.\n",
 		filepath.Base(root), c.Cut, c.Keep, c.Merge, c.Separate)
 	if len(sd.Notes) > 0 {
 		b.WriteString("Notes:\n")
@@ -446,7 +446,7 @@ func SendText(sd store.Send, root string) string {
 	}
 	fmt.Fprintf(&b, "Next: run cull_check with path %s, then cull_apply with path %s to remove the cuts.", root, root)
 	if c.Merge > 0 {
-		b.WriteString("\nThen rewrite each group he chose to merge as one table test and run cull_check_group on it.")
+		b.WriteString("\nThen rewrite each group they chose to merge as one table test and run cull_check_group on it.")
 	}
 	return b.String()
 }

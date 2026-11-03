@@ -18,7 +18,7 @@ import (
 )
 
 // Inside pi's claude-bridge the hosting pi session's channel delivers
-// Court's answers, so `cull watch` prints one stop line and returns at once
+// the user's answers, so `cull watch` prints one stop line and returns at once
 // without reaching cull serve: the mod then never restarts it.
 func TestWatchStopsInABridgeChild(t *testing.T) {
 	t.Setenv("AGENT_SESSION_CHILD", "1")
@@ -78,7 +78,7 @@ func TestWatchLineCarriesText(t *testing.T) {
 			served = served || first
 			mu.Unlock()
 			if first {
-				_, _ = io.WriteString(w, `{"id":1,"root":"/r","text":"Court sent his answers."}`)
+				_, _ = io.WriteString(w, `{"id":1,"root":"/r","text":"The user sent their answers."}`)
 				return
 			}
 			time.Sleep(20 * time.Millisecond)

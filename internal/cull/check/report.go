@@ -121,7 +121,7 @@ func summarize(tests []TestResult, groups []GroupResult, skipped []extract.Skipp
 			s["errors"]++
 			continue
 		}
-		if t.Rule == "court" {
+		if t.Rule == "user" {
 			s["answered"]++
 		}
 		switch t.Verdict {
@@ -138,7 +138,7 @@ func summarize(tests []TestResult, groups []GroupResult, skipped []extract.Skipp
 			s["errors"]++
 			continue
 		}
-		if g.Rule == "court" {
+		if g.Rule == "user" {
 			s["answered"]++
 		}
 		switch g.Verdict {

@@ -558,3 +558,43 @@ func TestUpgradeFromV1(t *testing.T) {
 		t.Fatalf("%+v %v %v", got, ok, err)
 	}
 }
+
+// A database at schema 3 whose items carry the old rule "court" for the
+// user's verdicts opens at 4 with "user" in its place; other rules stay.
+func TestMigrateRenamesTheUsersRule(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "cull.db")
+	v3, err := sqlitedb.Open(ctx, p, sqlitedb.Options{Migrations: Migrations[:3]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO projects(id, root) VALUES (1, '/x')`,
+		`INSERT INTO runs(id, project_id, at, total) VALUES (1, 1, 1000, 2)`,
+		`INSERT INTO items(run_id, item_id, kind, hash, verdict, rule) VALUES (1, 't1', 'test', 'h1', 'cut', 'court')`,
+		`INSERT INTO items(run_id, item_id, kind, hash, verdict, rule) VALUES (1, 't2', 'test', 'h2', 'review', 'review_band')`,
+	} {
+		if _, err := v3.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = v3.Close()
+	s, err := Open(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if v, _ := s.db.Version(ctx); v != 4 || SchemaVersion != 4 {
+		t.Fatalf("version %d, SchemaVersion %d", v, SchemaVersion)
+	}
+	_, got, err := s.LatestRun(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := map[string]string{}
+	for _, it := range got {
+		rules[it.ID] = it.Rule
+	}
+	if rules["t1"] != "user" || rules["t2"] != "review_band" {
+		t.Fatalf("rules %v", rules)
+	}
+}

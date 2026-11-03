@@ -38,7 +38,7 @@ const FLAG_ORDER = [
   'mock_only',
   'not_missed',
 ];
-/** cull's own reason for sending a test to Court: it only checks a setting. */
+/** cull's own reason for sending a test to the user: it only checks a setting. */
 export const PINS_SETTING: Concern = {
   flag: 'pins_setting',
   value: 1,

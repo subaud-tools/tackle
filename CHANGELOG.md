@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [cull 0.10.0] - 2026-11-03
+
+### Changed
+- cull records the user's own verdicts with the rule `"user"` instead of a personal name; its store moves to schema 4 and rewrites existing `"court"` rows once when it opens. Tool text, channel instructions, help and comments say "the user" (they/their).
+
 ## [proj 0.21.0] - 2026-11-02
 
 ### Changed

@@ -367,16 +367,16 @@ func (c *client) expectEvent(d time.Duration) (event, bool) {
 
 // ---- tests -----------------------------------------------------------------
 
-// The instructions are Court's wording; pin them.
-const wantInstructions = `cull judges automated tests with Jev and removes the ones that don't earn their place. Court reviews only what Jev is unsure about, on cull's review page.
-- After you write or change tests, run cull_check with base set to the merge base of your branch (or no base for the whole suite when Court asks for it).
-- Then run cull_apply with no ids: it removes every cut, both Jev's confident ones and Court's, runs the tests before and after, and puts everything back if they break. Never commit on cull's behalf; report what was removed.
-- If cull_check reports to_review above 0, run cull_review once to open the page for Court, tell him how many items wait, and carry on with other work. Never ask Court about a test anywhere but the page, and never open the page repeatedly.
-- Court's answers arrive as an event from cull: <channel source="cull" project="…" send_id="…"> in pi, or a turn whose first line is cull event project=… send_id=… in Claude Code. On a send that takes more than a moment, first call cull_reply with its send_id, state working and one line on what you are doing. Follow its steps: cull_check, then cull_apply for his cuts; rewrite each group he chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports. When done, cull_reply with answered and a short report, or declined or failed with why.
+// The instructions are the user's wording; pin them.
+const wantInstructions = `cull judges automated tests with Jev and removes the ones that don't earn their place. The user reviews only what Jev is unsure about, on cull's review page.
+- After you write or change tests, run cull_check with base set to the merge base of your branch (or no base for the whole suite when the user asks for it).
+- Then run cull_apply with no ids: it removes every cut, both Jev's confident ones and the user's, runs the tests before and after, and puts everything back if they break. Never commit on cull's behalf; report what was removed.
+- If cull_check reports to_review above 0, run cull_review once to open the page for the user, tell them how many items wait, and carry on with other work. Never ask the user about a test anywhere but the page, and never open the page repeatedly.
+- The user's answers arrive as an event from cull: <channel source="cull" project="…" send_id="…"> in pi, or a turn whose first line is cull event project=… send_id=… in Claude Code. On a send that takes more than a moment, first call cull_reply with its send_id, state working and one line on what you are doing. Follow its steps: cull_check, then cull_apply for their cuts; rewrite each group they chose to merge as one table test that keeps every row the event lists, then run cull_check_group on it and fix what it reports. When done, cull_reply with answered and a short report, or declined or failed with why.
 - cull_status tells you what is open, answered and sent for this project, and which sends are not settled yet.
-- When your session runs in a folder that holds several repositories (a workspace), pass the repository's path to every cull tool. The event from Court names the repository's path; use it.
-- You never answer for Court. If cull reports an error, say what failed; don't work around it by editing tests by hand.
-- When Court asks why tests are slow, or checks take long, run cull_time and fix what it and cull_check's speed findings point at; then run cull_time again and report before and after.`
+- When your session runs in a folder that holds several repositories (a workspace), pass the repository's path to every cull tool. The event from the user names the repository's path; use it.
+- You never answer for the user. If cull reports an error, say what failed; don't work around it by editing tests by hand.
+- When the user asks why tests are slow, or checks take long, run cull_time and fix what it and cull_check's speed findings point at; then run cull_time again and report before and after.`
 
 func TestInstructionsAreExact(t *testing.T) {
 	if Instructions != wantInstructions {
@@ -514,14 +514,14 @@ func TestCheckErrorsAreOneLine(t *testing.T) {
 
 	t.Setenv("TYPESAFE_API_KEY", "")
 	text, isErr := c.tool("cull_check", map[string]any{})
-	if !isErr || text != "no TypeSafe key: Court needs to run cull init" {
+	if !isErr || text != "no TypeSafe key: the user needs to run cull init" {
 		t.Errorf("no key: %v %q", isErr, text)
 	}
 	t.Setenv("TYPESAFE_API_KEY", fakeKey)
 
 	writeFile(t, root, ".cull.toml", "test_command = \"go test ./...\"\n")
 	text, isErr = c.tool("cull_check", map[string]any{})
-	if !isErr || text != "egress is off for "+root+": Court needs to run cull init" {
+	if !isErr || text != "egress is off for "+root+": the user needs to run cull init" {
 		t.Errorf("egress off: %v %q", isErr, text)
 	}
 	writeFile(t, root, ".cull.toml", "egress = true\n")
@@ -660,7 +660,7 @@ func TestSendReachesThisChannelOnceAndNoOtherProject(t *testing.T) {
 	if !ok {
 		t.Fatal("channel A never got the send")
 	}
-	for _, want := range []string{"Court sent his answers for " + filepath.Base(rootA), "1 cut", "not needed", "cull_check", "cull_apply"} {
+	for _, want := range []string{"The user sent their answers for " + filepath.Base(rootA), "1 cut", "not needed", "cull_check", "cull_apply"} {
 		if !strings.Contains(ev.Content, want) {
 			t.Errorf("event missing %q:\n%s", want, ev.Content)
 		}
@@ -701,7 +701,7 @@ func assertNoKey(t *testing.T, e *env, cs ...*client) {
 
 // A session started in a workspace folder works on a repository inside it:
 // cull_check, cull_review and cull_status take the repository's path, the
-// session owns that repository's review, and Court's Send reaches it.
+// session owns that repository's review, and the user's Send reaches it.
 func TestWorkspaceSessionReviewsARepositoryInside(t *testing.T) {
 	e := newEnv(t, true)
 	ws := t.TempDir()

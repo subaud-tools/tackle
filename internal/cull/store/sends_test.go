@@ -99,7 +99,7 @@ func TestMigrateGivesEachSendItsState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
-	if v, _ := s.db.Version(ctx); v != 3 || SchemaVersion != 3 {
+	if v, _ := s.db.Version(ctx); v != SchemaVersion {
 		t.Fatalf("version %d, SchemaVersion %d", v, SchemaVersion)
 	}
 	if a := sendByID(t, s, 1); a.State != msgstate.WithAgent || a.ClaimedBy != "sess-1" {

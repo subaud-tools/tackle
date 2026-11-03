@@ -26,7 +26,7 @@ var checkFlags = flags("check", "cull check [path] [--diff base] [--json] [--dry
 		"parallel tests, swallowed waits, screenshots) and prints a digest; --dry-run prints it on stderr.\n"+
 		"A \"cull: keep\" comment on a line silences its finding. Requires egress = true in\n"+
 		".cull.toml (or --dry-run, which prints the states that would be sent and sends nothing).\n"+
-		"Also records the run's uncertain items and applies Court's saved answers from the review\n"+
+		"Also records the run's uncertain items and applies the user's saved answers from the review\n"+
 		"database (cull serve's page); if that database can't be opened, it warns on stderr and\n"+
 		"writes last.json without them.\n"+
 		"Sends test source to "+endpoint+". The key comes from TYPESAFE_API_KEY or the key file cull init writes.",

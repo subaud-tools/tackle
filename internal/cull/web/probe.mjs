@@ -764,7 +764,7 @@ async function main() {
   const want = [
     ['sent', 'sent', 'no session has it'],
     ['failed', 'failed', 'the suite failed after the cut; rolled back'],
-    ['declined', 'declined', 'Court asked to wait for the next run'],
+    ['declined', 'declined', 'You asked to wait for the next run'],
     ['answered', 'answered', '3 tests cut, the suite passes'],
     ['working', 'working', 'cutting the answered tests'],
     ['with_agent', 'with the agent', ''],

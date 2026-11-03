@@ -117,7 +117,7 @@ func TestWaitPrintsTheSendAndExits0(t *testing.T) {
 	answerAndPressSend(t, st, root)
 	select {
 	case r := <-res:
-		want := "Court sent his answers for " + filepath.Base(root) + ": 1 cut, 0 keep, 0 merge, 0 separate.\n" +
+		want := "The user sent their answers for " + filepath.Base(root) + ": 1 cut, 0 keep, 0 merge, 0 separate.\n" +
 			"Notes:\n- TestMaybe: not needed\n" +
 			"Next: run cull_check with path " + root + ", then cull_apply with path " + root + " to remove the cuts.\n"
 		if r.code != 0 || r.out != want {

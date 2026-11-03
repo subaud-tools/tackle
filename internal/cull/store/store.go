@@ -1,6 +1,6 @@
 // Package store is cull's machine-wide database: SQLite at
 // StateDir("cull")/cull.db. It holds each check run's uncertain items and
-// Court's answers to them, so serve (one process) and any number of check
+// the user's answers to them, so serve (one process) and any number of check
 // runs share one place with real transactions. last.json stays the report;
 // this database sits beside it.
 //
@@ -28,7 +28,7 @@ import (
 )
 
 // SchemaVersion is the schema version this binary targets.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // keepRuns is how many runs per project are kept.
 const keepRuns = 5
@@ -115,11 +115,17 @@ ALTER TABLE sends ADD COLUMN reply TEXT NOT NULL DEFAULT '';
 UPDATE sends SET state = 'with_agent' WHERE delivered_to IS NOT NULL;
 `
 
+// schemaV4 renames the rule on the user's verdicts from "court" to "user".
+const schemaV4 = `
+UPDATE items SET rule = 'user' WHERE rule = 'court';
+`
+
 // Migrations is the append-only list of schema steps.
 var Migrations = []sqlitedb.Step{
 	sqlitedb.SQL(schemaV1),
 	sqlitedb.SQL(schemaV2),
 	sqlitedb.SQL(schemaV3),
+	sqlitedb.SQL(schemaV4),
 }
 
 // ErrStale is returned when an answer names an item (or hash) that is not in
@@ -346,7 +352,7 @@ func (s *Store) LatestRun(ctx context.Context, projectID int64) (Run, []Item, er
 // Key identifies an answer: the item and the content hash it was given for.
 type Key struct{ ItemID, Hash string }
 
-// Answer is Court's answer to one item.
+// Answer is the user's answer to one item.
 type Answer struct {
 	ItemID, Hash, Kind, Value, Note, Via string // Value cut|keep|merge|separate; Via item|group
 	Blind                                bool
@@ -466,7 +472,7 @@ type Counts struct {
 // Total is every answer counted.
 func (c Counts) Total() int { return c.Cut + c.Keep + c.Merge + c.Separate }
 
-// Note is Court's note on one answer, with the test (or group) it is about.
+// Note is the user's note on one answer, with the test (or group) it is about.
 type Note struct {
 	Name string `json:"name"`
 	Note string `json:"note"`
