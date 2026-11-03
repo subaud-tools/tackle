@@ -27,7 +27,7 @@ var (
 )
 
 var initFlags = flags("init", "cull init [path]",
-	"Court's setup, run by you in a terminal (it refuses otherwise, so an agent cannot run it):\n"+
+	"Your own setup, run in a terminal (it refuses otherwise, so an agent cannot run it):\n"+
 		"stores your TypeSafe key in cull's own key file (0600) when none is stored, asks whether\n"+
 		"this project's test source may be sent to TypeSafe (writes egress = true to .cull.toml on\n"+
 		"yes), and adds .cull/ to .gitignore. Never prints the key.", nil)

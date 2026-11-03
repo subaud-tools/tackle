@@ -16,7 +16,7 @@ import (
 
 // `cull watch` is the channel's presence and wait loop with a JSON line on
 // stdout for each Send, which is what the Claude Code plugin's mod reads.
-// Court's Send for a review this session owns arrives as one line,
+// The user's Send for a review this session owns arrives as one line,
 // {"content": ..., "meta": {...}}, with the same meta the channel sends.
 func TestWatchPrintsASendAsOneLine(t *testing.T) {
 	e := newEnv(t, true)
@@ -68,7 +68,7 @@ func TestWatchPrintsASendAsOneLine(t *testing.T) {
 	if ev.Meta["source"] != "cull" || ev.Meta["project"] != root || ev.Meta["send_id"] == "" {
 		t.Fatalf("meta = %v", ev.Meta)
 	}
-	if !strings.Contains(ev.Content, "Court sent his answers") {
+	if !strings.Contains(ev.Content, "The user sent their answers") {
 		t.Fatalf("content = %q", ev.Content)
 	}
 	if got, ok := a.expectEvent(300 * time.Millisecond); ok {
@@ -77,7 +77,7 @@ func TestWatchPrintsASendAsOneLine(t *testing.T) {
 }
 
 // Under Claude Code the plugin's mod runs `cull watch`, so `cull channel` must
-// not take Court's answers too: it serves the tools and never waits. Under pi
+// not take the user's answers too: it serves the tools and never waits. Under pi
 // it waits and pushes as it always has.
 func TestChannelWaitsOnlyOutsideClaudeCode(t *testing.T) {
 	cases := []struct {

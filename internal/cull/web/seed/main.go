@@ -136,7 +136,7 @@ func SeedSends(ctx context.Context, path string, data []byte, projectID, runID i
 		landed,
 		reply(msgstate.Working, "cutting the answered tests"),
 		reply(msgstate.Answered, "3 tests cut, the suite passes"),
-		reply(msgstate.Declined, "Court asked to wait for the next run"),
+		reply(msgstate.Declined, "You asked to wait for the next run"),
 		reply(msgstate.Failed, "the suite failed after the cut; rolled back"),
 		nil, // sent, and no session has it
 	}

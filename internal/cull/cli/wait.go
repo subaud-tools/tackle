@@ -24,7 +24,7 @@ const (
 )
 
 var waitFlags = flags("wait", "cull wait [path] [--timeout D]",
-	"Waits until Court sends his answers for this project, then prints what to do. For sessions\n"+
+	"Waits until the user sends their answers for this project, then prints what to do. For sessions\n"+
 		"without the cull channel. Starts cull serve if needed and registers this wait as a\n"+
 		"present session while it runs. No timeout by default.\n"+
 		"Exit: 0 a send arrived (printed), 3 timed out with nothing sent, 130 interrupted.",

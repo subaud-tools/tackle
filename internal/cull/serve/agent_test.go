@@ -285,15 +285,15 @@ func TestSendTextFormat(t *testing.T) {
 		Counts: store.Counts{Cut: 2, Keep: 1, Merge: 1, Separate: 0},
 		Notes:  []store.Note{{Name: "TestA", Note: "keep, it guards X"}, {Name: "table group", Note: "same shape"}},
 	}
-	want := "Court sent his answers for shop: 2 cut, 1 keep, 1 merge, 0 separate.\n" +
+	want := "The user sent their answers for shop: 2 cut, 1 keep, 1 merge, 0 separate.\n" +
 		"Notes:\n- TestA: keep, it guards X\n- table group: same shape\n" +
 		"Next: run cull_check with path /home/dev/shop, then cull_apply with path /home/dev/shop to remove the cuts.\n" +
-		"Then rewrite each group he chose to merge as one table test and run cull_check_group on it."
+		"Then rewrite each group they chose to merge as one table test and run cull_check_group on it."
 	if got := SendText(s, "/home/dev/shop"); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 	s.Counts.Merge, s.Notes = 0, nil
-	want = "Court sent his answers for shop: 2 cut, 1 keep, 0 merge, 0 separate.\n" +
+	want = "The user sent their answers for shop: 2 cut, 1 keep, 0 merge, 0 separate.\n" +
 		"Next: run cull_check with path /home/dev/shop, then cull_apply with path /home/dev/shop to remove the cuts."
 	if got := SendText(s, "/home/dev/shop"); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
@@ -320,7 +320,7 @@ func TestSendGoesToTheCurrentOwnerAfterOwnershipMoves(t *testing.T) {
 }
 
 // A session started in a workspace folder covers every repository inside it:
-// it receives Court's Send for a repository below its folder, and a session
+// it receives the user's Send for a repository below its folder, and a session
 // whose folder doesn't contain the repository never does.
 func TestWorkspaceSessionClaimsSendsForReposInside(t *testing.T) {
 	a := newAgentFx(t)

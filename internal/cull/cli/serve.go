@@ -44,17 +44,17 @@ var serveHelp = pageserve.Help{
 }
 
 var channelHelp = pageserve.Help{
-	Summary: "MCP server for an agent session: check, apply, review and Court's answers as events",
+	Summary: "MCP server for an agent session: check, apply, review and the user's answers as events",
 	Long: "Runs cull's MCP server on stdin/stdout for an agent session (Claude Code or pi starts it).\n" +
 		"It starts cull serve if needed and gives the agent cull_check, cull_apply, cull_check_group,\n" +
-		"cull_review and cull_status. Under pi it also registers the session and delivers Court's\n" +
+		"cull_review and cull_status. Under pi it also registers the session and delivers the user's\n" +
 		"answers as events; under Claude Code `cull watch`, which the cull plugin runs, does that.\n" +
 		"stdout carries MCP frames only; logs go to stderr.",
 }
 
 var watchHelp = pageserve.Help{
-	Summary: "print Court's answers as JSON lines: the Claude Code plugin's feed",
-	Long: "Registers the session with cull serve and prints each of Court's Sends for it as one JSON\n" +
+	Summary: "print the user's answers as JSON lines: the Claude Code plugin's feed",
+	Long: "Registers the session with cull serve and prints each of the user's Sends for it as one JSON\n" +
 		"line {\"text\": ..., \"content\": ..., \"meta\": {...}} on stdout. The cull plugin's mod runs\n" +
 		"it for a Claude Code session and starts a turn with each line's text. Logs go to stderr.\n" +
 		"Runs until signalled. In a session pi's claude-bridge runs, it prints {\"stop\": ...} and\n" +

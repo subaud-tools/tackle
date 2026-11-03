@@ -25,7 +25,7 @@ only = { os = "darwin" }
   # marketplace entry stays, since cull, imprint and sift share it and each
   # manifest moves only its own plugin. The next plain `claude` session installs it at user scope. Its .mcp.json runs `cull
   # channel` for the tools and its mod runs `cull watch`, which turns each of
-  # Court's answers into a turn.
+  # the user's answers into a turn.
   [[packages.cull.json-merge]]
   file = "~/.claude/settings.json"
   merge = { extraKnownMarketplaces = { subaud-tools = { source = { source = "github", repo = "subaud-tools/plugins" }, autoUpdate = true } }, enabledPlugins = { "cull@subaud-tools" = true } }

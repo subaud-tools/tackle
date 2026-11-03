@@ -61,7 +61,7 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request, v string) (stor
 	return p, true
 }
 
-// answer is Court's answer to one item, on the page.
+// answer is the user's answer to one item, on the page.
 type answer struct {
 	Value      string `json:"value"`
 	Note       string `json:"note"`

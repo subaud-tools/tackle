@@ -26,22 +26,22 @@ func schema(s string) json.RawMessage { return json.RawMessage(s) }
 const pathProp = `"path":{"type":"string","description":"a path inside the project to use instead of the session's project root"}`
 
 // Tools is cull's tool list. None of them sets an answer or presses Send:
-// those are Court's, on the page.
+// those are the user's, on the page.
 func Tools() []channelmcp.Tool {
 	return []channelmcp.Tool{
-		{Name: "cull_check", Description: "Judge the project's automated tests with Jev and record what Court must review. base: the merge base of your branch to judge only the tests you changed (omit for the whole suite). Returns the summary, the ids of the tests to cut, the ids of the groups to merge, to_review (how many items wait for Court on the review page), and speed (a digest of what makes the suite slow or weak: fixed waits, setup that blocks parallel tests, swallowed waits, screenshots).",
+		{Name: "cull_check", Description: "Judge the project's automated tests with Jev and record what the user must review. base: the merge base of your branch to judge only the tests you changed (omit for the whole suite). Returns the summary, the ids of the tests to cut, the ids of the groups to merge, to_review (how many items wait for the user on the review page), and speed (a digest of what makes the suite slow or weak: fixed waits, setup that blocks parallel tests, swallowed waits, screenshots).",
 			InputSchema: schema(`{"type":"object","properties":{"base":{"type":"string","description":"git ref; judge only tests changed since it"},` + pathProp + `}}`)},
-		{Name: "cull_apply", Description: "Remove tests from the last cull_check. Without ids it removes every cut (Jev's and Court's), tidies the imports that leaves unused, runs the project's tests before and after, and restores everything if they fail. Never commits. Returns what was applied, what needs you, the tidy report, the verify outcome and the exit (applied, rolled back, rollback failed or refused) with the reason.",
+		{Name: "cull_apply", Description: "Remove tests from the last cull_check. Without ids it removes every cut (Jev's and the user's), tidies the imports that leaves unused, runs the project's tests before and after, and restores everything if they fail. Never commits. Returns what was applied, what needs you, the tidy report, the verify outcome and the exit (applied, rolled back, rollback failed or refused) with the reason.",
 			InputSchema: schema(`{"type":"object","properties":{"ids":{"type":"array","items":{"type":"string"},"description":"remove exactly these test ids instead of every cut"},` + pathProp + `}}`)},
 		{Name: "cull_check_group", Description: "Verify your rewrite of a near-duplicate group (an id from cull_check's merge list) as one table test: the originals are gone, one new test keeps every row, Jev does not flag it, and the tests pass. Returns the four checks and their results.",
 			InputSchema: schema(`{"type":"object","properties":{"id":{"type":"string","description":"the group id"},` + pathProp + `},"required":["id"]}`)},
 		{Name: "cull_time", Description: "Run the checks the project runs (CI, hooks, recipes) one at a time with timing and return where the time goes: wall time per check, the slowest Go packages and Python files with their share, the 20 slowest tests, and hints (Go packages whose tests are slow and blocked from running in parallel by a t.Setenv helper; Python files that spend half their time in setup). Before each check it first runs the commands that set that check up in the project's recipe or CI step (for example a build), once per check, and reports their time as setup; a failing setup command fails that check. Takes minutes on a large suite. Run it before and after fixing what it and cull_check's speed findings point at.",
 			InputSchema: schema(`{"type":"object","properties":{` + pathProp + `}}`)},
-		{Name: "cull_review", Description: "Open cull's review page for this project (or the repository at path) in Court's browser and make this session the one his answers are sent to. Returns the page URL and how many items are open. Says so, and opens nothing, when there is nothing to review. Use once; never repeatedly.",
+		{Name: "cull_review", Description: "Open cull's review page for this project (or the repository at path) in the user's browser and make this session the one their answers are sent to. Returns the page URL and how many items are open. Says so, and opens nothing, when there is nothing to review. Use once; never repeatedly.",
 			InputSchema: schema(`{"type":"object","properties":{` + pathProp + `}}`)},
 		{Name: "cull_status", Description: "What is open, answered and sent for this project (or the repository at path), who owns the review, and the sends not yet settled, each with its state.",
 			InputSchema: schema(`{"type":"object","properties":{` + pathProp + `}}`)},
-		{Name: "cull_reply", Description: "Settle Court's Sends by id (each event's send_id), all or nothing: working with one line on what you are doing, then answered with a short report, or declined or failed with why. The page shows each Send's state with your line. Only the session a Send was delivered to may answer it.",
+		{Name: "cull_reply", Description: "Settle the user's Sends by id (each event's send_id), all or nothing: working with one line on what you are doing, then answered with a short report, or declined or failed with why. The page shows each Send's state with your line. Only the session a Send was delivered to may answer it.",
 			InputSchema: schema(replySchema)},
 	}
 }
@@ -152,11 +152,11 @@ func judging(ch *Channel, path string) (string, string, judge.Evaluator, error) 
 		return "", "", nil, err
 	}
 	if !cfg.Egress {
-		return "", "", nil, fmt.Errorf("egress is off for %s: Court needs to run cull init", root)
+		return "", "", nil, fmt.Errorf("egress is off for %s: the user needs to run cull init", root)
 	}
 	k, _, err := key.Load()
 	if errors.Is(err, key.ErrMissing) {
-		return "", "", nil, errors.New("no TypeSafe key: Court needs to run cull init")
+		return "", "", nil, errors.New("no TypeSafe key: the user needs to run cull init")
 	}
 	if err != nil {
 		return "", "", nil, err
@@ -166,7 +166,7 @@ func judging(ch *Channel, path string) (string, string, judge.Evaluator, error) 
 
 func judgeErr(err error) error {
 	if errors.Is(err, jev.ErrUnauthorized) {
-		return errors.New("TypeSafe rejected the key: Court needs to run cull init")
+		return errors.New("TypeSafe rejected the key: the user needs to run cull init")
 	}
 	return err
 }
@@ -194,7 +194,7 @@ func runCheck(ctx context.Context, ch *Channel, path, base string) (string, erro
 	return pretty(map[string]any{
 		"root": root, "mode": rep.Mode, "base": rep.Base, "summary": rep.Summary,
 		"cut": cut, "merge": merge,
-		// Items on the review page that Court has not answered.
+		// Items on the review page that the user has not answered.
 		"to_review": rep.Summary["review"] + rep.Summary["group_review"],
 		// What makes the suite slow or weak: counts per kind, the literal wait
 		// total in seconds, and the 20 costliest findings. Fix these.
@@ -321,7 +321,7 @@ func runStatus(ctx context.Context, ch *Channel, path string) (string, error) {
 		return "", err
 	}
 	if ch.ServeOnly {
-		out["events"] = "This is a Claude Code session: Court's answers reach it through `cull watch`, which the cull plugin starts, " +
+		out["events"] = "This is a Claude Code session: the user's answers reach it through `cull watch`, which the cull plugin starts, " +
 			"not through this process. If a Send never arrived, check that the cull plugin is installed and enabled (/plugin)."
 	}
 	return pretty(out), nil
@@ -333,7 +333,7 @@ func runReview(ctx context.Context, ch *Channel, path string) (string, error) {
 		return "", err
 	}
 	if ch.ID.Session == "" {
-		return "", errors.New("this cull channel has no session id (not running under Claude Code or pi), so Court's answers could not be sent to it")
+		return "", errors.New("this cull channel has no session id (not running under Claude Code or pi), so the user's answers could not be sent to it")
 	}
 	var st agentStatus
 	if _, err := ch.Client.Do(ctx, http.MethodGet, "/api/agent/status?"+pageserve.Query("root", root), nil, &st); err != nil {
