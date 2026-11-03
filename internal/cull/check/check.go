@@ -240,7 +240,7 @@ func Run(ctx context.Context, ev judge.Evaluator, opt Options) (Report, error) {
 		groupOut[i] = gr
 	}
 
-	// Court's stored answers settle the review items; the run is then recorded.
+	// The user's stored answers settle the review items; the run is then recorded.
 	sess := openReviewStore(ctx, opt.Store, stderr)
 	defer sess.close()
 	as := sess.answers(ctx, root, stderr)

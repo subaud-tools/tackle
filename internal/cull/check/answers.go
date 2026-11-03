@@ -26,7 +26,7 @@ func eligible(verdict, rule string) bool {
 	return verdict == "review" && (rule == "review_band" || rule == "truncated" || rule == "pins_setting")
 }
 
-// applyAnswers settles eligible review results with Court's stored answers
+// applyAnswers settles eligible review results with the user's stored answers
 // (matched by item id and hash) and returns how many it settled. Jev's
 // confident verdicts are never overridden, and an answer whose value does
 // not fit the item's kind is ignored.
@@ -35,7 +35,7 @@ func applyAnswers(tests []TestResult, groups []GroupResult, as map[store.Key]sto
 		if note == "" {
 			return reasons
 		}
-		return append(append([]string(nil), reasons...), "court: "+note)
+		return append(append([]string(nil), reasons...), "user: "+note)
 	}
 	for i := range tests {
 		t := &tests[i]
@@ -47,7 +47,7 @@ func applyAnswers(tests []TestResult, groups []GroupResult, as map[store.Key]sto
 			continue
 		}
 		t.Reasons = withNote(t.Reasons, a.Note)
-		t.Verdict, t.Rule = a.Value, "court"
+		t.Verdict, t.Rule = a.Value, "user"
 		answered++
 	}
 	for i := range groups {
@@ -69,7 +69,7 @@ func applyAnswers(tests []TestResult, groups []GroupResult, as map[store.Key]sto
 			continue
 		}
 		g.Reasons = withNote(g.Reasons, a.Note)
-		g.Verdict, g.Rule = verdict, "court"
+		g.Verdict, g.Rule = verdict, "user"
 		answered++
 	}
 	return answered
@@ -143,11 +143,11 @@ func mustJSON(v any) json.RawMessage {
 }
 
 func recorded(rule string) bool {
-	return rule == "review_band" || rule == "truncated" || rule == "pins_setting" || rule == "court"
+	return rule == "review_band" || rule == "truncated" || rule == "pins_setting" || rule == "user"
 }
 
 // recordItems builds the run's items: every result (no error) whose rule is
-// review_band, truncated, pins_setting or court, with the exact state judged and Jev's
+// review_band, truncated, pins_setting or user, with the exact state judged and Jev's
 // answers.
 func recordItems(kept []cases.TestCase, tj []judge.Judged, tests []TestResult, gStates []any, gj []judge.Judged, gout []GroupResult) []store.Item {
 	var items []store.Item
