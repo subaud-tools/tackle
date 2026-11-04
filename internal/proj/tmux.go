@@ -25,16 +25,32 @@ func splitLines(s string) []string {
 }
 
 // Run executes tmux against an explicit socket ("" = default server), trimming
-// one trailing newline. Any error is returned to callers that care; most use
-// Query, which swallows it.
+// one trailing newline. Any error is returned to callers that care, naming the
+// command and carrying tmux's message; most use Query, which swallows it.
 func Run(socket string, args ...string) (string, error) {
 	full := args
 	if socket != "" {
 		full = append([]string{socketFlag(socket), socket}, args...)
 	}
 	out, err := execCommand("tmux", full...).Output()
+	if err != nil {
+		err = &tmuxError{args: full, err: err}
+	}
 	return strings.TrimSuffix(string(out), "\n"), err
 }
+
+// tmuxError reads "tmux <args>: <tmux's stderr>", or the exit status when tmux
+// printed nothing, and unwraps to the exec error.
+type tmuxError struct {
+	args []string
+	err  error
+}
+
+func (e *tmuxError) Error() string {
+	return "tmux " + strings.Join(e.args, " ") + ": " + failureText(e.err)
+}
+
+func (e *tmuxError) Unwrap() error { return e.err }
 
 // socketFlag is the tmux flag that names socket: -S for a full path (as $TMUX
 // gives it), -L for a server name under tmux's socket directory.
