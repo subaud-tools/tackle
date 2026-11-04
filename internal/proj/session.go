@@ -1,9 +1,13 @@
 package proj
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"testing"
+
+	"github.com/subaud-tools/tools-common/pageserve"
 )
 
 // LabelOption is the tmux user-option muster reads for a session's work label.
@@ -32,6 +36,29 @@ var newSessionHome = func(socket, name string) error {
 	c := exec.Command("tmux", "-L", socket, "new-session", "-d", "-s", name)
 	c.Dir = os.Getenv("HOME")
 	return c.Run()
+}
+
+// sessionServers are the servers proj starts when it creates a session, so
+// agents can message each other (muster) and the phone can reach the session
+// (hail) from the first session after a reboot. The servers scope lists every
+// server without a list; this is the only place proj names a tool.
+var sessionServers = []string{"muster", "hail"}
+
+// startServers ensures each tool's serve in the background: a session never
+// fails or waits on it, and a failure is a warning. It is a seam so tests
+// start no real tool; under go test it starts nothing, since tests in other
+// packages create sessions too.
+var startServers = func(tools ...string) {
+	if testing.Testing() {
+		return
+	}
+	for _, tool := range tools {
+		go func() {
+			if _, err := pageserve.StartTool(tool); err != nil {
+				_, _ = fmt.Fprintf(warnings, "proj: starting %s: %v\n", tool, err)
+			}
+		}()
+	}
 }
 
 // EnsureSession makes the tmux session `name` exist on `socket`, launching
@@ -133,6 +160,7 @@ func ensureSession(socket, name, dir, agent, model, conversation string, command
 	}
 	// Every server proj creates sessions on keeps the record current.
 	InstallHooks(socket)
+	startServers(sessionServers...)
 	return true, nil
 }
 
