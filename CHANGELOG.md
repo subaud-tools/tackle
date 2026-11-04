@@ -6,6 +6,12 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.23.1] - 2026-11-04
+
+### Changed
+- The servers page and the picker's servers scope list the family processes that aren't the registered server as "also running" (test builds or strays), not "left over": proj can't tell a stray from a test build another session is running on purpose. The page's group says so in a line under its header, its rows' dot is grey rather than red, and the page no longer shows the "left-over processes" banner with its stop-all button; each row keeps its own stop. In the picker, X asks "stop N other processes? y/n".
+- The servers page has tackle's favicon and its rust signal colour, like the other family pages.
+
 ## [sift 0.8.2] - 2026-11-04
 
 ### Fixed
@@ -21,6 +27,7 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 ### Changed
 - tools-common 0.66.0: the channel ignores a report event it doesn't know without a log line, so a newer pi can add one without imprint complaining.
 
+||||||| parent of cf415c9 (proj 0.23.1: changelog)
 ## [proj 0.23.0] - 2026-11-04
 
 ### Added
