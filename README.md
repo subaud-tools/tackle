@@ -62,7 +62,7 @@ record current as sessions are created, renamed, or switch conversation. The
 record only grows: a reboot, a crash or a plain `tmux kill-session` leaves the
 session restorable. Reaping it with `^x` in the picker is what removes it.
 
-`tab` at the picker's entrance cycles **folders → sessions → saved**. The saved
+`tab` at the picker's entrance cycles **folders → sessions → saved → servers**. The saved
 scope lists every remembered session, grouped by the Ghostty window it sat in:
 
 | Key | Effect |
@@ -78,6 +78,20 @@ its agent reopens the saved conversation (`pi --session <id>` /
 `claude --resume <id>`). A session whose conversation file is gone shows
 `(no transcript)` and starts a fresh agent under the same name. Unchecked
 sessions stay saved for next time.
+
+### Servers
+
+The servers scope lists every family page server on this machine (diazo, galley, muster, hail, sift and the rest), each with its address, version, uptime and whether a newer build is installed, and under **left over** any old build or test server that no server entry names. `proj serve`'s page shows the same list in the browser.
+
+| Key | Effect |
+|-----|--------|
+| `enter` | open the server's page |
+| `r` / `x` / `s` | restart, stop or start the server |
+| `l` | show the server's log in the preview pane |
+| `X` | stop every left-over process (asks first) |
+| `w` | open the servers page |
+
+proj starts muster and hail whenever it creates or restores a session, so they come up with the first session after a reboot.
 
 `proj` also understands non-interactive invocations that agents use safely:
 
