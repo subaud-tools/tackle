@@ -95,20 +95,20 @@ var pagesClient = pages.Client
 // it first when it is not running. A server marked stale, an older proj's left
 // running across an upgrade, may lack routes this proj uses, so it is stopped
 // and this binary's started; it keeps the token, so open pages keep their
-// address. A seam for tests.
-var ensurePages = func() (addr, token string, err error) {
+// address. inst is the server's Instance. A seam for tests.
+var ensurePages = func() (addr, token, inst string, err error) {
 	c := pagesClient()
 	if err := c.Fresh(context.Background()); err != nil {
-		return "", "", fmt.Errorf("proj serve: %w", err)
+		return "", "", "", fmt.Errorf("proj serve: %w", err)
 	}
 	e, err := c.Find()
 	if errors.Is(err, pageserve.ErrNotRunning) {
 		e, err = c.Start()
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("proj serve: %w", err)
+		return "", "", "", fmt.Errorf("proj serve: %w", err)
 	}
-	return strings.TrimPrefix(e.Base, "http://"), e.Token, nil
+	return strings.TrimPrefix(e.Base, "http://"), e.Token, pages.Instance(e.Token, e.PID), nil
 }
 
 // Window moves pane's session to its Chrome window and brings that to the
@@ -149,23 +149,24 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 		urls := tabURLs(out)
 		if tab := terminalTab(urls, socket, name); tab >= 0 {
 			if move && !pageAttached(socket, pane, name) {
-				addr, token, err := ensurePages()
+				addr, token, inst, err := ensurePages()
 				if err != nil {
 					return WindowResult{}, stepError("start the page server", err)
 				}
-				if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.TermURL(addr, token, socket, name)); err != nil {
+				if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.TermURL(addr, token, inst, socket, name)); err != nil {
 					return WindowResult{}, stepError("attach the terminal page", err)
 				}
 			} else if !move {
 				// A page on a server that has since restarted, on another port or
-				// the same one, only says it stopped; it loads from the new one,
-				// leaving the session where it is.
-				addr, token, err := ensurePages()
+				// the same one, only says it stopped; it names the instance it
+				// came from, so it loads from the running one, leaving the
+				// session where it is.
+				addr, token, inst, err := ensurePages()
 				if err != nil {
 					return WindowResult{}, stepError("start the page server", err)
 				}
-				if u, err := url.Parse(urls[tab]); err == nil && (u.Host != addr || u.Query().Get("i") != pages.Instance(token)) {
-					if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.ViewURL(addr, token, socket, name)); err != nil {
+				if u, err := url.Parse(urls[tab]); err == nil && (u.Host != addr || u.Query().Get("i") != inst) {
+					if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.ViewURL(addr, token, inst, socket, name)); err != nil {
 						return WindowResult{}, stepError("reload the terminal page", err)
 					}
 				}
@@ -183,11 +184,11 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 		}
 	}
 
-	addr, token, err := ensurePages()
+	addr, token, inst, err := ensurePages()
 	if err != nil {
 		return WindowResult{}, stepError("start the page server", err)
 	}
-	out, err := osascript(chromeOpenScript, pages.TermURL(addr, token, socket, name))
+	out, err := osascript(chromeOpenScript, pages.TermURL(addr, token, inst, socket, name))
 	if err != nil {
 		return WindowResult{}, stepError("open the window", err)
 	}
@@ -216,7 +217,7 @@ func openTab(session, right string) error {
 	if right == "" {
 		return nil
 	}
-	addr, token, err := ensurePages()
+	addr, token, _, err := ensurePages()
 	if err != nil {
 		return stepError("start the page server", err)
 	}

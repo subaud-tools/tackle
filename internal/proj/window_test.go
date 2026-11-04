@@ -34,7 +34,7 @@ func fakeChrome(t *testing.T, tabs string, fail map[string]error) *[]chromeCall 
 	origScript, origPages, origPoll := osascript, ensurePages, attachPoll
 	t.Cleanup(func() { osascript, ensurePages, attachPoll = origScript, origPages, origPoll })
 	attachPoll = 0
-	ensurePages = func() (string, string, error) { return "127.0.0.1:9", "tok", nil }
+	ensurePages = func() (string, string, string, error) { return "127.0.0.1:9", "tok", pages.Instance("tok", 1), nil }
 	var calls []chromeCall
 	osascript = func(script string, args ...string) (string, error) {
 		calls = append(calls, chromeCall{script, args})
@@ -85,7 +85,9 @@ func fakePageServer(t *testing.T) *[]splitpage.OpenRequest {
 	t.Cleanup(srv.Close)
 	orig := ensurePages
 	t.Cleanup(func() { ensurePages = orig })
-	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	ensurePages = func() (string, string, string, error) {
+		return strings.TrimPrefix(srv.URL, "http://"), "tok", pages.Instance("tok", 1), nil
+	}
 	return &opened
 }
 
@@ -355,8 +357,8 @@ func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
 	storedWindow(t, socket, name)
 	calls := fakeChrome(t, "", nil)
 	opened := fakePageServer(t)
-	addr, _, _ := ensurePages()
-	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("tok")}}.Encode()+"\n")
+	addr, _, inst, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {inst}}.Encode()+"\n")
 	got, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan")
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +405,7 @@ func TestWindowKeepingViewReloadsATerminalPageOnAStoppedServer(t *testing.T) {
 	term := storedWindow(t, socket, name)
 	calls := fakeChrome(t, term, nil)
 	opened := fakePageServer(t)
-	addr, _, _ := ensurePages()
+	addr, _, _, _ := ensurePages()
 	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +429,9 @@ func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
 		http.Error(w, "no split here", http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
-	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	ensurePages = func() (string, string, string, error) {
+		return strings.TrimPrefix(srv.URL, "http://"), "tok", pages.Instance("tok", 1), nil
+	}
 	var warned strings.Builder
 	orig := warnings
 	t.Cleanup(func() { warnings = orig })
@@ -442,21 +446,21 @@ func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
 	}
 }
 
-// A page server restarted on the same port leaves the window's terminal page
-// dead on the same address: the page names the server it came from, so it
-// loads from the new one, keeping the view.
-func TestWindowKeepingViewReloadsAPageFromAnEarlierServerOnTheSamePort(t *testing.T) {
+// proj serve keeps its port and token across a restart, so a terminal page
+// left dead by one has the current address and token; it names the earlier
+// server's pid, so it loads from the running one, keeping the view.
+func TestWindowKeepingViewReloadsADeadPageOnTheSameAddress(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	storedWindow(t, socket, name)
 	calls := fakeChrome(t, "", nil)
 	opened := fakePageServer(t)
-	addr, _, _ := ensurePages()
-	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("an-earlier-token")}}.Encode()+"\n")
+	addr, token, inst, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance(token, 2)}}.Encode()+"\n")
 	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
 		t.Fatal(err)
 	}
 	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
-	if a := (*calls)[1].args[2]; strings.Contains(a, "take=") || !strings.Contains(a, "i="+pages.Instance("tok")) {
+	if a := (*calls)[1].args[2]; strings.Contains(a, "take=") || !strings.Contains(a, "i="+inst) {
 		t.Fatalf("set tab %q, want the page from the current server without take", a)
 	}
 	if len(*opened) != 1 {
@@ -490,7 +494,7 @@ func TestEnsurePagesReplacesAStaleServer(t *testing.T) {
 			return live, nil
 		},
 	})
-	addr, token, err := ensurePages()
+	addr, token, _, err := ensurePages()
 	if err != nil || addr != "127.0.0.1:2" || token != "new" || !stopped {
 		t.Fatalf("ensurePages = %q, %q, %v (stopped %v); want the new server", addr, token, err, stopped)
 	}
@@ -505,7 +509,7 @@ func TestEnsurePagesReusesAnUpToDateServer(t *testing.T) {
 			return pageserve.Entry{}, nil
 		},
 	})
-	if addr, token, err := ensurePages(); err != nil || addr != "127.0.0.1:1" || token != "tok" {
+	if addr, token, _, err := ensurePages(); err != nil || addr != "127.0.0.1:1" || token != "tok" {
 		t.Fatalf("ensurePages = %q, %q, %v; want the running server", addr, token, err)
 	}
 }

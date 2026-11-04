@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/subaud-tools/tools-common/localweb/page"
 	"github.com/subaud-tools/tools-common/pageserve"
@@ -87,24 +88,24 @@ func (s siteFS) Open(name string) (fs.File, error) {
 
 // TermURL is the address to open for a session's split page, with the token,
 // to take the session from any other client; the page drops both on load.
-func TermURL(addr, token, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {Instance(token)}, "t": {token}, "take": {"1"}}.Encode()
+func TermURL(addr, token, inst, socket, session string) string {
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {inst}, "t": {token}, "take": {"1"}}.Encode()
 }
 
 // Instance names the page server a terminal page came from, in its address,
-// where it stays after the page drops its token. The token is kept across
-// restarts, so a restart keeps it too and an open window's page its address;
-// a page whose instance differs is from a server with another token. It is a
+// where it stays after the page drops its token: its token and its pid. The
+// token and port are kept across restarts, so a page left dead by one has the
+// current address; the pid tells it from a page of the running server. It is a
 // hash, so the address never carries the token itself.
-func Instance(token string) string {
-	h := sha256.Sum256([]byte("proj pages instance " + token))
+func Instance(token string, pid int) string {
+	h := sha256.Sum256([]byte("proj pages instance " + token + " " + strconv.Itoa(pid)))
 	return hex.EncodeToString(h[:6])
 }
 
 // ViewURL is TermURL without the take: a page that attaches only when no other
 // client has the session, else offers to show it there.
-func ViewURL(addr, token, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {Instance(token)}, "t": {token}}.Encode()
+func ViewURL(addr, token, inst, socket, session string) string {
+	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {inst}, "t": {token}}.Encode()
 }
 
 // TermMatches says whether pageURL is the terminal page of session on socket:
