@@ -374,12 +374,11 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 	case b.Session == "":
 		writeErr(w, http.StatusBadRequest, "session is required")
 		return
-	case b.Event == channelmcp.ReportActivity: // whether the session is working: no use for it yet
-		w.WriteHeader(http.StatusNoContent)
-		return
 	case b.Event == channelmcp.ReportTurnEnded:
 	case b.Event != channelmcp.ReportHeld && b.Event != channelmcp.ReportLanded:
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("event %q: want held, landed or turn_ended", b.Event))
+		// activity (whether the session is working: no use for it yet), or
+		// an event a newer harness added: taken and ignored, not refused.
+		w.WriteHeader(http.StatusNoContent)
 		return
 	case b.Token == "":
 		writeErr(w, http.StatusBadRequest, "event "+string(b.Event)+" needs the send's token")

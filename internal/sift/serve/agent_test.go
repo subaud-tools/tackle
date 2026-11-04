@@ -272,3 +272,14 @@ func TestAnActivityReportIsTakenAndIgnored(t *testing.T) {
 		}
 	}
 }
+
+// An event a newer harness sends that sift doesn't know yet is taken and
+// ignored, not refused: a 400 would reach the harness's stderr every turn.
+func TestAnUnknownReportEventIsTakenAndIgnored(t *testing.T) {
+	f := newFixture(t)
+	for _, body := range []string{`{"session":"s1","event":"future_event"}`, `{"session":"s1","event":"future_event","token":"t7"}`} {
+		if w := f.do("POST", "/api/agent/report", body); w.Code != 204 {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+}

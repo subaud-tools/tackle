@@ -500,3 +500,14 @@ func TestAnActivityReportIsTakenAndIgnored(t *testing.T) {
 		}
 	}
 }
+
+// An event a newer harness sends that cull doesn't know yet is taken and
+// ignored, not refused: a 400 would reach the harness's stderr every turn.
+func TestAnUnknownReportEventIsTakenAndIgnored(t *testing.T) {
+	a := newAgentFx(t)
+	for _, b := range []map[string]string{{"session": "s1", "event": "future_event"}, {"session": "s1", "event": "future_event", "token": "t7"}} {
+		if w := a.post("/api/agent/report", b); w.Code != 204 {
+			t.Fatalf("%v: %d %s", b, w.Code, w.Body)
+		}
+	}
+}
