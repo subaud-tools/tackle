@@ -6,9 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/subaud-tools/tackle/internal/proj/servers"
 	"github.com/subaud-tools/tools-common/localweb"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
@@ -119,4 +125,64 @@ func TestATabOpenedForOneSessionIsNotListedForAnother(t *testing.T) {
 	if len(other.Tabs) != 0 || len(own.Tabs) != 1 || own.Tabs[0].Address != "http://127.0.0.1:4321/plan" {
 		t.Fatalf("other session's tabs %+v, own %+v", other, own)
 	}
+}
+
+// GET /api/servers needs the token and lists the groups: here proj serve
+// itself, up, and a tool whose live folder holds no entry, down.
+func TestTheServersAPINeedsTheTokenAndListsTheGroups(t *testing.T) {
+	srv := startServer(t)
+	if err := os.MkdirAll(filepath.Join(os.Getenv("XDG_STATE_HOME"), "zz", "live"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	u := "http://" + srv.Addr() + "/api/servers"
+	if code, _ := get(t, u, nil); code != http.StatusUnauthorized {
+		t.Fatalf("without the token = %d, want 401", code)
+	}
+	code, body := get(t, u, http.Header{localweb.TokenHeader: {srv.Token}})
+	if code != http.StatusOK {
+		t.Fatalf("= %d: %s", code, body)
+	}
+	var l servers.List
+	if err := json.Unmarshal([]byte(body), &l); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Up) != 1 || l.Up[0].Tool != "proj" || len(l.Down) != 1 || l.Down[0].Tool != "zz" || l.Left == nil {
+		t.Fatalf("groups %s", body)
+	}
+}
+
+// A left-over stop on a pid Leftovers doesn't list is refused, and the
+// process lives.
+func TestALeftOverStopOnAPidNotListedIsRefused(t *testing.T) {
+	srv := startServer(t)
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	pid := cmd.Process.Pid
+	code, body := post(t, srv, "/api/leftovers/"+strconv.Itoa(pid)+"/stop")
+	if code != http.StatusConflict {
+		t.Fatalf("stop pid %d = %d: %s, want 409", pid, code, body)
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("pid %d was stopped: %v", pid, err)
+	}
+}
+
+func post(t *testing.T, srv served, path string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "http://"+srv.Addr()+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(localweb.TokenHeader, srv.Token)
+	req.Header.Set("Origin", "http://"+srv.Addr())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
 }

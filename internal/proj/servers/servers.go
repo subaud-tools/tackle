@@ -21,6 +21,9 @@ import (
 // started: a restart runs the newer build.
 const NewerBuild = "newer build installed"
 
+// ErrNotListed is an action on a tool or pid the listing doesn't hold now.
+var ErrNotListed = errors.New("not listed")
+
 // LogLines is how much of a server's serve.log Log shows.
 const LogLines = 40
 
@@ -136,7 +139,7 @@ func server(tool string) (pageserve.Server, error) {
 			return s, nil
 		}
 	}
-	return pageserve.Server{}, fmt.Errorf("%q is not a page server", tool)
+	return pageserve.Server{}, fmt.Errorf("%q is not a page server: %w", tool, ErrNotListed)
 }
 
 // Log is the last LogLines lines of tool's serve.log.
@@ -213,7 +216,7 @@ func StopLeftover(pid int) error {
 			return stopLeftover(pid)
 		}
 	}
-	return fmt.Errorf("pid %d is not a left-over process", pid)
+	return fmt.Errorf("pid %d is not a left-over process: %w", pid, ErrNotListed)
 }
 
 // StopLeftovers ends every process Leftovers lists now, and says how many.
