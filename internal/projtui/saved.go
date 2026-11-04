@@ -12,13 +12,16 @@ import (
 // operator unchecks with space and restores the rest with ^r; unchecked
 // sessions stay in the record for next time.
 
-// nextScope is the scope tab moves to: folders → sessions → saved → folders.
+// nextScope is the scope tab moves to: folders → sessions → saved → servers
+// → folders.
 func nextScope(s entranceScope) entranceScope {
 	switch s {
 	case scopeFolders:
 		return scopeSessions
 	case scopeSessions:
 		return scopeSaved
+	case scopeSaved:
+		return scopeServers
 	default:
 		return scopeFolders
 	}

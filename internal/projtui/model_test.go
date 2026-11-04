@@ -171,6 +171,10 @@ func TestTabTogglesEntranceScope(t *testing.T) {
 		t.Fatal("tab should switch the entrance from sessions to saved")
 	}
 	m = press(m, "tab")
+	if m.scope != scopeServers {
+		t.Fatal("tab should switch the entrance from saved to servers")
+	}
+	m = press(m, "tab")
 	if m.scope != scopeFolders {
 		t.Fatal("tab should switch the entrance back to folders")
 	}

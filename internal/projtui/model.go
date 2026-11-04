@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/subaud-tools/tackle/internal/proj"
+	"github.com/subaud-tools/tackle/internal/proj/servers"
 )
 
 // refreshInterval is how often the live-refresh tick re-runs discovery. A var
@@ -71,25 +72,28 @@ const (
 )
 
 // entranceScope selects what the entrance view lists: folders (projects, the
-// default launcher view), live sessions, or saved sessions (the restore
-// view). tab cycles through them at the entrance.
+// default launcher view), live sessions, saved sessions (the restore view), or
+// the family's page servers. tab cycles through them at the entrance.
 type entranceScope int
 
 const (
 	scopeFolders entranceScope = iota
 	scopeSessions
 	scopeSaved
+	scopeServers
 )
 
 // RowKind tags a row so the renderer and enter-handler know how to treat it.
 type RowKind int
 
 const (
-	RowSession RowKind = iota // a live tmux session
-	RowProject                // a project with no live session (entrance only)
-	RowNewWork                // synthetic "+ new work…" (project view, TOP)
-	RowSaved                  // a remembered session (saved scope)
-	RowHeader                 // a group label: saved window, opened/not opened (not selectable)
+	RowSession  RowKind = iota // a live tmux session
+	RowProject                 // a project with no live session (entrance only)
+	RowNewWork                 // synthetic "+ new work…" (project view, TOP)
+	RowSaved                   // a remembered session (saved scope)
+	RowHeader                  // a group label: saved window, opened/not opened (not selectable)
+	RowServer                  // a page server (servers scope)
+	RowLeftover                // a left-over server process (servers scope)
 )
 
 // Row is one selectable line. Sessions carry Socket/Name for jumping; projects
@@ -119,6 +123,10 @@ type Row struct {
 	Attached     bool
 	Transcript   bool
 	Checked      bool
+
+	// Servers-scope fields: Server for RowServer, Leftover for RowLeftover.
+	Server   servers.Row
+	Leftover servers.Leftover
 }
 
 // Result is what the user chose. Kind is "" (cancel), "jump", "new", or
@@ -242,6 +250,16 @@ type Model struct {
 	// creates or restores a session, so Result stays empty.
 	reapOnly bool
 
+	// The servers scope: its actions (inert in tests unless set), the last
+	// read, whether the refresh tick runs, a pending "stop all left over"
+	// confirm, and the log shown in the preview pane.
+	srv        serverActions
+	srvList    servers.List
+	srvLoaded  bool
+	srvTicking bool
+	srvConfirm bool
+	srvLog     serverLogMsg
+
 	Result Result
 }
 
@@ -335,7 +353,7 @@ func New() (Model, error) {
 	// once; the tmux scan (about a second across many servers) runs in the
 	// background from Init and fills in the sessions.
 	sessions, projects := buildRows(roots, nil)
-	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord().withOpenIn(cfg.OpenIn)
+	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord().withServers().withOpenIn(cfg.OpenIn)
 	m.sessionsLoaded = false
 	m.defaultModel = cfg.DefaultModel
 	if cfg.DefaultModel != "" {
@@ -391,7 +409,7 @@ func NewFor(project, agent string) (Model, error) {
 	// once; the tmux scan (about a second across many servers) runs in the
 	// background from Init and fills in the sessions.
 	sessions, projects := buildRows(roots, nil)
-	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord().withOpenIn(cfg.OpenIn)
+	m := newModel(sessions, projects, cfg.DefaultAgent, cfg.Sidebar, modelsResolver(cfg)).withRecord().withServers().withOpenIn(cfg.OpenIn)
 	m.sessionsLoaded = false
 	m.defaultModel = cfg.DefaultModel
 	if agent != "" {
@@ -525,6 +543,8 @@ func (m Model) rebuildEntrance() Model {
 		m.rows = append([]Row(nil), m.sessions...)
 	case scopeSaved:
 		m.rows = append([]Row(nil), m.saved...)
+	case scopeServers:
+		m.rows = serverRows(m.srvList)
 	default:
 		m.rows = append([]Row(nil), m.projects...)
 	}
@@ -571,6 +591,9 @@ func (m Model) visibleRows() []Row {
 	}
 	if m.view == viewProject || (m.view == viewEntrance && m.scope == scopeSessions) {
 		return groupOpened(rows)
+	}
+	if m.onServers() {
+		return groupServers(rows)
 	}
 	if m.view != viewEntrance || m.scope != scopeSaved {
 		return rows
@@ -666,6 +689,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case primedMsg:
 		return m.startRefresh(false)
+
+	case serversTickMsg:
+		return m.serversTicked()
+
+	case serversLoadedMsg:
+		return m.applyServers(msg), nil
+
+	case serverDoneMsg:
+		m.footerHint = msg.hint
+		return m, m.loadServers()
+
+	case serverLogMsg:
+		m.srvLog = msg
+		return m, nil
 
 	case tea.MouseMsg:
 		if m.inputKind != inputNone {
@@ -848,6 +885,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return next, cmd
 		}
 	}
+	if m.onServers() {
+		if next, cmd, ok := m.updateServers(msg); ok {
+			return next, cmd
+		}
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -856,7 +898,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// and live in the new-work input, not the browse view.
 		if m.view == viewEntrance {
 			m.scope = m.nextScope()
-			return m.rebuildEntrance(), nil
+			m = m.rebuildEntrance()
+			if m.scope == scopeServers {
+				return m.enterServers()
+			}
+			return m, nil
 		}
 		return m, nil
 	case "ctrl+a":
