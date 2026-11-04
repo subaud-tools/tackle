@@ -1,6 +1,7 @@
 package proj
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -91,9 +92,15 @@ end run`
 var pagesClient = pages.Client
 
 // ensurePages returns the running page server's address and token, starting
-// it first when it is not running. A seam for tests.
+// it first when it is not running. A server marked stale, an older proj's left
+// running across an upgrade, may lack routes this proj uses, so it is stopped
+// and this binary's started; it keeps the token, so open pages keep their
+// address. A seam for tests.
 var ensurePages = func() (addr, token string, err error) {
 	c := pagesClient()
+	if err := c.Fresh(context.Background()); err != nil {
+		return "", "", fmt.Errorf("proj serve: %w", err)
+	}
 	e, err := c.Find()
 	if errors.Is(err, pageserve.ErrNotRunning) {
 		e, err = c.Start()

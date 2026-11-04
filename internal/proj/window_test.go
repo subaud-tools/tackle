@@ -1,6 +1,7 @@
 package proj
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/proj/pages"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
 
@@ -459,5 +461,51 @@ func TestWindowKeepingViewReloadsAPageFromAnEarlierServerOnTheSamePort(t *testin
 	}
 	if len(*opened) != 1 {
 		t.Fatalf("opened tabs %+v", *opened)
+	}
+}
+
+// usePagesClient has ensurePages find the page server through c.
+func usePagesClient(t *testing.T, c *pageserve.Client) {
+	t.Helper()
+	orig := pagesClient
+	t.Cleanup(func() { pagesClient = orig })
+	pagesClient = func() *pageserve.Client { return c }
+}
+
+// A server an older proj left running marks itself stale once proj is
+// replaced: proj window stops it and starts this binary's before it opens.
+func TestEnsurePagesReplacesAStaleServer(t *testing.T) {
+	live := pageserve.Entry{Base: "http://127.0.0.1:1", Token: "old", Stale: true}
+	running, stopped := true, false
+	usePagesClient(t, &pageserve.Client{
+		Find: func() (pageserve.Entry, error) {
+			if !running {
+				return pageserve.Entry{}, pageserve.ErrNotRunning
+			}
+			return live, nil
+		},
+		Stop: func(context.Context) error { running, stopped = false, true; return nil },
+		Start: func() (pageserve.Entry, error) {
+			running, live = true, pageserve.Entry{Base: "http://127.0.0.1:2", Token: "new"}
+			return live, nil
+		},
+	})
+	addr, token, err := ensurePages()
+	if err != nil || addr != "127.0.0.1:2" || token != "new" || !stopped {
+		t.Fatalf("ensurePages = %q, %q, %v (stopped %v); want the new server", addr, token, err, stopped)
+	}
+}
+
+func TestEnsurePagesReusesAnUpToDateServer(t *testing.T) {
+	usePagesClient(t, &pageserve.Client{
+		Find: func() (pageserve.Entry, error) { return pageserve.Entry{Base: "http://127.0.0.1:1", Token: "tok"}, nil },
+		Stop: func(context.Context) error { t.Error("stopped an up-to-date server"); return nil },
+		Start: func() (pageserve.Entry, error) {
+			t.Error("started a server with one running")
+			return pageserve.Entry{}, nil
+		},
+	})
+	if addr, token, err := ensurePages(); err != nil || addr != "127.0.0.1:1" || token != "tok" {
+		t.Fatalf("ensurePages = %q, %q, %v; want the running server", addr, token, err)
 	}
 }
