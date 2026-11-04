@@ -57,10 +57,10 @@ func pressKey(m Model, k tea.KeyType) Model {
 
 func space(m Model) Model { return pressKey(m, tea.KeySpace) }
 
-func TestTabCyclesThreeScopes(t *testing.T) {
+func TestTabCyclesFourScopes(t *testing.T) {
 	m := newTestModel(nil)
 	m.width, m.height = 100, 30
-	want := []entranceScope{scopeSessions, scopeSaved, scopeFolders}
+	want := []entranceScope{scopeSessions, scopeSaved, scopeServers, scopeFolders}
 	for _, w := range want {
 		m = press(m, "tab")
 		if m.scope != w {
@@ -68,6 +68,9 @@ func TestTabCyclesThreeScopes(t *testing.T) {
 		}
 		if w == scopeSaved && !strings.Contains(m.View(), "· saved") {
 			t.Fatal("title does not name the saved scope")
+		}
+		if w == scopeServers && !strings.Contains(m.View(), "· servers") {
+			t.Fatal("title does not name the servers scope")
 		}
 	}
 }

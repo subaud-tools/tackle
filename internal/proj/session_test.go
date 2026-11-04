@@ -3,6 +3,7 @@ package proj
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -36,5 +37,28 @@ func TestEnsureSessionFromHomeSetsLabel(t *testing.T) {
 		t.Fatalf("second EnsureSession: %v", err)
 	} else if created {
 		t.Fatal("second EnsureSession reported created=true; want false (reuse)")
+	}
+}
+
+// Creating a session starts muster and hail; reusing one starts nothing.
+func TestCreatingASessionStartsMusterAndHail(t *testing.T) {
+	withFakeRun(t)
+	var started []string
+	orig := startServers
+	t.Cleanup(func() { startServers = orig })
+	startServers = func(tools ...string) { started = append(started, tools...) }
+	if created, err := EnsureSession("proj-x", "x/w", "/tmp/dir", "none", "", nil); err != nil || !created {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if want := []string{"muster", "hail"}; !slices.Equal(started, want) {
+		t.Fatalf("started %v, want %v", started, want)
+	}
+	started = nil
+	runner = func(string, ...string) (string, error) { return "", nil } // has-session succeeds
+	if created, err := RestoreSession("proj-x", "x/w", "/tmp/dir", "none", ""); err != nil || created {
+		t.Fatalf("reuse: created=%v err=%v", created, err)
+	}
+	if len(started) != 0 {
+		t.Fatalf("reusing a session started %v", started)
 	}
 }

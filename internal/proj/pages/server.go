@@ -1,6 +1,7 @@
 // Package pages is `proj serve`: one local server per machine that shows any
 // session's split page, the family's splitpage: its terminal on the left,
 // xterm.js over a websocket to a tmux client in a pty, and its tabs on the right.
+// Its / is the servers page: every family page server, to see and control.
 // It runs on pageserve, so it starts, is found, goes stale and stops as the
 // family's other page servers do.
 package pages
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/subaud-tools/tools-common/localweb/page"
 	"github.com/subaud-tools/tools-common/pageserve"
@@ -23,8 +25,8 @@ import (
 
 const tool = "proj"
 
-// assets is the server's own index.html, a hint at /; everything else is the
-// split page's.
+// assets is the server's own servers page at /; everything else is the split
+// page's.
 //
 //go:embed assets
 var assets embed.FS
@@ -54,6 +56,7 @@ type Options struct {
 	Version string
 	Log     io.Writer // one line per start/stop
 	Ready   func(url string)
+	Every   time.Duration // how often an open servers page's list is checked; default 2s
 }
 
 // Run serves until ctx ends or /api/stop. pageserve writes the entry while
@@ -63,16 +66,22 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	if o.Every <= 0 {
+		o.Every = 2 * time.Second
+	}
 	api := http.NewServeMux()
 	api.Handle("/api/term/", newBridge().handler())
 	api.Handle("/api/split/", splitpage.NewTabs().Handler())
+	serversAPI(api)
+	events := pageserve.NewEvents()
 	return pageserve.Run(ctx, pageserve.Options{
-		Live: Live(), Assets: page.With(siteFS{own: sub}), API: api,
+		Live: Live(), Assets: page.With(siteFS{own: sub}), API: api, Events: events,
 		Port: o.Port, Version: o.Version, Log: o.Log, Ready: o.Ready,
+		OnStart: func(ctx context.Context, _ string) { go watch(ctx, events, o.Every) },
 	})
 }
 
-// siteFS serves the split page at term, the server's own files (index.html),
+// siteFS serves the split page at term, the server's own files (the servers page),
 // and the split page's script and styles beside them.
 type siteFS struct{ own fs.FS }
 

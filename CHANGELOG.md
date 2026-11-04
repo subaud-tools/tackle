@@ -6,6 +6,13 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.23.0] - 2026-11-04
+
+### Added
+- A fourth scope in the picker, servers (tab: folders, sessions, saved, servers), lists every family page server on this machine with its address, version, uptime and whether a newer build is installed, and the processes no server entry names (old builds, test servers) as left over. enter opens a server's page, r restarts, x stops, s starts, l shows its log, X stops every left-over process after asking, w opens the servers page.
+- `proj serve`'s page is now the servers page: the same list and actions in the browser, updated live while it is open.
+- proj starts muster and hail whenever it creates or restores a session, so they come up with the first session after a reboot.
+
 ## [proj 0.22.0] - 2026-11-04
 
 ### Changed

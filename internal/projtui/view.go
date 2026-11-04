@@ -160,16 +160,16 @@ func (m Model) layout(iw int) (listW, previewW int, showPreview bool) {
 var scopeTabs = []struct {
 	scope entranceScope
 	label string
-}{{scopeFolders, "folders"}, {scopeSessions, "sessions"}, {scopeSaved, "saved"}}
+}{{scopeFolders, "folders"}, {scopeSessions, "sessions"}, {scopeSaved, "saved"}, {scopeServers, "servers"}}
 
-// titleBar always shows all three tabs, in the same place, with the current
+// titleBar always shows every tab, in the same place, with the current
 // one highlighted; a drilled-in project is appended after them, so the tabs
 // never shift.
 func (m Model) titleBar(width int) string {
 	title := titleLabelStyle.Render(" proj ") + titleInfoStyle.Render(" ")
 	first := true
 	for _, t := range scopeTabs {
-		if m.reapOnly && t.scope == scopeFolders {
+		if m.reapOnly && (t.scope == scopeFolders || t.scope == scopeServers) {
 			continue
 		}
 		if !first {
@@ -215,6 +215,9 @@ func (m Model) listPane(width int) string {
 			label = "add root: "
 		}
 		b.WriteString(hintStyle.Render(label) + m.input.View() + "\n")
+	case m.onServers():
+		l := m.srvList
+		b.WriteString(dimStyle.Render(fmt.Sprintf("%d up · %d down · %d left over", len(l.Up), len(l.Down), len(l.Left))) + "\n")
 	case m.filter != "":
 		b.WriteString(dimStyle.Render("/"+m.filter) + "\n")
 	default:
@@ -258,6 +261,10 @@ func (m Model) emptyMessage() string {
 		msg = "no saved sessions to forget"
 	case m.scope == scopeSaved:
 		msg = "nothing to restore: every saved session is open"
+	case m.scope == scopeServers && !m.srvLoaded:
+		msg = "loading servers…"
+	case m.scope == scopeServers:
+		msg = "no page servers on this machine"
 	case len(m.projects) == 0:
 		msg = "no projects yet: ^a to add a root, ^e to edit roots"
 	default:
@@ -389,6 +396,13 @@ func statusCell(r Row) string {
 			return "[x]"
 		}
 		return "[ ]"
+	case RowServer:
+		if r.Server.Up {
+			return " ● "
+		}
+		return " ○ "
+	case RowLeftover:
+		return " ● "
 	case RowNewWork:
 		return "   "
 	}
@@ -424,8 +438,33 @@ func rowMeta(r Row) string {
 		if r.Conversation != "" && !r.Transcript && !r.Running {
 			s += "  (no transcript)"
 		}
+	case RowServer:
+		v := r.Server
+		if !v.Up {
+			return "  not running"
+		}
+		s = "  " + port(v.Address)
+		if v.Version != "" {
+			s += "  " + v.Version
+		}
+		if v.Uptime != "" {
+			s += "  up " + v.Uptime
+		}
+		if v.Note != "" {
+			s += "  " + v.Note
+		}
+	case RowLeftover:
+		s = fmt.Sprintf("  pid %d · %s · %s", r.Leftover.PID, r.Leftover.Age, r.Leftover.Command)
 	}
 	return s
+}
+
+// port is ":4100" from "127.0.0.1:4100", the address as rows show it.
+func port(addr string) string {
+	if i := strings.LastIndex(addr, ":"); i >= 0 {
+		return addr[i:]
+	}
+	return addr
 }
 
 // plainRow is the row's text with no per-token styling, used to fill the
@@ -478,6 +517,14 @@ func (m Model) renderRow(r Row, selected bool, width int) string {
 		if cell = statusCell(r); noBox {
 			cell = "   "
 		}
+	case RowServer:
+		col := colSubtext0
+		if r.Server.Up {
+			col = colGreen
+		}
+		cell = " " + lipgloss.NewStyle().Foreground(col).Render(strings.TrimSpace(statusCell(r))) + " "
+	case RowLeftover:
+		cell = " " + attnStyle.Render("●") + " "
 	default:
 		cell = statusCell(r)
 	}
@@ -515,6 +562,9 @@ func (m Model) previewPane(width int) string {
 		return head + dimStyle.Render("nothing selected")
 	}
 	r := vis[m.cursor]
+	if r.Kind == RowServer || r.Kind == RowLeftover {
+		return head + m.serverPreview(r, width)
+	}
 	name := r.Label
 	if r.Name != "" {
 		name = r.Name
@@ -577,6 +627,54 @@ func (m Model) previewPane(width int) string {
 	return b.String()
 }
 
+// serverPreview is a server's details and, after l, its log's tail; a
+// left-over process's pid, age and whole command.
+func (m Model) serverPreview(r Row, width int) string {
+	var b strings.Builder
+	b.WriteString(previewStyle.Render(trunc(r.Label, width)) + "\n")
+	if r.Kind == RowLeftover {
+		p := r.Leftover
+		b.WriteString(attnStyle.Render("left over") + dimStyle.Render(fmt.Sprintf(" · pid %d · %s", p.PID, p.Age)) + "\n")
+		b.WriteString(dimStyle.Render(trunc(p.Command, width)) + "\n")
+		b.WriteString(dimStyle.Render("x stops it · X stops every left-over process"))
+		return b.String()
+	}
+	v := r.Server
+	if !v.Up {
+		b.WriteString(dimStyle.Render("not running · s starts it") + "\n")
+	} else {
+		b.WriteString(agentStyle.Render("up") + dimStyle.Render(trunc(" · "+v.Address, width-2)) + "\n")
+		var meta []string
+		if v.Version != "" {
+			meta = append(meta, v.Version)
+		}
+		if v.Uptime != "" {
+			meta = append(meta, "up "+v.Uptime)
+		}
+		if len(meta) > 0 {
+			b.WriteString(dimStyle.Render(strings.Join(meta, " · ")) + "\n")
+		}
+		if v.Note != "" {
+			b.WriteString(hintStyle.Render(trunc(v.Note+": r restarts it", width)) + "\n")
+		}
+	}
+	if m.srvLog.tool != v.Tool {
+		b.WriteString(dimStyle.Render("l shows the log"))
+		return b.String()
+	}
+	b.WriteString("\n" + previewHead.Render("serve.log") + "\n")
+	lines := strings.Split(strings.TrimRight(m.srvLog.text, "\n"), "\n")
+	// Keep the newest lines that fit the pane.
+	if room := m.bodyHeight() - 2 - strings.Count(b.String(), "\n") - 2; m.fixed() && room > 0 && len(lines) > room {
+		lines = lines[len(lines)-room:]
+	}
+	for i, l := range lines {
+		lines[i] = dimStyle.Render(trunc(l, width))
+	}
+	b.WriteString(strings.Join(lines, "\n"))
+	return b.String()
+}
+
 // footerView is always exactly two lines: a message line (blank when there
 // is no message) and the key legend. The keys every browse view shares
 // (tab, ?) are right-aligned so they stay put while the view's own keys sit
@@ -628,6 +726,12 @@ func (m Model) shortHelp() []key.Binding {
 	if m.reapOnly {
 		return m.reapHelp()
 	}
+	if m.onServers() {
+		return []key.Binding{
+			bind("↵", "open"), bind("r", "restart"), bind("x", "stop"), bind("s", "start"),
+			bind("l", "log"), bind("X", "stop left over"), bind("w", "page"),
+		}
+	}
 	if m.view == viewEntrance && m.scope == scopeSaved {
 		return []key.Binding{
 			bind("space", "toggle"),
@@ -670,6 +774,10 @@ func (m Model) fullHelp() [][]key.Binding {
 	if m.reapOnly {
 		nav := []key.Binding{bind("↑↓", "move"), bind("tab", scopeLabel(m.nextScope()))}
 		return [][]key.Binding{nav, append(m.reapHelp(), bind("^c", "quit"))}
+	}
+	if m.onServers() {
+		nav := []key.Binding{bind("↑↓", "move"), bind("esc", "back"), bind("tab", scopeLabel(m.nextScope()))}
+		return [][]key.Binding{nav, m.shortHelp(), {bind("^c", "quit")}}
 	}
 	saved := m.view == viewEntrance && m.scope == scopeSaved
 	nav := []key.Binding{bind("↑↓", "move")}
@@ -777,6 +885,8 @@ func scopeLabel(s entranceScope) string {
 		return "sessions"
 	case scopeSaved:
 		return "saved"
+	case scopeServers:
+		return "servers"
 	default:
 		return "folders"
 	}
