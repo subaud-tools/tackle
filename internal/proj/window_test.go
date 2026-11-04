@@ -1,6 +1,7 @@
 package proj
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/subaud-tools/tackle/internal/proj/pages"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
 
@@ -32,7 +34,7 @@ func fakeChrome(t *testing.T, tabs string, fail map[string]error) *[]chromeCall 
 	origScript, origPages, origPoll := osascript, ensurePages, attachPoll
 	t.Cleanup(func() { osascript, ensurePages, attachPoll = origScript, origPages, origPoll })
 	attachPoll = 0
-	ensurePages = func() (string, string, error) { return "127.0.0.1:9", "tok", nil }
+	ensurePages = func() (string, string, string, error) { return "127.0.0.1:9", "tok", pages.Instance("tok", 1), nil }
 	var calls []chromeCall
 	osascript = func(script string, args ...string) (string, error) {
 		calls = append(calls, chromeCall{script, args})
@@ -83,7 +85,9 @@ func fakePageServer(t *testing.T) *[]splitpage.OpenRequest {
 	t.Cleanup(srv.Close)
 	orig := ensurePages
 	t.Cleanup(func() { ensurePages = orig })
-	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	ensurePages = func() (string, string, string, error) {
+		return strings.TrimPrefix(srv.URL, "http://"), "tok", pages.Instance("tok", 1), nil
+	}
 	return &opened
 }
 
@@ -353,8 +357,8 @@ func TestWindowKeepingViewLeavesADetachedPageDetached(t *testing.T) {
 	storedWindow(t, socket, name)
 	calls := fakeChrome(t, "", nil)
 	opened := fakePageServer(t)
-	addr, _, _ := ensurePages()
-	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("tok")}}.Encode()+"\n")
+	addr, _, inst, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {inst}}.Encode()+"\n")
 	got, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan")
 	if err != nil {
 		t.Fatal(err)
@@ -376,35 +380,6 @@ func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
 	}
 	if a := (*calls)[0].args[0]; !strings.Contains(a, "take=1") || !pages.TermMatches(a, socket, name) {
 		t.Fatalf("opened %q", a)
-	}
-}
-
-// proj pages 0.20.1, left running from before an upgrade, has no split API:
-// the first proj window after it stops that server in its tmux session and
-// starts this binary's.
-func TestEnsurePagesReplacesAServerFromAnotherBuild(t *testing.T) {
-	var tmux []string
-	started := false
-	origExec, origAddress := execCommand, pagesAddress
-	t.Cleanup(func() { execCommand, pagesAddress = origExec, origAddress })
-	execCommand = func(name string, arg ...string) *exec.Cmd {
-		tmux = append(tmux, strings.Join(arg[:min(len(arg), 6)], " "))
-		started = started || slices.Contains(arg, "new-session")
-		return origExec("true")
-	}
-	pagesAddress = func() (string, string, string, bool) {
-		if started {
-			return "127.0.0.1:2", "new", pages.Build, true
-		}
-		return "127.0.0.1:1", "old", "", true
-	}
-	addr, token, err := ensurePages()
-	if err != nil || addr != "127.0.0.1:2" || token != "new" {
-		t.Fatalf("ensurePages = %q, %q, %v; want the new server", addr, token, err)
-	}
-	want := []string{"-L proj-pages kill-session -t =pages", "-L proj-pages new-session -d -s pages"}
-	if !slices.Equal(tmux, want) {
-		t.Fatalf("ran tmux %q, want %q", tmux, want)
 	}
 }
 
@@ -430,7 +405,7 @@ func TestWindowKeepingViewReloadsATerminalPageOnAStoppedServer(t *testing.T) {
 	term := storedWindow(t, socket, name)
 	calls := fakeChrome(t, term, nil)
 	opened := fakePageServer(t)
-	addr, _, _ := ensurePages()
+	addr, _, _, _ := ensurePages()
 	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +429,9 @@ func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
 		http.Error(w, "no split here", http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
-	ensurePages = func() (string, string, error) { return strings.TrimPrefix(srv.URL, "http://"), "tok", nil }
+	ensurePages = func() (string, string, string, error) {
+		return strings.TrimPrefix(srv.URL, "http://"), "tok", pages.Instance("tok", 1), nil
+	}
 	var warned strings.Builder
 	orig := warnings
 	t.Cleanup(func() { warnings = orig })
@@ -469,24 +446,70 @@ func TestWindowOpensTheNewWindowWhenItsTabFails(t *testing.T) {
 	}
 }
 
-// A page server restarted on the same port leaves the window's terminal page
-// dead on the same address: the page names the server it came from, so it
-// loads from the new one, keeping the view.
-func TestWindowKeepingViewReloadsAPageFromAnEarlierServerOnTheSamePort(t *testing.T) {
+// proj serve keeps its port and token across a restart, so a terminal page
+// left dead by one has the current address and token; it names the earlier
+// server's pid, so it loads from the running one, keeping the view.
+func TestWindowKeepingViewReloadsADeadPageOnTheSameAddress(t *testing.T) {
 	socket, name, pane := terminalServer(t)
 	storedWindow(t, socket, name)
 	calls := fakeChrome(t, "", nil)
 	opened := fakePageServer(t)
-	addr, _, _ := ensurePages()
-	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance("an-earlier-token")}}.Encode()+"\n")
+	addr, token, inst, _ := ensurePages()
+	chromeShows(t, "http://"+addr+"/term?"+url.Values{"session": {name}, "socket": {socket}, "i": {pages.Instance(token, 2)}}.Encode()+"\n")
 	if _, err := WindowKeepingView(socket, pane, "http://127.0.0.1:4321/plan"); err != nil {
 		t.Fatal(err)
 	}
 	sameScripts(t, *calls, chromeHasWindowScript, chromeSetTabScript, chromeRaiseScript)
-	if a := (*calls)[1].args[2]; strings.Contains(a, "take=") || !strings.Contains(a, "i="+pages.Instance("tok")) {
+	if a := (*calls)[1].args[2]; strings.Contains(a, "take=") || !strings.Contains(a, "i="+inst) {
 		t.Fatalf("set tab %q, want the page from the current server without take", a)
 	}
 	if len(*opened) != 1 {
 		t.Fatalf("opened tabs %+v", *opened)
+	}
+}
+
+// usePagesClient has ensurePages find the page server through c.
+func usePagesClient(t *testing.T, c *pageserve.Client) {
+	t.Helper()
+	orig := pagesClient
+	t.Cleanup(func() { pagesClient = orig })
+	pagesClient = func() *pageserve.Client { return c }
+}
+
+// A server an older proj left running marks itself stale once proj is
+// replaced: proj window stops it and starts this binary's before it opens.
+func TestEnsurePagesReplacesAStaleServer(t *testing.T) {
+	live := pageserve.Entry{Base: "http://127.0.0.1:1", Token: "old", Stale: true}
+	running, stopped := true, false
+	usePagesClient(t, &pageserve.Client{
+		Find: func() (pageserve.Entry, error) {
+			if !running {
+				return pageserve.Entry{}, pageserve.ErrNotRunning
+			}
+			return live, nil
+		},
+		Stop: func(context.Context) error { running, stopped = false, true; return nil },
+		Start: func() (pageserve.Entry, error) {
+			running, live = true, pageserve.Entry{Base: "http://127.0.0.1:2", Token: "new"}
+			return live, nil
+		},
+	})
+	addr, token, _, err := ensurePages()
+	if err != nil || addr != "127.0.0.1:2" || token != "new" || !stopped {
+		t.Fatalf("ensurePages = %q, %q, %v (stopped %v); want the new server", addr, token, err, stopped)
+	}
+}
+
+func TestEnsurePagesReusesAnUpToDateServer(t *testing.T) {
+	usePagesClient(t, &pageserve.Client{
+		Find: func() (pageserve.Entry, error) { return pageserve.Entry{Base: "http://127.0.0.1:1", Token: "tok"}, nil },
+		Stop: func(context.Context) error { t.Error("stopped an up-to-date server"); return nil },
+		Start: func() (pageserve.Entry, error) {
+			t.Error("started a server with one running")
+			return pageserve.Entry{}, nil
+		},
+	})
+	if addr, token, _, err := ensurePages(); err != nil || addr != "127.0.0.1:1" || token != "tok" {
+		t.Fatalf("ensurePages = %q, %q, %v; want the running server", addr, token, err)
 	}
 }

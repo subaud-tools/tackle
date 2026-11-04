@@ -5,122 +5,41 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"net/http/httputil"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
-	tools "github.com/subaud-tools/tools-common"
 	"github.com/subaud-tools/tools-common/localweb"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
 
-const fakeToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-// remember writes the state `proj pages` leaves: srv's port and fakeToken.
-func remember(t *testing.T, srv *httptest.Server) {
-	t.Helper()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	u, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tools.WriteFileAtomic(filepath.Join(tools.StateDir(tool), "port"), []byte(u.Port()+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := tools.WriteFileAtomic(tokenPath(), []byte(fakeToken+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// recordingServer answers with handler and keeps each request's full text.
-func recordingServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, func() string) {
-	t.Helper()
-	var mu sync.Mutex
-	var seen strings.Builder
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dump, _ := httputil.DumpRequest(r, true)
-		mu.Lock()
-		seen.Write(dump)
-		mu.Unlock()
-		handler(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	return srv, func() string { mu.Lock(); defer mu.Unlock(); return seen.String() }
-}
-
-func TestAddressRejectsAnotherServerAndKeepsTheTokenFromIt(t *testing.T) {
-	srv, seen := recordingServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	remember(t, srv)
-	if _, _, _, ok := Address(); ok {
-		t.Fatal("a server that only answers 200 was accepted")
-	}
-	if got := seen(); got == "" || strings.Contains(got, fakeToken) {
-		t.Fatalf("the probe was missing or held the token:\n%s", got)
-	}
-}
-
-func TestAddressDoesNotFollowRedirects(t *testing.T) {
-	target, seen := recordingServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	srv, _ := recordingServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
-	})
-	remember(t, srv)
-	if _, _, _, ok := Address(); ok {
-		t.Fatal("a redirect was accepted")
-	}
-	if got := seen(); got != "" {
-		t.Fatalf("the redirect was followed:\n%s", got)
-	}
-}
-
-func TestAddressFindsTheRunningServer(t *testing.T) {
-	srv := startServer(t)
-	addr, token, build, ok := Address()
-	if !ok || addr != srv.Addr() || token != srv.Token || build != Build {
-		t.Fatalf("Address = %q, %q, %q, %v; want %q, its token and build %q", addr, token, build, ok, srv.Addr(), Build)
-	}
-}
-
-// proj pages 0.20.1 answers the challenge with the proof alone: it is ours,
-// from no build this proj names, so proj window replaces it.
-func TestAddressNamesNoBuildForAServerFromBeforeBuilds(t *testing.T) {
-	srv, _ := recordingServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, healthProof(fakeToken, strings.TrimPrefix(r.URL.Path, "/"+healthDir+"/")))
-	})
-	remember(t, srv)
-	_, _, build, ok := Address()
-	if !ok || build != "" {
-		t.Fatalf("Address = build %q, %v; want ours with no build", build, ok)
-	}
-}
-
-func TestEachStartHasANewToken(t *testing.T) {
+// A restart keeps the token, so a window's terminal page keeps its address.
+func TestTheTokenSurvivesARestart(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	first, err := Start(ctx)
+	done := make(chan error, 1)
+	ready := make(chan struct{})
+	go func() { done <- Run(ctx, Options{Version: "test", Ready: func(string) { close(ready) }}) }()
+	<-ready
+	first, err := Live().Running()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Start(ctx)
-	if err != nil {
+	cancel()
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if first.Token == second.Token {
-		t.Fatal("two starts share a token")
+	if second := runServer(t); second.Token != first.Token {
+		t.Fatalf("the token changed across a restart: %q, then %q", first.Token, second.Token)
 	}
-	b, err := os.ReadFile(tokenPath())
-	if err != nil || strings.TrimSpace(string(b)) != second.Token {
-		t.Fatalf("token file = %q, %v; want the latest start's", b, err)
-	}
-	fi, err := os.Stat(tokenPath())
-	if err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("token file mode = %v, %v", fi, err)
+}
+
+func TestTheAPINeedsTheToken(t *testing.T) {
+	srv := startServer(t)
+	for _, path := range []string{"/api/term/ws?socket=/tmp/a/s&session=p/w", "/api/split/tabs?session=p/w"} {
+		if code, _ := get(t, "http://"+srv.Addr()+path, nil); code != http.StatusUnauthorized {
+			t.Errorf("%s without the token = %d, want 401", path, code)
+		}
 	}
 }
 
