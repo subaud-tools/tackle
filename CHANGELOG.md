@@ -6,6 +6,12 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.21.1] - 2026-11-03
+
+### Fixed
+- A shell opened by a terminal app that was launched from inside tmux no longer inherits a stale `TMUX`: proj's shell wrapper clears `TMUX` and `TMUX_PANE` when the shell isn't on the terminal of the pane `$TMUX_PANE` names. Enter in the picker attaches again instead of failing with `exit status 1`, and auto-join works in such a shell.
+- A failing tmux command proj runs is reported with the command and tmux's message, such as `tmux switch-client -t =tools-workspace/sift-errors: no current client`, instead of a bare `exit status 1`.
+
 ## [cull 0.10.0] - 2026-11-03
 
 ### Changed
