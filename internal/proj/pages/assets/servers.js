@@ -1,16 +1,16 @@
 // servers.js — proj serve's servers page: every family page server, up then
-// down, and the left-over processes no server holds, with their actions;
-// reloaded when serve says the list changed.
-import { bar, buttons, card, codeBlock, createApi, h, initTheme, live, sheet } from '/_kit/kit.js';
+// down, and the other family processes no server entry names (shown as "also
+// running": test builds or strays), with their actions; reloaded when serve
+// says the list changed.
+import { bar, buttons, codeBlock, createApi, h, initTheme, live, sheet } from '/_kit/kit.js';
 
 const app = document.getElementById('app');
 const top = bar({ brand: { name: 'proj' }, status: 'servers', staleText: 'restarted · reload' });
 initTheme('proj', top.themeControl);
 const api = createApi({ onStale: () => top.setLive('stale') });
 
-const banner = h('div');
 const groups = h('div');
-app.append(top.el, h('main', { class: 'kit-read' }, h('div', { class: 'srv' }, banner, groups)));
+app.append(top.el, h('main', { class: 'kit-read' }, h('div', { class: 'srv' }, groups)));
 
 // busy holds the row an action runs on, so its buttons wait for it.
 const busy = new Set();
@@ -65,39 +65,24 @@ function serverRow(s) {
 function leftRow(p) {
   const key = `pid ${p.pid}`;
   return h('div', { class: 'kit-tr', dataset: { pid: String(p.pid) } },
-    h('span', { class: 'srv-name' }, h('i', { dataset: { tone: 'left' } }), p.tool),
+    h('span', { class: 'srv-name' }, h('i', { dataset: { tone: 'other' } }), p.tool),
     h('span', { class: 'srv-mono', title: p.command }, p.command),
     h('span', { class: 'srv-mono' }, `pid ${p.pid}`),
     h('span', { class: 'srv-mono' }, `up ${p.age}`),
     buttons([{ label: 'stop', danger: true, disabled: busy.has(key), run: () => act(key, `stop pid ${p.pid}`, `/leftovers/${p.pid}/stop`) }]));
 }
 
-function group(label, rows, row) {
+function group(label, rows, row, sub) {
   if (!rows.length) return null;
-  return [h('div', { class: 'kit-label' }, `${label} · ${rows.length}`), h('div', { class: 'kit-table' }, rows.map(row))];
-}
-
-function stopAll(n) {
-  const s = sheet({
-    title: `stop ${n} left-over ${n === 1 ? 'process' : 'processes'}?`,
-    body: h('p', null, 'Each is sent SIGTERM, then SIGKILL after 5 s. Only the processes listed when you confirm are stopped.'),
-    actions: [
-      { label: 'cancel', run: () => s.close() },
-      { label: `stop ${n}`, fill: true, run: () => { s.close(); act('left', 'stop left over', '/leftovers/stop'); } },
-    ],
-  });
+  return [h('div', { class: 'kit-label' }, `${label} · ${rows.length}`), sub && h('p', { class: 'srv-sub' }, sub), h('div', { class: 'kit-table' }, rows.map(row))].filter(Boolean);
 }
 
 function render(l) {
   const left = l.left || [];
-  banner.replaceChildren(left.length
-    ? card({ edge: 'signal', head: h('div', { class: 'srv-banner' },
-        h('span', null, `${left.length} left-over ${left.length === 1 ? 'process holds' : 'processes hold'} a port or memory: old builds or test servers no entry names.`)),
-      actions: [{ label: `stop all ${left.length}`, fill: true, disabled: busy.has('left'), run: () => stopAll(left.length) }] })
-    : '');
-  const parts = [group('up', l.up || [], serverRow), group('down', l.down || [], serverRow), group('left over', left, leftRow)].filter(Boolean);
+  const parts = [group('up', l.up || [], serverRow), group('down', l.down || [], serverRow),
+    group('also running', left, leftRow, "family processes that aren't the registered server: test builds or strays")].filter(Boolean);
   groups.replaceChildren(...(parts.length ? parts.flat() : [h('p', { class: 'srv-empty' }, 'no page servers on this machine')]));
-  top.setStatus(`${(l.up || []).length} up · ${(l.down || []).length} down · ${left.length} left over`);
+  top.setStatus(`${(l.up || []).length} up · ${(l.down || []).length} down · ${left.length} also running`);
 }
 
 let last = null;

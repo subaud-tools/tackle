@@ -15,7 +15,7 @@ import (
 )
 
 // The servers scope lists every family page server, up then down, and the
-// left-over processes no server holds, refreshed every serversInterval while
+// left-over processes no server holds (shown as "also running"), refreshed every serversInterval while
 // it is on screen. Its keys act on the highlighted row through the servers
 // package; nothing it does waits inside Update.
 
@@ -145,7 +145,8 @@ func serverRows(l servers.List) []Row {
 	return rows
 }
 
-// groupServers puts rows under "up · N", "down · N" and "left over · N".
+// groupServers puts rows under "up · N", "down · N" and "also running · N"
+// (the left-over processes).
 func groupServers(rows []Row) []Row {
 	var up, down, left []Row
 	for _, r := range rows {
@@ -162,7 +163,7 @@ func groupServers(rows []Row) []Row {
 	for _, g := range []struct {
 		label string
 		rows  []Row
-	}{{"up", up}, {"down", down}, {"left over", left}} {
+	}{{"up", up}, {"down", down}, {"also running", left}} {
 		if len(g.rows) > 0 {
 			out = append(out, Row{Kind: RowHeader, Label: fmt.Sprintf("%s · %d", g.label, len(g.rows))})
 			out = append(out, g.rows...)
@@ -192,10 +193,10 @@ func (m Model) updateServers(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		m.footerHint = ""
 		if msg.String() == "y" && m.srv.stopLeftovers != nil {
 			stop := m.srv.stopLeftovers
-			m.footerHint = "stopping left-over processes…"
+			m.footerHint = "stopping other processes…"
 			return m, m.act(func() string {
 				n, err := stop()
-				return done("stopped", fmt.Sprintf("%d left-over processes", n), err)
+				return done("stopped", fmt.Sprintf("%d other processes", n), err)
 			}), true
 		}
 		return m, nil, true
@@ -262,10 +263,10 @@ func (m Model) updateServers(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		return m, nil, true
 	case "X":
 		if n := len(m.srvList.Left); n == 0 {
-			m.footerHint = "nothing left over"
+			m.footerHint = "nothing else running"
 		} else {
 			m.srvConfirm = true
-			m.footerHint = fmt.Sprintf("stop %d left-over processes? y/n", n)
+			m.footerHint = fmt.Sprintf("stop %d other processes? y/n", n)
 		}
 		return m, nil, true
 	case "w":

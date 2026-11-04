@@ -1,0 +1,15 @@
+/* proj.css: proj serve's servers page */
+:root {
+  --tool-signal-light: #a4512a;
+  --tool-signal-dark: #d98f66;
+}
+.srv { max-width: 1040px; margin: 0 auto; padding: 28px 32px 60px; }
+.srv .kit-label { margin: 26px 0 10px; }
+.srv-sub { margin: -4px 0 10px; font-size: 13px; color: var(--kit-muted); }
+.srv .kit-tr { grid-template-columns: minmax(110px, 160px) minmax(0, 1.2fr) 80px minmax(0, 1fr) auto; }
+.srv-name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.srv-name i { width: 8px; height: 8px; border-radius: 50%; background: var(--kit-muted); flex: none; }
+.srv-name i[data-tone="up"] { background: var(--kit-ok); }
+.srv-mono { font: 12.5px var(--kit-mono); color: var(--kit-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv-note { font-size: 13px; color: var(--kit-agent); }
+.srv-empty { color: var(--kit-muted); font-size: 14px; }

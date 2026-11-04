@@ -217,7 +217,7 @@ func (m Model) listPane(width int) string {
 		b.WriteString(hintStyle.Render(label) + m.input.View() + "\n")
 	case m.onServers():
 		l := m.srvList
-		b.WriteString(dimStyle.Render(fmt.Sprintf("%d up · %d down · %d left over", len(l.Up), len(l.Down), len(l.Left))) + "\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("%d up · %d down · %d also running", len(l.Up), len(l.Down), len(l.Left))) + "\n")
 	case m.filter != "":
 		b.WriteString(dimStyle.Render("/"+m.filter) + "\n")
 	default:
@@ -634,9 +634,9 @@ func (m Model) serverPreview(r Row, width int) string {
 	b.WriteString(previewStyle.Render(trunc(r.Label, width)) + "\n")
 	if r.Kind == RowLeftover {
 		p := r.Leftover
-		b.WriteString(attnStyle.Render("left over") + dimStyle.Render(fmt.Sprintf(" · pid %d · %s", p.PID, p.Age)) + "\n")
+		b.WriteString(dimStyle.Render("also running") + dimStyle.Render(fmt.Sprintf(" · pid %d · %s", p.PID, p.Age)) + "\n")
 		b.WriteString(dimStyle.Render(trunc(p.Command, width)) + "\n")
-		b.WriteString(dimStyle.Render("x stops it · X stops every left-over process"))
+		b.WriteString(dimStyle.Render("x stops it · X stops every other process"))
 		return b.String()
 	}
 	v := r.Server
@@ -729,7 +729,7 @@ func (m Model) shortHelp() []key.Binding {
 	if m.onServers() {
 		return []key.Binding{
 			bind("↵", "open"), bind("r", "restart"), bind("x", "stop"), bind("s", "start"),
-			bind("l", "log"), bind("X", "stop left over"), bind("w", "page"),
+			bind("l", "log"), bind("X", "stop others"), bind("w", "page"),
 		}
 	}
 	if m.view == viewEntrance && m.scope == scopeSaved {
