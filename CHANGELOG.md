@@ -6,6 +6,21 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [sift 0.8.2] - 2026-11-04
+
+### Fixed
+- A report event sift doesn't know yet (one a newer pi adds) is taken and ignored: the channel drops it without a log line (tools-common 0.66.0), and `sift serve` answers 204 instead of a 400 the channel logged on every turn.
+
+## [cull 0.10.1] - 2026-11-04
+
+### Fixed
+- A report event cull doesn't know yet (one a newer pi adds) is taken and ignored: the channel drops it without a log line (tools-common 0.66.0), and `cull serve` answers 204 instead of a 400 the channel logged on every turn.
+
+## [imprint 0.5.2] - 2026-11-04
+
+### Changed
+- tools-common 0.66.0: the channel ignores a report event it doesn't know without a log line, so a newer pi can add one without imprint complaining.
+
 ## [proj 0.23.0] - 2026-11-04
 
 ### Added
