@@ -6,6 +6,12 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.22.0] - 2026-11-04
+
+### Changed
+- `proj pages` is now `proj serve`, on the family's page server standard (tools-common pageserve 0.64.0): it writes `~/.local/state/proj/live/serve.json`, logs to `serve.log`, stops with `proj serve --stop`, and keeps its port and token across restarts. `proj window` starts it the same way every family tool starts its page, instead of in tmux session `pages` on socket proj-pages, and replaces one an older proj left running. `proj pages` is gone.
+- Open session windows reload once after upgrading, since the server's token moves to `~/.local/state/proj/token`; after that a restart keeps their address, and `proj window` reloads a terminal page left by a server that has since restarted.
+
 ## [proj 0.21.1] - 2026-11-03
 
 ### Fixed
