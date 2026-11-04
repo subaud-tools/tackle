@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/subaud-tools/tools-common/pageserve"
 )
@@ -53,11 +55,40 @@ var startServers = func(tools ...string) {
 		return
 	}
 	for _, tool := range tools {
-		go func() {
+		goStart(func() {
 			if _, err := pageserve.StartTool(tool); err != nil {
 				_, _ = fmt.Fprintf(warnings, "proj: starting %s: %v\n", tool, err)
 			}
-		}()
+		})
+	}
+}
+
+// starting counts the starts still running in the background.
+var starting sync.WaitGroup
+
+// goStart runs f in the background, counted by starting.
+func goStart(f func()) {
+	starting.Add(1)
+	go func() {
+		defer starting.Done()
+		f()
+	}()
+}
+
+// WaitStarts waits, for at most max, for the background starts to finish. proj
+// calls it on its way out: a command that created a session and exits at once
+// would otherwise end before muster and hail were launched. A start that has
+// launched its server and is only waiting for it to be ready may be cut short;
+// the server it launched runs on.
+func WaitStarts(max time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		starting.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(max):
 	}
 }
 
