@@ -379,35 +379,6 @@ func TestWindowOpensThePageToTakeTheSession(t *testing.T) {
 	}
 }
 
-// proj pages 0.20.1, left running from before an upgrade, has no split API:
-// the first proj window after it stops that server in its tmux session and
-// starts this binary's.
-func TestEnsurePagesReplacesAServerFromAnotherBuild(t *testing.T) {
-	var tmux []string
-	started := false
-	origExec, origAddress := execCommand, pagesAddress
-	t.Cleanup(func() { execCommand, pagesAddress = origExec, origAddress })
-	execCommand = func(name string, arg ...string) *exec.Cmd {
-		tmux = append(tmux, strings.Join(arg[:min(len(arg), 6)], " "))
-		started = started || slices.Contains(arg, "new-session")
-		return origExec("true")
-	}
-	pagesAddress = func() (string, string, string, bool) {
-		if started {
-			return "127.0.0.1:2", "new", pages.Build, true
-		}
-		return "127.0.0.1:1", "old", "", true
-	}
-	addr, token, err := ensurePages()
-	if err != nil || addr != "127.0.0.1:2" || token != "new" {
-		t.Fatalf("ensurePages = %q, %q, %v; want the new server", addr, token, err)
-	}
-	want := []string{"-L proj-pages kill-session -t =pages", "-L proj-pages new-session -d -s pages"}
-	if !slices.Equal(tmux, want) {
-		t.Fatalf("ran tmux %q, want %q", tmux, want)
-	}
-}
-
 // chromeShows makes the fake Chrome's stored window show tabs, after
 // fakePageServer, so a tab can be on the fake server's port.
 func chromeShows(t *testing.T, tabs string) {

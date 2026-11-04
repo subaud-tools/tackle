@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
 	"github.com/subaud-tools/tools-common/localweb"
+	"github.com/subaud-tools/tools-common/pageserve"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
 
@@ -24,7 +25,7 @@ const testSession = "pages-test/w"
 
 // tmuxServer starts a throwaway tmux server on a socket in a new temp dir,
 // with one detached session running sh, and returns the socket. $TMUX is set,
-// as it is for the real server, which runs inside tmux session `pages`.
+// as it is for a real server started by a proj run inside tmux.
 func tmuxServer(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -60,40 +61,59 @@ func tmuxOut(t *testing.T, socket string, args ...string) string {
 	return string(out)
 }
 
+// served is a running page server: its entry, and its address as host:port.
+type served struct{ pageserve.Entry }
+
+func (s served) Addr() string { return strings.TrimPrefix(s.Base, "http://") }
+
 // startServer runs the page server until the test ends, its state in a temp dir.
-func startServer(t *testing.T) *localweb.Server {
+func startServer(t *testing.T) served {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	return runServer(t)
+}
+
+// runServer runs the page server on the state dir the test set, until the test
+// ends, and returns its entry once it is written.
+func runServer(t *testing.T) served {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	srv, err := Start(ctx)
+	ready, done := make(chan struct{}), make(chan error, 1)
+	go func() { done <- Run(ctx, Options{Version: "test", Ready: func(string) { close(ready) }}) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Run: %v", err)
+	}
+	e, err := Live().Running()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return srv
+	return served{e}
 }
 
-func wsURL(srv *localweb.Server, socket, session string) string {
+func wsURL(srv served, socket, session string) string {
 	q := url.Values{"socket": {socket}, "session": {session}}
 	return "ws://" + srv.Addr() + "/api/term/ws?" + q.Encode()
 }
 
-func withToken(srv *localweb.Server) *websocket.DialOptions {
+func withToken(srv served) *websocket.DialOptions {
 	return &websocket.DialOptions{HTTPHeader: http.Header{localweb.TokenHeader: {srv.Token}}}
 }
 
-func dial(t *testing.T, srv *localweb.Server, socket string) *websocket.Conn {
+func dial(t *testing.T, srv served, socket string) *websocket.Conn {
 	t.Helper()
 	return dialURL(t, srv, wsURL(srv, socket, testSession))
 }
 
 // dialTaking connects as proj window or Use here does.
-func dialTaking(t *testing.T, srv *localweb.Server, socket string) *websocket.Conn {
+func dialTaking(t *testing.T, srv served, socket string) *websocket.Conn {
 	t.Helper()
 	return dialURL(t, srv, wsURL(srv, socket, testSession)+"&take=1")
 }
 
-func dialURL(t *testing.T, srv *localweb.Server, u string) *websocket.Conn {
+func dialURL(t *testing.T, srv served, u string) *websocket.Conn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -236,7 +256,7 @@ func clientPIDs(t *testing.T, socket string) string {
 
 // closeCode dials and reads until the server closes the socket, returning the
 // close code; after, if set, runs once the page's client is attached.
-func closeCode(t *testing.T, srv *localweb.Server, socket string, after func()) websocket.StatusCode {
+func closeCode(t *testing.T, srv served, socket string, after func()) websocket.StatusCode {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

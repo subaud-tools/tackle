@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/proj/pages"
+	"github.com/subaud-tools/tools-common/pageserve"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
 
@@ -28,12 +29,6 @@ var warnings io.Writer = os.Stderr
 
 // windowOption is the tmux session option holding the session's Chrome window.
 const windowOption = "@chrome_window"
-
-// pagesSocket and pagesSession are where proj window runs the page server.
-const (
-	pagesSocket  = "proj-pages"
-	pagesSession = "pages"
-)
 
 // chromeHasWindowScript prints the URL of each tab of window argv[1], one a
 // line, and nothing when Chrome is not running or has no such window. Chrome
@@ -92,39 +87,21 @@ end tell
 error "Chrome has no window " & (item 1 of argv)
 end run`
 
-// pagesAddress finds the running page server; a seam for tests.
-var pagesAddress = pages.Address
+// pagesClient finds proj serve, else starts it; a seam for tests.
+var pagesClient = pages.Client
 
 // ensurePages returns the running page server's address and token, starting
-// it first in its own tmux session when nothing answers. A server from another
-// build, an older proj's left running across an upgrade, may lack routes this
-// proj uses, so it is stopped and this binary's started. A seam for tests.
+// it first when it is not running. A seam for tests.
 var ensurePages = func() (addr, token string, err error) {
-	addr, token, build, ok := pagesAddress()
-	if ok && build == pages.Build {
-		return addr, token, nil
+	c := pagesClient()
+	e, err := c.Find()
+	if errors.Is(err, pageserve.ErrNotRunning) {
+		e, err = c.Start()
 	}
-	if ok {
-		// A server not in the session lives on beside the new one, unused.
-		_, _ = Run(pagesSocket, "kill-session", "-t", "="+pagesSession)
-	}
-	exe, err := os.Executable()
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("proj serve: %w", err)
 	}
-	// A failure here is most often another proj window starting it at the same
-	// moment, so it only says what went wrong if the server never answers.
-	_, startErr := Run(pagesSocket, "new-session", "-d", "-s", pagesSession, exe, "pages")
-	for range 50 {
-		if addr, token, build, ok := pagesAddress(); ok && build == pages.Build {
-			return addr, token, nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if startErr != nil {
-		return "", "", fmt.Errorf("proj pages did not start: %s", failureText(startErr))
-	}
-	return "", "", errors.New("proj pages did not answer; see tmux session pages on socket proj-pages")
+	return strings.TrimPrefix(e.Base, "http://"), e.Token, nil
 }
 
 // Window moves pane's session to its Chrome window and brings that to the

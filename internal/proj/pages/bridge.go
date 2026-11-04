@@ -78,7 +78,7 @@ func (b *bridge) closePushedOut(tty string) {
 	for {
 		busy, err := b.ttyBusy(tty)
 		if err != nil {
-			log.Printf("proj pages: read %s: %v", tty, err)
+			log.Printf("proj serve: read %s: %v", tty, err)
 			return
 		}
 		if !busy {
@@ -90,7 +90,7 @@ func (b *bridge) closePushedOut(tty string) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if err := b.closeTerminal(tty); err != nil {
-		log.Printf("proj pages: close the terminal on %s: %v", tty, err)
+		log.Printf("proj serve: close the terminal on %s: %v", tty, err)
 	}
 }
 
@@ -245,8 +245,9 @@ func tmuxCmd(socket string, args ...string) *exec.Cmd {
 	return exec.Command("tmux", append([]string{flag, socket}, args...)...) //nolint:gosec // G204: tmux argv, no shell; the socket comes from an authenticated request
 }
 
-// attachEnv is this process's environment for a tmux client: the server itself
-// runs inside tmux, and a client refuses to start with $TMUX set.
+// attachEnv is this process's environment for a tmux client: the server
+// inherits $TMUX from a proj run inside tmux that started it, and a client
+// refuses to start with $TMUX set.
 func attachEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
