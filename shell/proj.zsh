@@ -31,7 +31,7 @@ __proj_clear_stale_tmux() {
   local pt=""
   [[ -n "${TMUX_PANE:-}" ]] &&
     pt="$(tmux -S "${TMUX%%,*}" display -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null)"
-  [[ -n "$pt" && "$pt" == "$(tty 2>/dev/null)" ]] && return 0
+  [[ -n "$pt" && "$pt" == "${TTY:-}" ]] && return 0
   unset TMUX TMUX_PANE
 }
 

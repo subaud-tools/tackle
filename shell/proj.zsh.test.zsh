@@ -107,23 +107,29 @@ stale() {
   fi
 }
 
-# 1. A shell really in the pane keeps TMUX.
-out="$scratch/in-pane"
-print -r -- "before=\$TMUX; source ${(q)target}; __proj_clear_stale_tmux; print -r -- \"\$before|\${TMUX:-unset}\" >| ${(q)out}" >| "$scratch/in-pane.zsh"
-t new-session -d -s inpane -x 80 -y 24 "zsh -f ${(q)scratch}/in-pane.zsh; sleep 3600"
-for i in {1..50}; do [[ -s "$out" ]] && break; sleep 0.1; done
-if [[ -s "$out" ]]; then
-  res="$(<"$out")"
-  if [[ "${res%%|*}" == "$socket,"* && "${res#*|}" == "${res%%|*}" ]]; then
-    print -r -- "ok: real pane keeps TMUX"
+# 1. A shell really in the pane keeps TMUX, also with stdin redirected (an
+# editor reading the shell's environment runs `zsh -i -c … </dev/null`).
+in_pane() {
+  local name=$1 session=$2 redirect=$3
+  local out="$scratch/$session"
+  print -r -- "before=\$TMUX; source ${(q)target}; __proj_clear_stale_tmux; print -r -- \"\$before|\${TMUX:-unset}\" >| ${(q)out}" >| "$scratch/$session.zsh"
+  t new-session -d -s "$session" -x 80 -y 24 "zsh -f ${(q)scratch}/$session.zsh $redirect; sleep 3600"
+  for i in {1..50}; do [[ -s "$out" ]] && break; sleep 0.1; done
+  if [[ -s "$out" ]]; then
+    local res="$(<"$out")"
+    if [[ "${res%%|*}" == "$socket,"* && "${res#*|}" == "${res%%|*}" ]]; then
+      print -r -- "ok: $name"
+    else
+      print -r -- "FAIL: $name: got '$res'" >&2
+      fail=1
+    fi
   else
-    print -r -- "FAIL: real pane keeps TMUX: got '$res'" >&2
+    print -r -- "FAIL: $name: the pane wrote nothing" >&2
     fail=1
   fi
-else
-  print -r -- "FAIL: real pane keeps TMUX: the pane wrote nothing" >&2
-  fail=1
-fi
+}
+in_pane "real pane keeps TMUX" inpane ""
+in_pane "real pane with stdin redirected keeps TMUX" inpane-nostdin "</dev/null"
 
 # 2–5. Outside the pane, every stale shape loses both.
 stale "outside a real pane loses both" "$server_tmux" "$pane" "unset unset"
