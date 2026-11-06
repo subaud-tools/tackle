@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/subaud-tools/tools-common/localweb"
 	"github.com/subaud-tools/tools-common/localweb/page"
 	"github.com/subaud-tools/tools-common/pageserve"
 	"github.com/subaud-tools/tools-common/splitpage"
@@ -97,8 +98,10 @@ func (s siteFS) Open(name string) (fs.File, error) {
 
 // TermURL is the address to open for a session's split page, with the token,
 // to take the session from any other client; the page drops both on load.
+// addr is the server's loopback host:port; with PAGE_PUBLIC_DOMAIN set the
+// page is on proj's public address instead.
 func TermURL(addr, token, inst, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {inst}, "t": {token}, "take": {"1"}}.Encode()
+	return pageOrigin(addr) + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {inst}, "t": {token}, "take": {"1"}}.Encode()
 }
 
 // Instance names the page server a terminal page came from, in its address,
@@ -114,15 +117,29 @@ func Instance(token string, pid int) string {
 // ViewURL is TermURL without the take: a page that attaches only when no other
 // client has the session, else offers to show it there.
 func ViewURL(addr, token, inst, socket, session string) string {
-	return "http://" + addr + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {inst}, "t": {token}}.Encode()
+	return pageOrigin(addr) + "/term?" + url.Values{"socket": {socket}, "session": {session}, "i": {inst}, "t": {token}}.Encode()
+}
+
+// pageOrigin is where a browser opens proj's pages: proj's public origin
+// with PAGE_PUBLIC_DOMAIN set, else the loopback server at addr.
+func pageOrigin(addr string) string {
+	if o := localweb.PublicOrigin(tool); o != "" {
+		return o
+	}
+	return "http://" + addr
 }
 
 // TermMatches says whether pageURL is the terminal page of session on socket:
-// a loopback /term page with exactly those two values. The port is left out,
-// since a restarted server may land on another.
+// a loopback /term page, or one on proj's public address, with exactly those
+// two values. The port is left out, since a restarted server may land on
+// another.
 func TermMatches(pageURL, socket, session string) bool {
 	u, err := url.Parse(pageURL)
-	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Path != "/term" {
+	if err != nil || u.Path != "/term" {
+		return false
+	}
+	loopback := u.Scheme == "http" && u.Hostname() == "127.0.0.1"
+	if name, ok := localweb.PublicTool(pageURL); !loopback && (!ok || name != tool) {
 		return false
 	}
 	q := u.Query()

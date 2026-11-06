@@ -186,3 +186,50 @@ func post(t *testing.T, srv served, path string) (int, string) {
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
 }
+
+// With PAGE_PUBLIC_DOMAIN set, proj's page is at https://proj.<domain>: a
+// session's page there is its terminal page; another tool's host, another
+// domain, or plain http on it is not.
+func TestTermMatchesAPublicPage(t *testing.T) {
+	const s, session = "/tmp/a/s", "p/w"
+	page := func(origin string) string {
+		return origin + "/term?" + url.Values{"socket": {s}, "session": {session}}.Encode()
+	}
+	t.Setenv(localweb.PublicDomainEnv, "ws.example.com")
+	for _, c := range []struct {
+		name, url string
+		want      bool
+	}{
+		{"proj's public page", page("https://proj.ws.example.com"), true},
+		{"the loopback page still", page("http://127.0.0.1:9"), true},
+		{"another tool's host", page("https://diazo.ws.example.com"), false},
+		{"another domain", page("https://proj.other.example.com"), false},
+		{"a look-alike domain", page("https://proj.xws.example.com"), false},
+		{"http on the public host", page("http://proj.ws.example.com"), false},
+	} {
+		if got := TermMatches(c.url, s, session); got != c.want {
+			t.Errorf("%s: %q = %v, want %v", c.name, c.url, got, c.want)
+		}
+	}
+	t.Setenv(localweb.PublicDomainEnv, "")
+	if TermMatches(page("https://proj.ws.example.com"), s, session) {
+		t.Error("a public page matched with the setting unset")
+	}
+}
+
+// With the setting set, the address handed out for a session's page is
+// proj's public one; unset, it is the loopback address as before.
+func TestTermAndViewURLArePublicWithTheSetting(t *testing.T) {
+	const s, session = "/tmp/a/s", "p/w"
+	for _, f := range []func(addr, token, inst, socket, session string) string{TermURL, ViewURL} {
+		t.Setenv(localweb.PublicDomainEnv, "")
+		if got := f("127.0.0.1:9", "tok", "i1", s, session); !strings.HasPrefix(got, "http://127.0.0.1:9/term?") {
+			t.Errorf("unset: %q", got)
+		}
+		t.Setenv(localweb.PublicDomainEnv, "ws.example.com")
+		got := f("127.0.0.1:9", "tok", "i1", s, session)
+		if !strings.HasPrefix(got, "https://proj.ws.example.com/term?") || !TermMatches(got, s, session) || !strings.Contains(got, "i=i1") {
+			t.Errorf("set: %q", got)
+		}
+	}
+}

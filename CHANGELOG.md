@@ -6,6 +6,14 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.24.0] - 2026-11-05
+
+### Added
+- `proj split --socket <path> --session <name> --right <url> [--json]` opens a page as a right-hand tab of a session's split page through proj serve (started when it is not running), with no Chrome, and prints the split page's address (`{"split": ...}` with `--json`). A session that does not exist, or a page the split page refuses, exits 1 with the reason on stderr. diazo uses it to open a plan beside its session on a hosted workspace.
+
+### Changed
+- tools-common 0.68.0. With `PAGE_PUBLIC_DOMAIN` set (a hosted workspace), a session's split page address is proj's public one, `https://proj.<domain>/term?...`; `proj window --right` and `proj split --right` accept a tool's page on `https://<tool>.<domain>` beside 127.0.0.1; a terminal page on proj's public address counts as the session's. proj reaches proj serve on its loopback address whatever the entry advertises. Unset, as on a Mac, nothing changes.
+
 ## [proj 0.23.2] - 2026-11-05
 
 ### Fixed
