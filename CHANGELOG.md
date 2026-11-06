@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.23.2] - 2026-11-05
+
+### Fixed
+- A session's split page served over https (a hosted workspace) connects its terminal: tools-common 0.67.0 opens the terminal socket over `wss:` on an https page, where the browser blocked the `ws:` one as mixed content.
+
 ## [proj 0.23.1] - 2026-11-04
 
 ### Changed
@@ -27,7 +32,6 @@ casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 sta
 ### Changed
 - tools-common 0.66.0: the channel ignores a report event it doesn't know without a log line, so a newer pi can add one without imprint complaining.
 
-||||||| parent of cf415c9 (proj 0.23.1: changelog)
 ## [proj 0.23.0] - 2026-11-04
 
 ### Added
