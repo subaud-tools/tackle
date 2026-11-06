@@ -1,6 +1,7 @@
 package proj
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -14,6 +15,9 @@ func init() { pages.CloseTerminal = closeGhosttyTerminal }
 // passed to its `on run argv` handler. A seam so tests never drive the real
 // Ghostty.
 var osascript = func(script string, args ...string) (string, error) {
+	if _, err := exec.LookPath("osascript"); err != nil {
+		return "", errNoAppleScript
+	}
 	if p := pingFor(script); p != "" {
 		if err := ping(p); err != nil {
 			return "", err
@@ -21,6 +25,10 @@ var osascript = func(script string, args ...string) (string, error) {
 	}
 	return runOsascript(script, args...)
 }
+
+// errNoAppleScript is osascript's answer on a machine without it (Linux, a
+// hosted workspace): there is no Ghostty to observe or drive there.
+var errNoAppleScript = errors.New("proj: no osascript on this machine")
 
 // runOsascript runs an AppleScript, one -e per script line.
 func runOsascript(script string, args ...string) (string, error) {
@@ -54,6 +62,9 @@ return out`
 // not a successful empty desktop.
 func ObserveGhostty() ([]GhosttyTerminal, error) {
 	out, err := osascript(readTerminalsScript)
+	if errors.Is(err, errNoAppleScript) {
+		return nil, nil // no macOS desktop: no Ghostty terminals
+	}
 	if err != nil {
 		return nil, err
 	}
