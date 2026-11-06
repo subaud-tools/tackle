@@ -161,3 +161,15 @@ func TestLiveSessionsOneCallPerServer(t *testing.T) {
 		t.Fatalf("tmux calls = %d, want 2 (the Servers() probe and the scan)", calls)
 	}
 }
+
+// tmux 3.4 (Ubuntu 24.04, a hosted workspace) prints the unit separator in
+// a -F format's output as the four characters \037; a later tmux prints the
+// byte. Read either, or every scan on 3.4 finds no session (the theme sync
+// then fails in the client-attached hook, in view-mode over the pane).
+func TestParseScanReadsTmux34sEscapedSeparator(t *testing.T) {
+	line := scanLine("tools/w", "1", "0", "40", "%1", "pi", "/home/diazo/tools", "0", "100", "conv", "pi", "lab")
+	got := parseScan(strings.ReplaceAll(line, "\x1f", `\037`))
+	if len(got) != 1 || got[0].Name != "tools/w" || got[0].Pane != "%1" || got[0].Agent != "pi" {
+		t.Fatalf("parseScan of tmux 3.4 output = %+v, want session tools/w", got)
+	}
+}

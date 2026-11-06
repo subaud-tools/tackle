@@ -1,7 +1,6 @@
 package proj
 
 import (
-	"strings"
 	"time"
 )
 
@@ -125,7 +124,7 @@ func mainPaneCmd(socket, session string) (id, cmd string) {
 func pickMainPane(out string) (id, cmd string) {
 	bestLeft, bestH := 1<<30, -1
 	for _, ln := range splitLines(out) {
-		f := strings.Split(ln, "\x1f")
+		f := unitFields(ln)
 		if len(f) < 4 {
 			continue
 		}

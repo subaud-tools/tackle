@@ -71,3 +71,9 @@ func TestPickMainPane(t *testing.T) {
 		t.Fatalf("empty output → empty, got %q,%q", eid, ecmd)
 	}
 }
+
+func TestPickMainPaneReadsTmux34sEscapedSeparator(t *testing.T) {
+	if id, cmd := pickMainPane(`0\03740\037%1\037pi`); id != "%1" || cmd != "pi" {
+		t.Fatalf("pickMainPane of tmux 3.4 output = %q %q, want %%1 pi", id, cmd)
+	}
+}
