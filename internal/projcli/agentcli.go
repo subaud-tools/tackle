@@ -42,6 +42,9 @@ type sessionJSON struct {
 	Dir            string `json:"dir"`
 	Unread         int    `json:"unread"`
 	ActionRequired int    `json:"action_required"`
+	// BusyPanes are the session's panes, besides its main one, running
+	// something other than a shell (a long job): never null.
+	BusyPanes []proj.BusyPane `json:"busy_panes"`
 }
 
 // listJSON is the top-level shape emitted by `proj list --json`.
@@ -61,7 +64,9 @@ func newListFlags() (*flag.FlagSet, *listFlags) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	f := &listFlags{json: fs.Bool("json", false, "emit JSON")}
 	tools.SetUsage(fs, "proj list --json",
-		"Lists configured project names and every live session across proj's per-project tmux servers.")
+		"Lists configured project names and every live session across proj's per-project tmux servers. "+
+			"Each session's busy_panes are its panes, besides the main one, whose current command is "+
+			"not a shell or a sidebar tool: [{pane,command}].")
 	return fs, f
 }
 
@@ -82,7 +87,11 @@ func cmdList(args []string, out, errw io.Writer) error {
 			payload.Projects = append(payload.Projects, filepath.Base(dir))
 		}
 	}
-	for _, s := range proj.LiveSessions() {
+	for _, s := range liveSessions() {
+		busy := s.BusyPanes
+		if busy == nil {
+			busy = []proj.BusyPane{}
+		}
 		payload.Sessions = append(payload.Sessions, sessionJSON{
 			Name:           s.Name,
 			Project:        proj.ProjectFromSocket(s.Socket),
@@ -92,6 +101,7 @@ func cmdList(args []string, out, errw io.Writer) error {
 			Dir:            s.Dir,
 			Unread:         s.Unread,
 			ActionRequired: s.ActionRequired,
+			BusyPanes:      busy,
 		})
 	}
 	return writeJSON(out, payload)

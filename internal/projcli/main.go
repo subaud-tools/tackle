@@ -44,6 +44,22 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		Run:      cmdList,
 	})
 	app.Register(tools.Command{
+		Name:     "live",
+		Summary:  "print the running sessions for restore (--json)",
+		Synopsis: "live --json",
+		Help:     liveHelp,
+		NewFlags: func() *flag.FlagSet { fs, _ := newLiveFlags(); return fs },
+		Run:      cmdLive,
+	})
+	app.Register(tools.Command{
+		Name:     "restore",
+		Summary:  "reopen the sessions a file lists",
+		Synopsis: "restore --from <file> [--json]",
+		Help:     restoreHelp,
+		NewFlags: func() *flag.FlagSet { fs, _ := newRestoreFlags(); return fs },
+		Run:      cmdRestore,
+	})
+	app.Register(tools.Command{
 		Name:     "current",
 		Summary:  "identify the ambient proj session (--json)",
 		Synopsis: "current --json",
@@ -124,7 +140,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		return cmdThemeSync(args[1:], false, errw)
 	case "__save-layout":
 		return cmdThemeSync(args[1:], true, errw)
-	// list/current/new/sidebar/reap/terminal/window/split/serve/theme flow through Dispatch (which parses their
+	// list/live/restore/current/new/sidebar/reap/terminal/window/split/serve/theme flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
@@ -135,7 +151,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			return startPicker("", "", true)
 		}
 		return app.Dispatch(args, out, errw)
-	case "setup-bundle", "list", "current", "new", "sidebar", "terminal", "window", "split", "serve", "theme",
+	case "setup-bundle", "list", "live", "restore", "current", "new", "sidebar", "terminal", "window", "split", "serve", "theme",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}

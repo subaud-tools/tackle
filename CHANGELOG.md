@@ -6,6 +6,13 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.25.0] - 2026-11-06
+
+### Added
+- `proj live --json` prints the running sessions as a JSON array of `{socket, name, dir, agent, conversation}`; conversation is the agent's session id the session announced, else proj's record, empty when unknown. A hosted workspace writes it to its data volume before it stops itself.
+- `proj restore --from <file> [--json]` reopens each session that file lists and that is not running, resuming pi with `pi --session <id>` and claude with `claude --resume <id>` when the conversation's transcript exists, else starting the agent fresh. On macOS it then opens their Ghostty windows; elsewhere it opens none. `--json` prints `{restored, skipped, failed: [{name, error}]}`. It exits 0 unless the file can't be read. A hosted workspace runs it on boot to bring back the sessions live when it stopped.
+- `proj list --json` gives each session `busy_panes`: `[{pane, command}]` for its panes, in any window, besides the main one, whose current command is not a shell (sh, bash, zsh, fish, a login shell's `-zsh`) or a sidebar tool (yazi, scratch). A long job in a second window shows here, so a hosted workspace does not stop under it.
+
 ## [proj 0.24.3] - 2026-11-06
 
 ### Changed
