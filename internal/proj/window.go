@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/subaud-tools/tackle/internal/proj/pages"
+	"github.com/subaud-tools/tools-common/localweb"
 	"github.com/subaud-tools/tools-common/pageserve"
 	"github.com/subaud-tools/tools-common/splitpage"
 )
@@ -91,7 +92,7 @@ end run`
 // pagesClient finds proj serve, else starts it; a seam for tests.
 var pagesClient = pages.Client
 
-// ensurePages returns the running page server's address and token, starting
+// ensurePages returns the running page server's loopback address and token, starting
 // it first when it is not running. A server marked stale, an older proj's left
 // running across an upgrade, may lack routes this proj uses, so it is stopped
 // and this binary's started; it keeps the token, so open pages keep their
@@ -108,7 +109,7 @@ var ensurePages = func() (addr, token, inst string, err error) {
 	if err != nil {
 		return "", "", "", fmt.Errorf("proj serve: %w", err)
 	}
-	return strings.TrimPrefix(e.Base, "http://"), e.Token, pages.Instance(e.Token, e.PID), nil
+	return strings.TrimPrefix(e.Loopback(), "http://"), e.Token, pages.Instance(e.Token, e.PID), nil
 }
 
 // Window moves pane's session to its Chrome window and brings that to the
@@ -126,6 +127,15 @@ func WindowKeepingView(socket, pane, right string) (WindowResult, error) {
 // errNotOurPage refuses a right that a split page's frame may not show.
 var errNotOurPage = errors.New("only pages on 127.0.0.1 open in the split; give it as a link")
 
+// notOurPage is errNotOurPage, naming the public page addresses too when
+// PAGE_PUBLIC_DOMAIN is set.
+func notOurPage() error {
+	if d := localweb.PublicDomain(); d != "" {
+		return fmt.Errorf("only pages on 127.0.0.1 or https://<tool>.%s open in the split; give it as a link", d)
+	}
+	return errNotOurPage
+}
+
 // window brings pane's session's Chrome window to the front, or opens a new one
 // on the session's split page, and opens right (when not "") as a tab of the
 // session on proj's page server. On a window that exists, with move, a terminal
@@ -135,7 +145,7 @@ var errNotOurPage = errors.New("only pages on 127.0.0.1 open in the split; give 
 // terminal page.
 func window(socket, pane, right string, move bool) (WindowResult, error) {
 	if right != "" && !localPage(right) {
-		return WindowResult{}, errNotOurPage
+		return WindowResult{}, notOurPage()
 	}
 	name := Query(socket, pane, "#{session_name}")
 	if name == "" {
@@ -165,8 +175,9 @@ func window(socket, pane, right string, move bool) (WindowResult, error) {
 				if err != nil {
 					return WindowResult{}, stepError("start the page server", err)
 				}
-				if u, err := url.Parse(urls[tab]); err == nil && (u.Host != addr || u.Query().Get("i") != inst) {
-					if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), pages.ViewURL(addr, token, inst, socket, name)); err != nil {
+				view := pages.ViewURL(addr, token, inst, socket, name)
+				if u, err := url.Parse(urls[tab]); err == nil && (u.Host != hostOf(view) || u.Query().Get("i") != inst) {
+					if _, err := osascript(chromeSetTabScript, id, strconv.Itoa(tab+1), view); err != nil {
 						return WindowResult{}, stepError("reload the terminal page", err)
 					}
 				}
@@ -228,10 +239,23 @@ func openTab(session, right string) error {
 }
 
 // localPage says whether a split page's frame may show raw: one of our own
-// pages, http on 127.0.0.1 with a port, as splitpage.Tabs requires.
+// pages, http on 127.0.0.1 with a port, or a tool's page on the machine's
+// public page address (PAGE_PUBLIC_DOMAIN), as splitpage.Tabs requires.
 func localPage(raw string) bool {
+	if _, ok := localweb.PublicTool(raw); ok {
+		return true
+	}
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "http" && u.User == nil && u.Hostname() == "127.0.0.1" && u.Port() != ""
+}
+
+// hostOf is raw's host, "" when it does not parse.
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 // tabURLs is the has-window script's output as a list.

@@ -91,6 +91,14 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		NewFlags: func() *flag.FlagSet { fs, _ := newWindowFlags(); return fs },
 		Run:      cmdWindow,
 	})
+	app.Register(tools.Command{
+		Name:     "split",
+		Summary:  "open a page beside a session's terminal, no Chrome (--json)",
+		Synopsis: "split --socket <path> --session <name> --right <url> [--json]",
+		Help:     splitHelp,
+		NewFlags: func() *flag.FlagSet { fs, _ := newSplitFlags(); return fs },
+		Run:      cmdSplit,
+	})
 	app.Register(serveCommand())
 
 	app.Register(tools.Command{
@@ -116,7 +124,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 		return cmdThemeSync(args[1:], false, errw)
 	case "__save-layout":
 		return cmdThemeSync(args[1:], true, errw)
-	// list/current/new/sidebar/reap/terminal/window/serve/theme flow through Dispatch (which parses their
+	// list/current/new/sidebar/reap/terminal/window/split/serve/theme flow through Dispatch (which parses their
 	// flags, calls Run, and maps UsageError/ExitError to the right exit code)
 	// instead of the bare-project fallback below — a name match here MUST
 	// come before that fallback or "proj list" would be read as project "list".
@@ -127,7 +135,7 @@ func Dispatch(args []string, out, errw io.Writer) int {
 			return startPicker("", "", true)
 		}
 		return app.Dispatch(args, out, errw)
-	case "setup-bundle", "list", "current", "new", "sidebar", "terminal", "window", "serve", "theme",
+	case "setup-bundle", "list", "current", "new", "sidebar", "terminal", "window", "split", "serve", "theme",
 		"version", "--version", "-v", "help", "--help", "-h", "update", "man", "commands":
 		return app.Dispatch(args, out, errw)
 	}
