@@ -99,6 +99,8 @@ proj starts muster and hail whenever it creates or restores a session, so they c
 |---------|--------|
 | `proj list --json` | Print all known projects and live sessions as JSON. |
 | `proj current --json` | Print the current session's identity as JSON. |
+| `proj live --json` | Print the running sessions as `[{socket,name,dir,agent,conversation}]`. |
+| `proj restore --from <file> [--json]` | Reopen the sessions such a file lists that are not running, resuming their conversations. |
 | `proj new <project>/<work> --agent <name>` | Spawn a detached session (safe from inside an agent). |
 | `proj sidebar` | Re-draw the sidebar for the current session (keybind target). |
 

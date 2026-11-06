@@ -10,6 +10,8 @@ type Session struct {
 	Unread, ActionRequired          int
 	Opened                          bool
 	Created                         int64
+	Conversation                    string     // @harness_session, "" if not announced
+	BusyPanes                       []BusyPane // see parseBusyPanes
 }
 
 // LiveSessions returns every live session across all Servers(), enriched with
@@ -21,7 +23,7 @@ func LiveSessions() []Session {
 	now := time.Now()
 	var out []Session
 	for _, sock := range Servers() {
-		scanned, err := ScanServer(sock)
+		scanned, busy, err := scanServerBusy(sock)
 		if err != nil {
 			continue
 		}
@@ -45,6 +47,8 @@ func LiveSessions() []Session {
 				ActionRequired: a.ActionRequired,
 				Opened:         s.LastAttached > 0,
 				Created:        s.Created,
+				Conversation:   s.Conversation,
+				BusyPanes:      busy[s.Name],
 			})
 		}
 	}

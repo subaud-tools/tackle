@@ -57,11 +57,50 @@ const scanFields = 15
 // ScanServer reads socket's sessions with one `list-panes -a` call.
 // A server that is not running returns the tmux error.
 func ScanServer(socket string) ([]ScannedSession, error) {
+	sessions, _, err := scanServerBusy(socket)
+	return sessions, err
+}
+
+// scanServerBusy is ScanServer with each session's busy panes, from the same
+// list-panes call.
+func scanServerBusy(socket string) ([]ScannedSession, map[string][]BusyPane, error) {
 	out, err := Run(socket, "list-panes", "-a", "-F", scanFormat())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return parseScan(out), nil
+	sessions := parseScan(out)
+	return sessions, parseBusyPanes(out, sessions), nil
+}
+
+// BusyPane is a pane, other than its session's main pane, running something
+// other than a shell: a long job, a server, a second agent.
+type BusyPane struct {
+	Pane    string `json:"pane"`
+	Command string `json:"command"`
+}
+
+// parseBusyPanes lists, per session, the panes in any of its windows other
+// than its main pane whose current command is not a shell (a login shell's
+// "-zsh" included) or a sidebar tool (yazi, scratch), which sit idle all day.
+func parseBusyPanes(out string, sessions []ScannedSession) map[string][]BusyPane {
+	main := make(map[string]string, len(sessions))
+	for _, s := range sessions {
+		main[s.Name] = s.Pane
+	}
+	busy := map[string][]BusyPane{}
+	for _, ln := range splitLines(out) {
+		f := unitFields(ln)
+		if len(f) < scanFields || f[0] == "" {
+			continue
+		}
+		pane, cmd := f[4], f[5]
+		if m, ok := main[f[0]]; !ok || pane == m || cmd == "" ||
+			classifyAgent(strings.TrimPrefix(cmd, "-")) == "shell" {
+			continue
+		}
+		busy[f[0]] = append(busy[f[0]], BusyPane{Pane: pane, Command: cmd})
+	}
+	return busy
 }
 
 // parseScan turns list-panes -a output in scanFormat() into sessions, in
