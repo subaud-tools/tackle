@@ -77,3 +77,26 @@ func TestPagesCloseTerminalRunsTheCloseScriptForThatTTY(t *testing.T) {
 		t.Fatal("the close script gets no ping")
 	}
 }
+
+// A machine with no osascript (Linux, a hosted workspace) has no Ghostty
+// terminals: the client-attached hook's forced theme sync finds an empty
+// desktop and succeeds, rather than failing in run-shell -b, which tmux
+// shows in view-mode over the pane the user just attached to and which
+// eats their keys.
+func TestThemeSyncWithNoOsascriptSucceedsWithNoTerminals(t *testing.T) {
+	isolateSessionThemes(t)
+	recordHome(t)
+	writeConfig(t, "session_themes = true\n")
+	oldSockets := themeSockets
+	t.Cleanup(func() { themeSockets = oldSockets })
+	themeSockets = func() []string { return nil }
+	t.Setenv("PATH", t.TempDir())
+
+	terminals, err := ObserveGhostty()
+	if err != nil || len(terminals) != 0 {
+		t.Fatalf("ObserveGhostty with no osascript = %v, %v; want no terminals and no error", terminals, err)
+	}
+	if err := ReconcileThemes(true); err != nil {
+		t.Fatalf("forced theme sync with no osascript: %v", err)
+	}
+}

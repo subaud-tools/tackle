@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.24.1] - 2026-11-06
+
+### Fixed
+- On a machine with no `osascript` (Linux, a hosted workspace) the tmux hooks' theme sync finds no Ghostty terminals and succeeds. It failed with `exec: "osascript": executable file not found`, and tmux showed that failure in view-mode over the pane the user had just attached to, so the first keys they typed never reached the session.
+
 ## [proj 0.24.0] - 2026-11-05
 
 ### Added
