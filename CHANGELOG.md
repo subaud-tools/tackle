@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.24.3] - 2026-11-06
+
+### Changed
+- tools-common 0.69.0: on a hosted workspace whose home tool is diazo (`PAGE_PUBLIC_HOME=diazo`), diazo's public page is the workspace's bare address, so `proj split --right https://<domain>/…` opens it as a tab, titled from diazo's loopback server, instead of refusing it as not local.
+
 ## [proj 0.24.2] - 2026-11-06
 
 ### Fixed
