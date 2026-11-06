@@ -18,6 +18,13 @@ type ScannedSession struct {
 	Created      int64  // session_created epoch
 }
 
+// unitFields splits a line of -F output on the unit separator. tmux 3.4
+// prints that byte as the four characters \037 (a later tmux prints the
+// byte), so both are read as the separator.
+func unitFields(line string) []string {
+	return strings.Split(strings.ReplaceAll(line, `\037`, "\x1f"), "\x1f")
+}
+
 // scanFormat is the list-panes -a format ScanServer reads, one pane per line.
 // Fields are separated by \x1f so an empty one (an unset option, a blank
 // command) never shifts the columns; see mainPaneCmd. window_active, last,
@@ -66,7 +73,7 @@ func parseScan(out string) []ScannedSession {
 	idx := map[string]int{}
 	var bests []best
 	for _, ln := range splitLines(out) {
-		f := strings.Split(ln, "\x1f")
+		f := unitFields(ln)
 		if len(f) < scanFields || f[0] == "" || f[12] != "1" {
 			continue
 		}

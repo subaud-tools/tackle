@@ -6,6 +6,11 @@ All notable changes to `scratch`, `proj`, `creel`, `cull`, `sift` and `imprint` 
 
 casebook moved to github.com/subaud-tools/casebook; its entries up to 0.14.0 stay below.
 
+## [proj 0.24.2] - 2026-11-06
+
+### Fixed
+- proj reads its sessions on tmux 3.4 (Ubuntu 24.04, a hosted workspace). tmux 3.4 prints the field separator of proj's formats as the text `\037`, so proj found no session there: the theme sync in tmux's client-attached hook failed ("session changed during theme observation") and tmux showed that in view-mode over the pane the user had just attached to, eating their keys; the record's snapshot and agent detection saw nothing either.
+
 ## [proj 0.24.1] - 2026-11-06
 
 ### Fixed

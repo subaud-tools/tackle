@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	tools "github.com/subaud-tools/tools-common"
@@ -117,7 +116,7 @@ func Snapshot(socket string) error {
 	}
 	byName := map[string]string{}
 	for _, line := range splitLines(ids) {
-		f := strings.SplitN(line, "\x1f", 2)
+		f := unitFields(line)
 		if len(f) == 2 {
 			byName[f[0]] = f[1]
 		}
